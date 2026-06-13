@@ -6,5 +6,5 @@
 
 // ─── GitHub репозиторий ───────────────────────────────────────────────────────
 // Формат: "username/repository"
-#define GITHUB_REPO    "your-username/SmartClip"
+#define GITHUB_REPO    "MrHKlaizer/SmartClip"
 #define GITHUB_API_URL "https://api.github.com/repos/" GITHUB_REPO "/releases/latest"
