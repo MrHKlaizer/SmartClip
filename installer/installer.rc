@@ -1,0 +1,4 @@
+#include <windows.h>
+
+// UAC: требуем права администратора
+1 RT_MANIFEST "installer.manifest"

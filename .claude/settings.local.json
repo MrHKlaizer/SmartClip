@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Command cmake -ErrorAction SilentlyContinue)",
+      "PowerShell($cmake = \"C:\\\\Qt\\\\Tools\\\\CMake_64\\\\bin\\\\cmake.exe\"; Set-Location C:\\\\!_SmartClip\\\\build; & $cmake --build . --config Release 2>&1 | Select-Object -Last 30)"
+    ]
+  }
+}
+{
+  "permissions": {
+    "allow": ["Bash"]
+  }
+}

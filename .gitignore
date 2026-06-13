@@ -1,0 +1,17 @@
+# Build directories
+build/
+Release/
+
+# Qt Creator user files
+*.user
+*.autosave
+
+# Secrets — содержит токены, НЕ коммитить
+src/core/Secrets.h
+
+# Compiled objects
+*.o
+*.obj
+
+# Databases / local data
+*.db
