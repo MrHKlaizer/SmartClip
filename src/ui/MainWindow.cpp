@@ -15,6 +15,7 @@
 #include <QProgressBar>
 #include <QStandardPaths>
 #include "core/Version.h"
+#include "core/UpdateChecker.h"
 #include <QStyle>
 #include <QApplication>
 #include <QClipboard>
@@ -716,8 +717,15 @@ MainWindow::MainWindow(Database *db, QWidget *parent)
     setAttribute(Qt::WA_TranslucentBackground);
     setupLayout();
 
-    // ��осмо���ик созда�м один �аз � он жив�� пока жив�� MainWindow
     m_imageViewer = new ImageViewer(this);
+
+    // Тихая проверка обновлений через 3 сек после старта
+    QTimer::singleShot(3000, this, [this]() {
+        auto *uc = new UpdateChecker(this);
+        connect(uc, &UpdateChecker::updateAvailable,
+                this, &MainWindow::onUpdateAvailable);
+        uc->check(/*silent=*/true);
+    });
 }
 
 
