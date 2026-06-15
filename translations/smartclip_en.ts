@@ -828,8 +828,8 @@ Click the card to paste the file to Telegram, Discord, etc.</translation>
         <translation>Describe the issue or suggestion in detail...</translation>
     </message>
     <message>
-        <source>⏳ Следующий репорт доступен через %1 дн.</source>
-        <translation>⏳ Next report available in %1 day(s).</translation>
+        <source>⏳ Следующий репорт доступен через %1 ч.</source>
+        <translation>⏳ Next report available in %1 h.</translation>
     </message>
     <message>
         <source>Отправка...</source>

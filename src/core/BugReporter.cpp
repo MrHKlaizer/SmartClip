@@ -29,19 +29,19 @@ BugReporter::FileKind BugReporter::kindOfFile(const QString &path)
     return FileKind::Photo;
 }
 
-int BugReporter::daysSinceLast()
+int BugReporter::hoursSinceLast()
 {
     const QString last = AppSettings::get().lastReportTime();
     if (last.isEmpty()) return -1;
     return static_cast<int>(
         QDateTime::fromString(last, Qt::ISODate)
-            .daysTo(QDateTime::currentDateTime()));
+            .secsTo(QDateTime::currentDateTime()) / 3600);
 }
 
 bool BugReporter::canSend()
 {
-    const int d = daysSinceLast();
-    return d < 0 || d >= COOLDOWN_DAYS;
+    const int h = hoursSinceLast();
+    return h < 0 || h >= COOLDOWN_HOURS;
 }
 
 void BugReporter::send(Type type, const QString &description,

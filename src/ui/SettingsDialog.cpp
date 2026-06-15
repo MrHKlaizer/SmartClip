@@ -3,6 +3,7 @@
 #include "core/AppSettings.h"
 #include "core/Database.h"
 #include "core/BugReporter.h"
+#include "core/Version.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -277,7 +278,9 @@ static const char *SD_TEXTEDIT_STYLE =
 
 static void showFeedbackDialog(QWidget *parent)
 {
-    SdDialog dlg(parent, QObject::tr("Обратная связь"));
+#define FTR(s) QCoreApplication::translate("SettingsDialog", s)
+
+    SdDialog dlg(parent, FTR("Обратная связь"));
     dlg.setMinimumWidth(500);
 
     auto *vl = new QVBoxLayout(dlg.body());
@@ -287,11 +290,11 @@ static void showFeedbackDialog(QWidget *parent)
     // Тип: жалоба / пожелание
     auto *typeRow = new QHBoxLayout;
     typeRow->setSpacing(10);
-    auto *typeLbl = new QLabel(QObject::tr("Тип:"), dlg.body());
+    auto *typeLbl = new QLabel(FTR("Тип:"), dlg.body());
     typeLbl->setStyleSheet("color:#c0c0d0;font-size:13px;background:transparent;");
     auto *typeBox = new QComboBox(dlg.body());
-    typeBox->addItem(QString::fromUtf8("🔴  Жалоба"));
-    typeBox->addItem(QString::fromUtf8("💡  Пожелание"));
+    typeBox->addItem(FTR("🔴  Жалоба"));
+    typeBox->addItem(FTR("💡  Пожелание"));
     typeBox->setStyleSheet(SD_COMBO_STYLE);
     typeBox->setCursor(Qt::PointingHandCursor);
     typeRow->addWidget(typeLbl);
@@ -299,12 +302,12 @@ static void showFeedbackDialog(QWidget *parent)
     vl->addLayout(typeRow);
 
     // Описание
-    auto *descLbl = new QLabel(QObject::tr("Описание:"), dlg.body());
+    auto *descLbl = new QLabel(FTR("Описание:"), dlg.body());
     descLbl->setStyleSheet("color:#c0c0d0;font-size:13px;background:transparent;");
     vl->addWidget(descLbl);
 
     auto *descEdit = new QTextEdit(dlg.body());
-    descEdit->setPlaceholderText(QObject::tr("Опишите проблему или пожелание подробнее..."));
+    descEdit->setPlaceholderText(FTR("Опишите проблему или пожелание подробнее..."));
     descEdit->setMinimumHeight(100);
     descEdit->setMaximumHeight(140);
     descEdit->setStyleSheet(SD_TEXTEDIT_STYLE);
@@ -314,14 +317,13 @@ static void showFeedbackDialog(QWidget *parent)
     auto *attachHeaderRow = new QHBoxLayout;
     attachHeaderRow->setSpacing(8);
 
-    auto *attachLbl = new QLabel(QObject::tr("Вложения:"), dlg.body());
+    auto *attachLbl = new QLabel(FTR("Вложения:"), dlg.body());
     attachLbl->setStyleSheet("color:#c0c0d0;font-size:13px;background:transparent;");
 
-    // счётчик "📷 0/10   🎬 0/2   🎵 0/4"
     auto *statsLbl = new QLabel(dlg.body());
     statsLbl->setStyleSheet("color:rgba(180,180,200,180);font-size:11px;background:transparent;");
 
-    auto *attachBtn = new QPushButton(QString::fromUtf8("📎  Прикрепить"), dlg.body());
+    auto *attachBtn = new QPushButton(FTR("📎  Прикрепить"), dlg.body());
     attachBtn->setStyleSheet(
         "QPushButton{background:rgba(28,28,44,245);color:rgba(200,200,255,220);"
         "border:1px solid rgba(160,160,255,120);border-radius:6px;"
@@ -334,7 +336,6 @@ static void showFeedbackDialog(QWidget *parent)
     attachHeaderRow->addWidget(attachBtn);
     vl->addLayout(attachHeaderRow);
 
-    // Список прикреплённых файлов
     auto *attachList = new QListWidget(dlg.body());
     attachList->setFixedHeight(80);
     attachList->setStyleSheet(
@@ -347,12 +348,11 @@ static void showFeedbackDialog(QWidget *parent)
     vl->addWidget(attachList);
 
     auto *attachHint = new QLabel(
-        QObject::tr("ПКМ по файлу — удалить  ·  до 4 мин. для видео  ·  макс. 50 МБ"),
+        FTR("ПКМ по файлу — удалить  ·  до 4 мин. для видео  ·  макс. 50 МБ"),
         dlg.body());
     attachHint->setStyleSheet("color:rgba(160,160,180,150);font-size:11px;background:transparent;");
     vl->addWidget(attachHint);
 
-    // Список прикреплённых путей
     QList<QString> attached;
 
     auto updateStats = [&]() {
@@ -374,16 +374,15 @@ static void showFeedbackDialog(QWidget *parent)
 
     QObject::connect(attachBtn, &QPushButton::clicked, [&]() {
         const QString filter =
-            QObject::tr("Медиафайлы (*.png *.jpg *.jpeg *.gif *.webp "
-                        "*.mp4 *.mov *.avi *.mkv *.webm "
-                        "*.mp3 *.ogg *.wav *.m4a *.flac *.aac);;"
-                        "Все файлы (*.*)");
+            FTR("Медиафайлы (*.png *.jpg *.jpeg *.gif *.webp "
+                "*.mp4 *.mov *.avi *.mkv *.webm "
+                "*.mp3 *.ogg *.wav *.m4a *.flac *.aac);;"
+                "Все файлы (*.*)");
         QStringList files = QFileDialog::getOpenFileNames(
-            &dlg, QObject::tr("Прикрепить файлы"), QString(), filter);
+            &dlg, FTR("Прикрепить файлы"), QString(), filter);
 
         for (const QString &path : files) {
             if (attached.contains(path)) continue;
-
             const auto kind = BugReporter::kindOfFile(path);
             int photos = 0, videos = 0, audios = 0;
             for (const QString &p : attached) {
@@ -396,8 +395,6 @@ static void showFeedbackDialog(QWidget *parent)
             if (kind == BugReporter::FileKind::Photo && photos >= BugReporter::MAX_PHOTOS) continue;
             if (kind == BugReporter::FileKind::Video && videos >= BugReporter::MAX_VIDEOS) continue;
             if (kind == BugReporter::FileKind::Audio && audios >= BugReporter::MAX_AUDIOS) continue;
-
-            // Иконка по типу
             QString icon;
             switch (kind) {
                 case BugReporter::FileKind::Photo: icon = QString::fromUtf8("📷"); break;
@@ -410,32 +407,28 @@ static void showFeedbackDialog(QWidget *parent)
         updateStats();
     });
 
-    // Правый клик → удалить
     QObject::connect(attachList, &QListWidget::customContextMenuRequested,
                      [&](const QPoint &pos) {
         QListWidgetItem *item = attachList->itemAt(pos);
         if (!item) return;
-        const int row = attachList->row(item);
-        attached.removeAt(row);
+        attached.removeAt(attachList->row(item));
         delete item;
         updateStats();
     });
 
-    // Инфо об антиспаме
     const bool canSend = BugReporter::canSend();
     if (!canSend) {
-        const int daysLeft = BugReporter::COOLDOWN_DAYS - BugReporter::daysSinceLast();
+        const int hoursLeft = BugReporter::COOLDOWN_HOURS - BugReporter::hoursSinceLast();
         auto *infoLbl = new QLabel(
-            QObject::tr("⏳ Следующий репорт доступен через %1 дн.").arg(daysLeft),
+            FTR("⏳ Следующий репорт доступен через %1 ч.").arg(hoursLeft),
             dlg.body());
         infoLbl->setStyleSheet("color:#ffaa44;font-size:12px;background:transparent;");
         vl->addWidget(infoLbl);
     }
 
-    // Кнопки
     auto *btnRow    = new QHBoxLayout;
-    auto *cancelBtn = new QPushButton(QObject::tr("Отмена"), dlg.body());
-    auto *sendBtn   = new QPushButton(QString::fromUtf8("📩  Отправить"), dlg.body());
+    auto *cancelBtn = new QPushButton(FTR("Отмена"), dlg.body());
+    auto *sendBtn   = new QPushButton(FTR("📩  Отправить"), dlg.body());
     cancelBtn->setStyleSheet(SD_CANCEL_BTN);
     sendBtn->setStyleSheet(SD_OK_BTN);
     cancelBtn->setCursor(Qt::PointingHandCursor);
@@ -456,9 +449,8 @@ static void showFeedbackDialog(QWidget *parent)
     QObject::connect(sendBtn, &QPushButton::clicked, [&, parent]() {
         const BugReporter::Type selType = (typeBox->currentIndex() == 0)
             ? BugReporter::Type::Bug : BugReporter::Type::Feature;
-
         sendBtn->setEnabled(false);
-        sendBtn->setText(QObject::tr("Отправка..."));
+        sendBtn->setText(FTR("Отправка..."));
 
         auto *reporter = new BugReporter(parent);
         reporter->send(selType, descEdit->toPlainText(), attached);
@@ -466,19 +458,20 @@ static void showFeedbackDialog(QWidget *parent)
         QObject::connect(reporter, &BugReporter::sent, [&, reporter, parent]() {
             reporter->deleteLater();
             dlg.accept();
-            sdInfo(parent, QObject::tr("Спасибо!"),
-                   QObject::tr("Сообщение отправлено. Мы обязательно его рассмотрим!"));
+            sdInfo(parent, FTR("Спасибо!"),
+                   FTR("Сообщение отправлено. Мы обязательно его рассмотрим!"));
         });
         QObject::connect(reporter, &BugReporter::failed, [&, reporter, parent](const QString &err) {
             reporter->deleteLater();
             sendBtn->setEnabled(true);
-            sendBtn->setText(QString::fromUtf8("📩  Отправить"));
-            sdInfo(parent, QObject::tr("Ошибка отправки"),
-                   QObject::tr("Не удалось отправить: %1").arg(err));
+            sendBtn->setText(FTR("📩  Отправить"));
+            sdInfo(parent, FTR("Ошибка отправки"),
+                   FTR("Не удалось отправить: %1").arg(err));
         });
     });
 
     dlg.exec();
+#undef FTR
 }
 
 // ─── Конструктор ─────────────────────────────────────────────────────────────
@@ -1038,7 +1031,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     // Кнопка обратной связи
     auto *feedbackBtn = new QPushButton(
-        QString::fromUtf8("📩  Сообщить об ошибке / пожелании"), betaTab);
+        tr("📩  Сообщить об ошибке / пожелании"), betaTab);
     feedbackBtn->setStyleSheet(
         "QPushButton{background:rgba(28,28,44,245);color:rgba(180,220,255,230);"
         "border:1px solid rgba(120,160,255,140);border-radius:8px;"
@@ -1050,9 +1043,17 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         showFeedbackDialog(this);
     });
 
+    auto *versionLbl = new QLabel(
+        tr("SmartClip v%1").arg(QLatin1String(APP_VERSION)), betaTab);
+    versionLbl->setStyleSheet(
+        "color:rgba(255,255,255,80);font-size:11px;background:transparent;");
+    versionLbl->setAlignment(Qt::AlignRight);
+
     betaLayout->addWidget(betaHintLabel);
     betaLayout->addWidget(videoGroup);
     betaLayout->addWidget(feedbackBtn);
+    betaLayout->addStretch();
+    betaLayout->addWidget(versionLbl);
     betaLayout->addStretch();
 
     tabs->addTab(betaTab, tr("⚡  Специальные возможности"));

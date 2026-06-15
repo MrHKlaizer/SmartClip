@@ -828,8 +828,8 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <translation>Опишіть проблему або побажання детальніше...</translation>
     </message>
     <message>
-        <source>⏳ Следующий репорт доступен через %1 дн.</source>
-        <translation>⏳ Наступний звіт доступний через %1 дн.</translation>
+        <source>⏳ Следующий репорт доступен через %1 ч.</source>
+        <translation>⏳ Наступний звіт доступний через %1 год.</translation>
     </message>
     <message>
         <source>Отправка...</source>

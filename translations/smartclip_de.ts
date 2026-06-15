@@ -828,8 +828,8 @@ Karte anklicken — Datei in Telegram, Discord usw. einfügen.</translation>
         <translation>Beschreibe das Problem oder den Wunsch genauer...</translation>
     </message>
     <message>
-        <source>⏳ Следующий репорт доступен через %1 дн.</source>
-        <translation>⏳ Nächster Bericht verfügbar in %1 Tag(en).</translation>
+        <source>⏳ Следующий репорт доступен через %1 ч.</source>
+        <translation>⏳ Nächster Bericht verfügbar in %1 Std.</translation>
     </message>
     <message>
         <source>Отправка...</source>

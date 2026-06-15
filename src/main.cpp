@@ -108,9 +108,13 @@ int main(int argc, char *argv[])
 
     tray.show();
 
-    // Хоткей → показать окно
-    QObject::connect(&hotkey, &HotkeyManager::hotkeyPressed,
-                     &window, &MainWindow::showWindow);
+    // Хоткей → показать окно, или закрыть если уже открыто
+    QObject::connect(&hotkey, &HotkeyManager::hotkeyPressed, [&]() {
+        if (window.isVisible())
+            window.hide();
+        else
+            window.showWindow();
+    });
 
     // Перед вставкой MainWindow предупреждает ClipboardManager: не записывай следующее событие
     QObject::connect(&window, &MainWindow::pasteRequested,
