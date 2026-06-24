@@ -427,6 +427,42 @@
         <source>Импортировать аудио в закрепы</source>
         <translation>Імпортувати аудіо до закріпів</translation>
     </message>
+    <message>
+        <source>Обновление SmartClip</source>
+        <translation>Оновлення SmartClip</translation>
+    </message>
+    <message>
+        <source>Доступна новая версия SmartClip!</source>
+        <translation>Доступна нова версія SmartClip!</translation>
+    </message>
+    <message>
+        <source>Версия %1 готова к установке.</source>
+        <translation>Версія %1 готова до встановлення.</translation>
+    </message>
+    <message>
+        <source>Что нового:</source>
+        <translation>Що нового:</translation>
+    </message>
+    <message>
+        <source>⬇  Скачать и установить</source>
+        <translation>⬇  Завантажити та встановити</translation>
+    </message>
+    <message>
+        <source>Позже</source>
+        <translation>Пізніше</translation>
+    </message>
+    <message>
+        <source>Подключение...</source>
+        <translation>Підключення...</translation>
+    </message>
+    <message>
+        <source>Запуск установщика...</source>
+        <translation>Запуск інсталятора...</translation>
+    </message>
+    <message>
+        <source>Ошибка: </source>
+        <translation>Помилка: </translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -874,6 +910,72 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
     <message>
         <source>Прикрепить файлы</source>
         <translation>Прикріпити файли</translation>
+    </message>
+    <message>
+        <source>Масштаб интерфейса</source>
+        <translation>Масштаб інтерфейсу</translation>
+    </message>
+    <message>
+        <source>75% — компактный</source>
+        <translation>75% — компактний</translation>
+    </message>
+    <message>
+        <source>90%</source>
+        <translation>90%</translation>
+    </message>
+    <message>
+        <source>100% — стандартный</source>
+        <translation>100% — стандартний</translation>
+    </message>
+    <message>
+        <source>110%</source>
+        <translation>110%</translation>
+    </message>
+    <message>
+        <source>125% — крупный</source>
+        <translation>125% — великий</translation>
+    </message>
+    <message>
+        <source>Изменение масштаба требует перезапуска приложения.</source>
+        <translation>Зміна масштабу потребує перезапуску програми.</translation>
+    </message>
+    <message>
+        <source>🔍  Проверить наличие обновлений</source>
+        <translation>🔍  Перевірити наявність оновлень</translation>
+    </message>
+    <message>
+        <source>⏳  Проверка...</source>
+        <translation>⏳  Перевірка...</translation>
+    </message>
+    <message>
+        <source>🆙  Найдена версия %1</source>
+        <translation>🆙  Знайдено версію %1</translation>
+    </message>
+    <message>
+        <source>✓  Уже актуальная версия</source>
+        <translation>✓  Вже актуальна версія</translation>
+    </message>
+    <message>
+        <source>✕  Ошибка соединения</source>
+        <translation>✕  Помилка з&apos;єднання</translation>
+    </message>
+    <message>
+        <source>Обновить</source>
+        <translation>Оновити</translation>
+    </message>
+    <message>
+        <source>Доступна новая версия %1 — нажми «Обновить» чтобы установить.</source>
+        <translation>Доступна нова версія %1 — натисни «Оновити» щоб встановити.</translation>
+    </message>
+    <message>
+        <source>Перезапуск</source>
+        <translation>Перезапуск</translation>
+    </message>
+    <message>
+        <source>Для применения изменений необходимо перезапустить приложение.
+Перезапустить сейчас?</source>
+        <translation>Для застосування змін потрібно перезапустити програму.
+Перезапустити зараз?</translation>
     </message>
 </context>
 <context>

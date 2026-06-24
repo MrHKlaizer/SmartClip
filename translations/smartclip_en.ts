@@ -427,6 +427,42 @@ Pressing the hotkey pastes text without opening SmartClip.</translation>
         <source>Импортировать аудио в закрепы</source>
         <translation>Import audio to pins</translation>
     </message>
+    <message>
+        <source>Обновление SmartClip</source>
+        <translation>SmartClip Update</translation>
+    </message>
+    <message>
+        <source>Доступна новая версия SmartClip!</source>
+        <translation>A new version of SmartClip is available!</translation>
+    </message>
+    <message>
+        <source>Версия %1 готова к установке.</source>
+        <translation>Version %1 is ready to install.</translation>
+    </message>
+    <message>
+        <source>Что нового:</source>
+        <translation>What&apos;s new:</translation>
+    </message>
+    <message>
+        <source>⬇  Скачать и установить</source>
+        <translation>⬇  Download and install</translation>
+    </message>
+    <message>
+        <source>Позже</source>
+        <translation>Later</translation>
+    </message>
+    <message>
+        <source>Подключение...</source>
+        <translation>Connecting...</translation>
+    </message>
+    <message>
+        <source>Запуск установщика...</source>
+        <translation>Launching installer...</translation>
+    </message>
+    <message>
+        <source>Ошибка: </source>
+        <translation>Error: </translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -874,6 +910,72 @@ Click the card to paste the file to Telegram, Discord, etc.</translation>
     <message>
         <source>Прикрепить файлы</source>
         <translation>Attach files</translation>
+    </message>
+    <message>
+        <source>Масштаб интерфейса</source>
+        <translation>Interface scale</translation>
+    </message>
+    <message>
+        <source>75% — компактный</source>
+        <translation>75% — compact</translation>
+    </message>
+    <message>
+        <source>90%</source>
+        <translation>90%</translation>
+    </message>
+    <message>
+        <source>100% — стандартный</source>
+        <translation>100% — standard</translation>
+    </message>
+    <message>
+        <source>110%</source>
+        <translation>110%</translation>
+    </message>
+    <message>
+        <source>125% — крупный</source>
+        <translation>125% — large</translation>
+    </message>
+    <message>
+        <source>Изменение масштаба требует перезапуска приложения.</source>
+        <translation>Scale change requires restarting the application.</translation>
+    </message>
+    <message>
+        <source>🔍  Проверить наличие обновлений</source>
+        <translation>🔍  Check for updates</translation>
+    </message>
+    <message>
+        <source>⏳  Проверка...</source>
+        <translation>⏳  Checking...</translation>
+    </message>
+    <message>
+        <source>🆙  Найдена версия %1</source>
+        <translation>🆙  Found version %1</translation>
+    </message>
+    <message>
+        <source>✓  Уже актуальная версия</source>
+        <translation>✓  Already up to date</translation>
+    </message>
+    <message>
+        <source>✕  Ошибка соединения</source>
+        <translation>✕  Connection error</translation>
+    </message>
+    <message>
+        <source>Обновить</source>
+        <translation>Update</translation>
+    </message>
+    <message>
+        <source>Доступна новая версия %1 — нажми «Обновить» чтобы установить.</source>
+        <translation>Version %1 is available — click "Update" to install.</translation>
+    </message>
+    <message>
+        <source>Перезапуск</source>
+        <translation>Restart required</translation>
+    </message>
+    <message>
+        <source>Для применения изменений необходимо перезапустить приложение.
+Перезапустить сейчас?</source>
+        <translation>A restart is required to apply the changes.
+Restart now?</translation>
     </message>
 </context>
 <context>

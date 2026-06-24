@@ -1,119 +1,168 @@
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║  ImageViewer.cpp — Реализация полноэкранного просмотрщика изображений      ║
+// ║                                                                              ║
+// ║  Этот файл содержит реальный код методов, объявленных в ImageViewer.h.     ║
+// ║  Здесь: рисование картинки, зум, перетаскивание.                            ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
 #include "ImageViewer.h"
 
-#include <QPainter>
-#include <QWheelEvent>
-#include <QMouseEvent>
+// Классы для рисования и обработки событий мыши:
+#include <QPainter>      // Рисование: картинки, текст, фигуры
+#include <QWheelEvent>   // Событие прокрутки колёсика мыши
+#include <QMouseEvent>   // Событие нажатия / движения / отпускания мыши
 
+// ─── Конструктор ─────────────────────────────────────────────────────────────
+// Настраивает внешний вид просмотрщика при создании объекта.
 ImageViewer::ImageViewer(QWidget *parent)
     : QWidget(parent)
 {
-    // Полупрозрачный чёрный фон — затемняет SmartClip под собой
+    // Полупрозрачный чёрный фон (прозрачность 210 из 255 ≈ 82%).
+    // Затемняет SmartClip под собой — картинка выделяется на тёмном фоне.
     setStyleSheet("background-color: rgba(0, 0, 0, 210);");
+
+    // Курсор в форме «раскрытой руки» — намекает что можно тащить картинку.
     setCursor(Qt::OpenHandCursor);
+
+    // Скрываемся при создании — показываем только когда вызывают showImage().
     hide();
 }
 
+// ─── Показать изображение ─────────────────────────────────────────────────────
+// Загружает файл, растягивает просмотрщик на весь MainWindow и показывает его.
 void ImageViewer::showImage(const QString &filepath)
 {
+    // QPixmap(filepath) — загружает картинку с диска в видеопамять.
+    // Если файл не найден или повреждён — m_pixmap будет «нулевым» (isNull() = true).
     m_pixmap = QPixmap(filepath);
-    // Растягиваемся на весь родительский виджет (MainWindow)
+
+    // Растягиваемся точно на размер родительского окна (MainWindow).
+    // parentWidget() — главное окно, его rect() = (0,0, ширина, высота).
     if (parentWidget())
         setGeometry(parentWidget()->rect());
-    resetView();
-    show();
-    raise();
+
+    resetView();  // Центрируем картинку, сбрасываем масштаб
+    show();       // Делаем просмотрщик видимым
+    raise();      // Поднимаем поверх всех виджетов (чтобы ничего не перекрывало)
 }
 
+// ─── Сброс вида ───────────────────────────────────────────────────────────────
+// Возвращает картинку к масштабу 1:1 и центрирует её на экране.
 void ImageViewer::resetView()
 {
-    m_scale = 1.0;
+    m_scale = 1.0;  // Масштаб 1.0 = оригинальный размер
 
-    // Центрируем изображение при первом показе
+    // Вычисляем смещение чтобы картинка оказалась по центру просмотрщика.
+    // width()/height() — размер просмотрщика (= размер MainWindow).
+    // m_pixmap.width()/height() — размер загруженной картинки.
     if (!m_pixmap.isNull()) {
         m_offset = QPoint(
-            (width()  - m_pixmap.width())  / 2,
-            (height() - m_pixmap.height()) / 2
+            (width()  - m_pixmap.width())  / 2,   // горизонтальный отступ
+            (height() - m_pixmap.height()) / 2    // вертикальный отступ
         );
     }
-    update();
+    update();  // Просим Qt перерисовать виджет (вызовет paintEvent)
 }
 
+// ─── Рисование ────────────────────────────────────────────────────────────────
+// Qt вызывает этот метод каждый раз когда нужно обновить изображение на экране.
 void ImageViewer::paintEvent(QPaintEvent *)
 {
-    QPainter p(this);
+    QPainter p(this);  // «Кисть» привязанная к нашему виджету
 
-    // Затемняющий фон
+    // Заливаем фон тёмным цветом (полупрозрачный чёрный).
     p.fillRect(rect(), QColor(0, 0, 0, 210));
 
-    if (m_pixmap.isNull()) return;
+    if (m_pixmap.isNull()) return;  // Если картинка не загружена — рисовать нечего
 
+    // SmoothPixmapTransform — плавное масштабирование с интерполяцией пикселей.
+    // Без этой настройки при зуме картинка выглядит «пиксельно».
     p.setRenderHint(QPainter::SmoothPixmapTransform);
 
+    // Вычисляем отображаемый размер картинки с учётом масштаба.
+    // static_cast<int>() — приводим qreal (double) к int (целому числу пикселей).
     int w = static_cast<int>(m_pixmap.width()  * m_scale);
     int h = static_cast<int>(m_pixmap.height() * m_scale);
 
+    // Рисуем картинку по координатам m_offset с масштабированием до (w, h).
     p.drawPixmap(m_offset.x(), m_offset.y(), w, h, m_pixmap);
 
-    // Подсказка в углу
-    p.setPen(QColor(180, 180, 180, 160));
+    // ── Подсказка в правом нижнем углу ────────────────────────────────────────
+    p.setPen(QColor(180, 180, 180, 160));      // Светло-серый полупрозрачный текст
     p.setFont(QFont("Segoe UI", 11));
+    // adjusted(0, 0, -16, -16) — отступ 16px от правого и нижнего края
     p.drawText(rect().adjusted(0, 0, -16, -16),
                Qt::AlignBottom | Qt::AlignRight,
-               tr("двойной клик — закрыть"));
+               tr("двойной клик — закрыть"));  // tr() — поддержка перевода
 }
 
+// ─── Зум колёсиком мыши ───────────────────────────────────────────────────────
+// Масштабирует картинку вокруг точки где находится курсор (не центра экрана!).
 void ImageViewer::wheelEvent(QWheelEvent *event)
 {
-    // Позиция курсора — точка, вокруг которой зумируем
+    // Позиция курсора в момент прокрутки — вокруг неё будем масштабировать.
     QPointF mouse = event->position();
     qreal oldScale = m_scale;
 
+    // angleDelta().y() > 0 = прокрутка вперёд (приближение)
+    //                  < 0 = прокрутка назад (удаление)
     if (event->angleDelta().y() > 0)
-        m_scale *= 1.15;   // приближение
+        m_scale *= 1.15;   // Увеличить на 15%
     else
-        m_scale /= 1.15;   // удаление
+        m_scale /= 1.15;   // Уменьшить на 15%
 
-    // Ограничиваем диапазон масштаба
+    // qBound(мин, значение, макс) — зажимаем масштаб в диапазон [0.05, 20.0].
+    // Это значит: минимум 5% от оригинала, максимум 2000% (20x).
     m_scale = qBound(0.05, m_scale, 20.0);
 
-    // Корректируем смещение так, чтобы точка под курсором не смещалась
+    // Корректируем смещение чтобы точка под курсором «не уехала».
+    // Математика: точка в системе изображения = (мышь - offset) / oldScale
+    // После зума хотим чтобы она осталась под курсором: offset_new = мышь - точка * newScale
     qreal ratio = m_scale / oldScale;
     m_offset.setX(static_cast<int>(mouse.x() - ratio * (mouse.x() - m_offset.x())));
     m_offset.setY(static_cast<int>(mouse.y() - ratio * (mouse.y() - m_offset.y())));
 
-    update();
-    event->accept();
+    update();          // Перерисовать с новым масштабом
+    event->accept();   // Сообщаем Qt что мы обработали событие (не передавать дальше)
 }
 
+// ─── Нажатие кнопки мыши — начало перетаскивания ─────────────────────────────
 void ImageViewer::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
-        m_dragging    = true;
-        m_dragStart   = event->pos();
-        m_offsetStart = m_offset;
-        setCursor(Qt::ClosedHandCursor);
+        m_dragging    = true;           // Начинаем режим перетаскивания
+        m_dragStart   = event->pos();   // Запоминаем где нажали
+        m_offsetStart = m_offset;       // Запоминаем текущее положение картинки
+        setCursor(Qt::ClosedHandCursor); // Курсор «сжатая рука» — тянем объект
     }
 }
 
+// ─── Движение мыши — обновление положения картинки ───────────────────────────
 void ImageViewer::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_dragging) {
+        // delta = насколько сдвинулся курсор с момента нажатия
         QPoint delta = event->pos() - m_dragStart;
+        // Новое положение = исходное положение + дельта
         m_offset = m_offsetStart + delta;
-        update();
+        update();  // Перерисовать с новым смещением
     }
 }
 
+// ─── Отпускание кнопки мыши — завершение перетаскивания ──────────────────────
 void ImageViewer::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         m_dragging = false;
-        setCursor(Qt::OpenHandCursor);
+        setCursor(Qt::OpenHandCursor);  // Возвращаем курсор «раскрытая рука»
     }
 }
 
+// ─── Двойной клик — закрыть просмотрщик ─────────────────────────────────────
+// QMouseEvent * — параметр нам не нужен, поэтому имя пропущено (но тип нужен для компилятора).
 void ImageViewer::mouseDoubleClickEvent(QMouseEvent *)
 {
-    // Скрываемся — SmartClip остаётся открытым
+    // hide() — скрываем просмотрщик, но НЕ удаляем его.
+    // SmartClip остаётся открытым, пользователь видит историю.
     hide();
 }

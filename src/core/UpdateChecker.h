@@ -1,33 +1,73 @@
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║  UpdateChecker.h — Проверка наличия обновлений через GitHub                ║
+// ║                                                                              ║
+// ║  Этот класс умеет делать одно: отправить запрос на GitHub и узнать,        ║
+// ║  есть ли версия новее чем та что установлена у пользователя.               ║
+// ║                                                                              ║
+// ║  Как это работает:                                                          ║
+// ║  1. SmartClip запускается                                                   ║
+// ║  2. Через 10 секунд (чтобы не тормозить старт) отправляет запрос на        ║
+// ║     GitHub API: «какая последняя версия SmartClip?»                        ║
+// ║  3. GitHub отвечает: «1.0.2, вот ссылка на скачивание»                    ║
+// ║  4. UpdateChecker сравнивает: если на GitHub версия новее — сообщает об    ║
+// ║     этом через сигнал updateAvailable                                       ║
+// ║  5. MainWindow получает сигнал и показывает диалог обновления              ║
+// ║                                                                              ║
+// ║  Вся работа происходит АСИНХРОННО — программа не зависает пока ждёт ответ ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
 #pragma once
 
+// QObject — базовый класс всех объектов Qt, нужен для системы сигналов/слотов
 #include <QObject>
+// QNetworkAccessManager — менеджер сетевых запросов Qt (аналог fetch() в JavaScript)
 #include <QNetworkAccessManager>
 
-// ─── UpdateChecker ────────────────────────────────────────────────────────────
-// Проверяет GitHub Releases API на наличие новой версии.
-// Использование:
-//   auto *uc = new UpdateChecker(this);
-//   connect(uc, &UpdateChecker::updateAvailable, this, &MainWindow::onUpdateAvailable);
-//   uc->check(); // silent=true по умолчанию
+// ─── Класс UpdateChecker ──────────────────────────────────────────────────────
+// Наследуется от QObject — это даёт доступ к системе сигналов Qt.
+// Сигналы — это как «события»: когда проверка завершится, UpdateChecker
+// «испускает» сигнал, и все кто подписался — получают уведомление.
 class UpdateChecker : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT  // Обязательный макрос Qt для использования сигналов и слотов
 
 public:
+    // Конструктор. parent — владелец объекта (Qt автоматически удалит его из памяти)
     explicit UpdateChecker(QObject *parent = nullptr);
 
-    // silent=true → не сигналить если уже актуальная версия
+    // Запустить проверку обновлений.
+    // silent = true  → не сообщать если обновлений нет (тихий режим при старте)
+    // silent = false → сообщать о любом результате (при ручной проверке кнопкой)
     void check(bool silent = true);
 
+// ─── Сигналы — «оповещения» которые UpdateChecker отправляет подписчикам ─────
+// Сигналы не имеют тела — Qt генерирует код для них автоматически.
+// Подписаться: connect(checker, &UpdateChecker::updateAvailable, this, &MyClass::onUpdate)
 signals:
-    void updateAvailable(const QString &newVersion, const QString &downloadUrl);
+    // Найдена новая версия!
+    // newVersion    — строка типа "1.1.0" — номер новой версии
+    // downloadUrl   — ссылка на скачивание установщика
+    // releaseNotes  — описание что нового (из GitHub Releases)
+    void updateAvailable(const QString &newVersion,
+                         const QString &downloadUrl,
+                         const QString &releaseNotes);
+
+    // Версия актуальная — обновлений нет (сигналится только если silent=false)
     void upToDate();
+
+    // Произошла ошибка при проверке (нет интернета, GitHub недоступен и т.д.)
     void checkFailed(const QString &error);
 
 private:
+    // Менеджер сетевых запросов — через него отправляем HTTP-запрос на GitHub API.
+    // Создаётся один раз в конструкторе и живёт всё время работы UpdateChecker.
     QNetworkAccessManager *m_nam;
+
+    // Флаг тихого режима: сохраняем при вызове check() и используем в коллбэке
     bool m_silent = true;
 
-    // "1.2.3" → 1002003 (для сравнения)
+    // Вспомогательный метод: конвертирует строку версии в целое число для сравнения.
+    // Пример: "1.2.3" → 1*1000000 + 2*1000 + 3 = 1002003
+    // Так легко сравнивать: если remote > local — есть обновление.
     static int versionToInt(const QString &ver);
 };

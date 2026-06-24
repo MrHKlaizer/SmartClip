@@ -1,43 +1,70 @@
-#include "SettingsDialog.h"
-#include "HotkeyEdit.h"
-#include "core/AppSettings.h"
-#include "core/Database.h"
-#include "core/BugReporter.h"
-#include "core/Version.h"
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║  SettingsDialog.cpp — Диалог настроек SmartClip                            ║
+// ║                                                                              ║
+// ║  Это полностью кастомный диалог без стандартного заголовка Windows:         ║
+// ║  • FramelessWindowHint + WA_TranslucentBackground — убирает рамку          ║
+// ║  • Свой тайтл-бар с крестиком (SdCloseBtn) и перетаскиванием               ║
+// ║  • QPainterPath для скруглённого тёмного фона                               ║
+// ║                                                                              ║
+// ║  Структура — 5 вкладок (QTabWidget):                                        ║
+// ║  ① Система  — горячая клавиша, автозапуск, язык, масштаб, вид              ║
+// ║  ② История  — лимит, поведение, автоочистка, форматы, исключения           ║
+// ║  ③ Закрепы  — опции сохранения, лимит «Все»                                ║
+// ║  ④ Экспорт / Импорт — JSON-бекап, автобекап                                ║
+// ║  ⑤ Специальные возможности — бета, видео, обратная связь, обновления       ║
+// ║                                                                              ║
+// ║  Вспомогательные классы (внутренние, видны только в этом .cpp):             ║
+// ║  • SdCloseBtn  — кнопка-крестик с hover-эффектом                            ║
+// ║  • SdCheckBox  — чекбокс с кастомной отрисовкой (крестик вместо флага)     ║
+// ║  • SdDialog    — переиспользуемый мини-диалог (информация / вопрос / ввод) ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 
-#include <QPainter>
-#include <QPainterPath>
-#include <QTimer>
-#include <QTabWidget>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QFormLayout>
-#include <QGroupBox>
-#include <QCheckBox>
-#include <QSpinBox>
-#include <QComboBox>
-#include <QLineEdit>
-#include <QListWidget>
-#include <QScrollArea>
-#include <QAbstractButton>
-#include <QMouseEvent>
-#include <QMenu>
-#include <QFileDialog>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QDateTime>
-#include <QFile>
-#include <QPushButton>
-#include <QLabel>
-#include <QTextEdit>
-#include <QSettings>
-#include <QCoreApplication>
-#include <QFileInfo>
-#include <QDir>
-#include <QDebug>
+#include "SettingsDialog.h"
+#include "HotkeyEdit.h"             // Виджет захвата горячих клавиш
+#include "core/AppSettings.h"       // Синглтон настроек
+#include "core/Database.h"          // Чтение/запись в SQLite
+#include "core/BugReporter.h"       // Отправка обратной связи в Telegram
+#include "core/Version.h"           // APP_VERSION — строка вида "1.0.2"
+#include "core/UpdateChecker.h"     // Проверка обновлений через GitHub API
+
+// Qt-виджеты и инфраструктура:
+#include <QPainter>             // Рисование (paintEvent)
+#include <QPainterPath>         // Скруглённый прямоугольник
+#include <QTimer>               // QTimer::singleShot — отложенный вызов
+#include <QTabWidget>           // Виджет с вкладками
+#include <QVBoxLayout>          // Вертикальный лейаут (элементы друг под другом)
+#include <QHBoxLayout>          // Горизонтальный лейаут (элементы в ряд)
+#include <QFormLayout>          // Лейаут «метка : поле ввода»
+#include <QGroupBox>            // Группирующая рамка с заголовком
+#include <QCheckBox>            // Чекбокс (галочка)
+#include <QSpinBox>             // Числовое поле со стрелками ▲▼
+#include <QComboBox>            // Выпадающий список
+#include <QLineEdit>            // Однострочное текстовое поле
+#include <QListWidget>          // Список элементов
+#include <QScrollArea>          // Прокручиваемая область
+#include <QAbstractButton>      // Базовый класс для SdCloseBtn
+#include <QMouseEvent>          // Событие мыши (для перетаскивания диалога)
+#include <QMenu>                // Контекстное меню (не используется напрямую)
+#include <QFileDialog>          // Диалог выбора файла/папки
+#include <QJsonDocument>        // Сериализация/десериализация JSON
+#include <QJsonObject>          // JSON-объект ({ключ: значение})
+#include <QJsonArray>           // JSON-массив ([элемент, элемент])
+#include <QDateTime>            // Текущая дата/время для экспорта
+#include <QFile>                // Открытие файла для записи/чтения
+#include <QPushButton>          // Обычная кнопка
+#include <QLabel>               // Метка (текст, иконка)
+#include <QTextEdit>            // Многострочное текстовое поле
+#include <QSettings>            // Чтение/запись реестра Windows
+#include <QCoreApplication>     // applicationFilePath(), quit()
+#include <QFileInfo>            // baseName() — имя файла без пути и расширения
+#include <QDir>                 // toNativeSeparators() — слэши → обратные слэши
+#include <QDebug>               // qDebug() — вывод в консоль разработчика
 
 // ─── Автозапуск ───────────────────────────────────────────────────────────────
+// Записывает или удаляет SmartClip из реестра Windows автозапуска.
+// HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run —
+// стандартная ветка реестра: программы из неё стартуют при входе пользователя.
+// QSettings::NativeFormat — Qt работает с реестром напрямую (не через .ini-файл).
 static void applyAutostart(bool enable)
 {
     QSettings reg(
@@ -45,14 +72,18 @@ static void applyAutostart(bool enable)
         QSettings::NativeFormat
     );
     if (enable) {
+        // Записываем полный путь к .exe в кавычках (на случай пробелов в пути)
         QString exePath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
         reg.setValue("SmartClip", "\"" + exePath + "\"");
     } else {
+        // Удаляем ключ — программа больше не запускается автоматически
         reg.remove("SmartClip");
     }
 }
 
-// ─── Кнопка-крестик ───────────────────────────────────────────────────────────
+// ─── SdCloseBtn — кнопка закрытия диалога ────────────────────────────────────
+// Наследует QAbstractButton (базовый класс всех кнопок Qt).
+// Рисуется вручную: символ ✕ с hover-эффектом (белый → красный при наведении).
 class SdCloseBtn : public QAbstractButton {
 public:
     explicit SdCloseBtn(QWidget *p) : QAbstractButton(p) {
@@ -60,36 +91,42 @@ public:
         setCursor(Qt::PointingHandCursor);
     }
 protected:
+    // paintEvent — вызывается Qt каждый раз когда нужно нарисовать кнопку.
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
-        bool h = underMouse();
+        bool h = underMouse();  // true если курсор над кнопкой прямо сейчас
         p.setPen(h ? QColor("#ff6666") : QColor(255, 255, 255, 150));
         QFont f = font(); f.setPixelSize(15); p.setFont(f);
         p.drawText(rect().adjusted(0, 0, -4, 0), Qt::AlignRight | Qt::AlignVCenter, "✕");
     }
+    // Сигнализируем Qt что нужно перерисовать кнопку при смене hover-состояния.
     void enterEvent(QEnterEvent *e) override { update(); QAbstractButton::enterEvent(e); }
     void leaveEvent(QEvent *e)       override { update(); QAbstractButton::leaveEvent(e); }
 };
 
-// ─── Чекбокс с крестиком вместо синего квадрата ──────────────────────────────
+// ─── SdCheckBox — чекбокс с кастомным оформлением ────────────────────────────
+// Стандартный QCheckBox показывает синий квадрат с галочкой — это не вписывается
+// в тёмный дизайн. Рисуем свой: тёмный квадратик с белым ✕ когда включено.
 class SdCheckBox : public QCheckBox {
 public:
+    // «using QCheckBox::QCheckBox» — наследуем все конструкторы родителя без изменений.
     using QCheckBox::QCheckBox;
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
 
-        const int boxSize = 16;
-        const int spacing = 6;
+        const int boxSize = 16;   // Размер квадрата чекбокса
+        const int spacing = 6;    // Отступ между квадратом и текстом
+        // Центрируем квадрат по вертикали относительно виджета
         QRect box(0, (height() - boxSize) / 2, boxSize, boxSize);
 
-        // Рамка и фон индикатора
+        // Рисуем фон и рамку квадратика
         p.setPen(QPen(QColor(255, 255, 255, isChecked() ? 130 : 70), 1));
         p.setBrush(QColor(28, 28, 44, 245));
         p.drawRoundedRect(box.adjusted(0, 0, -1, -1), 3, 3);
 
-        // Белый ✕ когда включено
+        // Белый ✕ внутри когда включено
         if (isChecked()) {
             p.setPen(QColor(255, 255, 255, 230));
             QFont f = font();
@@ -98,7 +135,7 @@ protected:
             p.drawText(box, Qt::AlignCenter, "✕");
         }
 
-        // Текст метки
+        // Рисуем текст метки вручную (справа от квадрата)
         p.setPen(QColor(0xc0, 0xc0, 0xd0));
         p.setFont(font());
         p.drawText(rect().adjusted(boxSize + spacing, 0, 0, 0),
@@ -108,10 +145,17 @@ protected:
     void leaveEvent(QEvent *e)       override { update(); QCheckBox::leaveEvent(e); }
 };
 
-// ─── Мини-диалог (замена QMessageBox / QInputDialog) ─────────────────────────
+// ─── SdDialog — переиспользуемый мини-диалог ─────────────────────────────────
+// Заменяет стандартные QMessageBox и QInputDialog которые выглядят «не в стиле».
+// Состоит из:
+//   - тайтл-бара с заголовком и кнопкой закрытия
+//   - тела (m_body) — туда вставляем содержимое конкретного диалога
+// Перетаскивание реализовано через mousePressEvent/mouseMoveEvent/mouseReleaseEvent.
 class SdDialog : public QDialog {
 public:
     SdDialog(QWidget *parent, const QString &title) : QDialog(parent) {
+        // Qt::FramelessWindowHint — убираем стандартную рамку Windows
+        // Qt::WA_TranslucentBackground — фон окна прозрачный (мы рисуем свой)
         setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
         setAttribute(Qt::WA_TranslucentBackground);
         setMinimumWidth(340);
@@ -120,6 +164,7 @@ public:
         master->setContentsMargins(0, 0, 0, 0);
         master->setSpacing(0);
 
+        // Тайтл-бар: заголовок слева, кнопка закрытия справа
         m_titleBar = new QWidget(this);
         m_titleBar->setFixedHeight(36);
         m_titleBar->setStyleSheet("background: transparent;");
@@ -128,12 +173,13 @@ public:
         tl->setSpacing(0);
         auto *lbl = new QLabel(title, m_titleBar);
         lbl->setStyleSheet("color:#e0e0e0;font-size:13px;font-weight:bold;background:transparent;");
-        tl->addWidget(lbl, 1);
+        tl->addWidget(lbl, 1);  // stretch=1 — метка занимает всё свободное место
         auto *cb = new SdCloseBtn(m_titleBar);
         connect(cb, &QAbstractButton::clicked, this, &QDialog::reject);
         tl->addWidget(cb, 0, Qt::AlignVCenter);
         master->addWidget(m_titleBar);
 
+        // Тело диалога — сюда вставляется контент (метки, поля ввода, кнопки)
         auto *bw = new QWidget(this);
         bw->setStyleSheet("background: transparent;");
         auto *bwl = new QVBoxLayout(bw);
@@ -143,8 +189,10 @@ public:
         bwl->addWidget(m_body, 1);
         master->addWidget(bw, 1);
     }
+    // body() — возвращает виджет-контейнер куда вставляется содержимое.
     QWidget *body() { return m_body; }
 protected:
+    // Рисуем скруглённый тёмный фон диалога (как у SettingsDialog).
     void paintEvent(QPaintEvent *) override {
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
         QPainterPath path;
@@ -152,12 +200,14 @@ protected:
         p.fillPath(path, QColor(18, 18, 30, 252));
         p.setPen(QPen(QColor(255,255,255,55), 2)); p.drawPath(path);
     }
+    // Перетаскивание: запоминаем смещение курсора от угла окна при нажатии.
     void mousePressEvent(QMouseEvent *e) override {
         if (m_titleBar->geometry().contains(e->pos()) && e->button() == Qt::LeftButton)
             m_drag = e->globalPosition().toPoint() - frameGeometry().topLeft();
-        else m_drag = {};
+        else m_drag = {};  // QPoint() — «нулевой» (пустой) вектор
         QDialog::mousePressEvent(e);
     }
+    // При движении мыши — перемещаем окно используя сохранённое смещение.
     void mouseMoveEvent(QMouseEvent *e) override {
         if (!m_drag.isNull() && (e->buttons() & Qt::LeftButton))
             move(e->globalPosition().toPoint() - m_drag);
@@ -166,9 +216,11 @@ protected:
 private:
     QWidget *m_titleBar = nullptr;
     QWidget *m_body     = nullptr;
-    QPoint   m_drag;
+    QPoint   m_drag;   // Смещение курсора относительно угла окна (для перетаскивания)
 };
 
+// ── Стили кнопок для мини-диалогов ───────────────────────────────────────────
+// const char* — C-строка (не QString). Используется как QSS-стиль.
 static const char *SD_OK_BTN =
     "QPushButton{background:rgba(28,28,44,245);color:rgba(160,200,255,240);"
     "border:1px solid rgba(120,160,255,160);border-radius:6px;"
@@ -180,12 +232,15 @@ static const char *SD_CANCEL_BTN =
     "padding:5px 18px;font-size:13px;min-width:60px;}"
     "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}";
 
+// ── Вспомогательные функции для показа мини-диалогов ─────────────────────────
+
+// sdInfo — показывает диалог с сообщением и единственной кнопкой «ОК».
 static void sdInfo(QWidget *p, const QString &title, const QString &text) {
     SdDialog d(p, title);
     auto *vl = new QVBoxLayout(d.body());
     vl->setContentsMargins(0,0,0,0); vl->setSpacing(14);
     auto *lbl = new QLabel(text, d.body());
-    lbl->setWordWrap(true);
+    lbl->setWordWrap(true);   // Автоперенос длинных строк
     lbl->setStyleSheet("color:#d0d0d0;font-size:13px;background:transparent;");
     auto *br = new QHBoxLayout();
     auto *ok = new QPushButton(QObject::tr("ОК"), d.body());
@@ -193,9 +248,10 @@ static void sdInfo(QWidget *p, const QString &title, const QString &text) {
     br->addStretch(); br->addWidget(ok);
     vl->addWidget(lbl); vl->addLayout(br);
     QObject::connect(ok, &QPushButton::clicked, &d, &QDialog::accept);
-    d.exec();
+    d.exec();  // exec() — блокирующий показ: ждём пока пользователь закроет диалог
 }
 
+// sdQuestion — показывает диалог «Да / Нет». Возвращает true если нажали «Да».
 static bool sdQuestion(QWidget *p, const QString &title, const QString &text) {
     SdDialog d(p, title);
     auto *vl = new QVBoxLayout(d.body());
@@ -212,9 +268,11 @@ static bool sdQuestion(QWidget *p, const QString &title, const QString &text) {
     vl->addWidget(lbl); vl->addLayout(br);
     QObject::connect(yes, &QPushButton::clicked, &d, &QDialog::accept);
     QObject::connect(no,  &QPushButton::clicked, &d, &QDialog::reject);
+    // exec() == QDialog::Accepted — вернуть true только если нажали «Да»
     return d.exec() == QDialog::Accepted;
 }
 
+// sdInputText — диалог с полем ввода строки. Возвращает введённый текст или "".
 static QString sdInputText(QWidget *p, const QString &title, const QString &label) {
     SdDialog d(p, title); d.setMinimumWidth(360);
     auto *vl = new QVBoxLayout(d.body());
@@ -233,10 +291,12 @@ static QString sdInputText(QWidget *p, const QString &title, const QString &labe
     vl->addWidget(lbl); vl->addWidget(edit); vl->addStretch(); vl->addLayout(br);
     QObject::connect(ok,     &QPushButton::clicked, &d, &QDialog::accept);
     QObject::connect(cancel, &QPushButton::clicked, &d, &QDialog::reject);
+    // returnPressed — нажатие Enter подтверждает ввод (удобство)
     QObject::connect(edit, &QLineEdit::returnPressed, &d, &QDialog::accept);
     return d.exec() == QDialog::Accepted ? edit->text().trimmed() : QString{};
 }
 
+// sdInputItem — диалог с выпадающим списком. Возвращает выбранный элемент или "".
 static QString sdInputItem(QWidget *p, const QString &title, const QString &label,
                            const QStringList &items) {
     SdDialog d(p, title); d.setMinimumWidth(360);
@@ -245,7 +305,7 @@ static QString sdInputItem(QWidget *p, const QString &title, const QString &labe
     auto *lbl   = new QLabel(label, d.body());
     lbl->setStyleSheet("color:#c0c0d0;font-size:13px;background:transparent;");
     auto *combo = new QComboBox(d.body());
-    combo->addItems(items);
+    combo->addItems(items);  // Заполняем список переданными элементами
     combo->setStyleSheet(
         "QComboBox{background:rgba(28,28,44,245);color:#f0f0f0;"
         "border:1px solid rgba(255,255,255,55);border-radius:6px;padding:5px 10px;font-size:13px;}"
@@ -265,6 +325,8 @@ static QString sdInputItem(QWidget *p, const QString &title, const QString &labe
 }
 
 // ─── Диалог обратной связи ───────────────────────────────────────────────────
+// Показывает форму отправки жалобы/пожелания через Telegram Bot API.
+// SD_COMBO_STYLE / SD_TEXTEDIT_STYLE — QSS-стили для элементов диалога.
 static const char *SD_COMBO_STYLE =
     "QComboBox{background:rgba(28,28,44,245);color:#f0f0f0;"
     "border:1px solid rgba(255,255,255,55);border-radius:6px;padding:5px 10px;font-size:13px;}"
@@ -278,6 +340,9 @@ static const char *SD_TEXTEDIT_STYLE =
 
 static void showFeedbackDialog(QWidget *parent)
 {
+    // FTR — макрос для перевода строк в этой функции.
+    // QCoreApplication::translate("SettingsDialog", s) ищет перевод в файле SettingsDialog.
+    // Макрос нужен чтобы не писать длинное имя функции каждый раз.
 #define FTR(s) QCoreApplication::translate("SettingsDialog", s)
 
     SdDialog dlg(parent, FTR("Обратная связь"));
@@ -287,7 +352,8 @@ static void showFeedbackDialog(QWidget *parent)
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(10);
 
-    // Тип: жалоба / пожелание
+    // ── Тип сообщения ─────────────────────────────────────────────────────────
+    // Пользователь выбирает: жалоба (🔴) или пожелание (💡).
     auto *typeRow = new QHBoxLayout;
     typeRow->setSpacing(10);
     auto *typeLbl = new QLabel(FTR("Тип:"), dlg.body());
@@ -301,7 +367,7 @@ static void showFeedbackDialog(QWidget *parent)
     typeRow->addWidget(typeBox, 1);
     vl->addLayout(typeRow);
 
-    // Описание
+    // ── Поле описания ─────────────────────────────────────────────────────────
     auto *descLbl = new QLabel(FTR("Описание:"), dlg.body());
     descLbl->setStyleSheet("color:#c0c0d0;font-size:13px;background:transparent;");
     vl->addWidget(descLbl);
@@ -313,7 +379,8 @@ static void showFeedbackDialog(QWidget *parent)
     descEdit->setStyleSheet(SD_TEXTEDIT_STYLE);
     vl->addWidget(descEdit);
 
-    // ── Вложения ─────────────────────────────────────────────────────────────
+    // ── Вложения (медиафайлы) ─────────────────────────────────────────────────
+    // BugReporter ограничивает: MAX_PHOTOS фото, MAX_VIDEOS видео, MAX_AUDIOS аудио.
     auto *attachHeaderRow = new QHBoxLayout;
     attachHeaderRow->setSpacing(8);
 
@@ -336,6 +403,7 @@ static void showFeedbackDialog(QWidget *parent)
     attachHeaderRow->addWidget(attachBtn);
     vl->addLayout(attachHeaderRow);
 
+    // Список прикреплённых файлов (ПКМ → удалить)
     auto *attachList = new QListWidget(dlg.body());
     attachList->setFixedHeight(80);
     attachList->setStyleSheet(
@@ -344,7 +412,7 @@ static void showFeedbackDialog(QWidget *parent)
         "font-size:12px;outline:none;}"
         "QListWidget::item{padding:3px 6px;}"
         "QListWidget::item:selected{background:rgba(255,255,255,18);color:#fff;}");
-    attachList->setContextMenuPolicy(Qt::CustomContextMenu);
+    attachList->setContextMenuPolicy(Qt::CustomContextMenu);  // ПКМ → сигнал customContextMenuRequested
     vl->addWidget(attachList);
 
     auto *attachHint = new QLabel(
@@ -353,8 +421,11 @@ static void showFeedbackDialog(QWidget *parent)
     attachHint->setStyleSheet("color:rgba(160,160,180,150);font-size:11px;background:transparent;");
     vl->addWidget(attachHint);
 
+    // attached — список путей к прикреплённым файлам
     QList<QString> attached;
 
+    // Лямбда обновляет счётчики фото/видео/аудио в строке statsLbl.
+    // [&] — захватываем по ссылке все переменные из внешнего контекста.
     auto updateStats = [&]() {
         int photos = 0, videos = 0, audios = 0;
         for (const QString &p : attached) {
@@ -370,20 +441,23 @@ static void showFeedbackDialog(QWidget *parent)
                 .arg(videos).arg(BugReporter::MAX_VIDEOS)
                 .arg(audios).arg(BugReporter::MAX_AUDIOS));
     };
-    updateStats();
+    updateStats();  // Показываем начальные счётчики (0/4, 0/2, 0/5)
 
+    // Кнопка «Прикрепить»: открываем стандартный диалог выбора файлов
     QObject::connect(attachBtn, &QPushButton::clicked, [&]() {
         const QString filter =
             FTR("Медиафайлы (*.png *.jpg *.jpeg *.gif *.webp "
                 "*.mp4 *.mov *.avi *.mkv *.webm "
                 "*.mp3 *.ogg *.wav *.m4a *.flac *.aac);;"
                 "Все файлы (*.*)");
+        // getOpenFileNames — возвращает список файлов (можно выбрать несколько)
         QStringList files = QFileDialog::getOpenFileNames(
             &dlg, FTR("Прикрепить файлы"), QString(), filter);
 
         for (const QString &path : files) {
-            if (attached.contains(path)) continue;
+            if (attached.contains(path)) continue;  // Не добавлять дубликаты
             const auto kind = BugReporter::kindOfFile(path);
+            // Считаем текущее количество каждого типа
             int photos = 0, videos = 0, audios = 0;
             for (const QString &p : attached) {
                 switch (BugReporter::kindOfFile(p)) {
@@ -392,9 +466,11 @@ static void showFeedbackDialog(QWidget *parent)
                     case BugReporter::FileKind::Audio: ++audios; break;
                 }
             }
+            // Пропускаем если превышен лимит для данного типа
             if (kind == BugReporter::FileKind::Photo && photos >= BugReporter::MAX_PHOTOS) continue;
             if (kind == BugReporter::FileKind::Video && videos >= BugReporter::MAX_VIDEOS) continue;
             if (kind == BugReporter::FileKind::Audio && audios >= BugReporter::MAX_AUDIOS) continue;
+            // Иконка для типа файла
             QString icon;
             switch (kind) {
                 case BugReporter::FileKind::Photo: icon = QString::fromUtf8("📷"); break;
@@ -402,20 +478,24 @@ static void showFeedbackDialog(QWidget *parent)
                 case BugReporter::FileKind::Audio: icon = QString::fromUtf8("🎵"); break;
             }
             attached.append(path);
+            // Показываем только имя файла (без полного пути)
             attachList->addItem(icon + "  " + QFileInfo(path).fileName());
         }
         updateStats();
     });
 
+    // ПКМ по файлу в списке → удалить его
     QObject::connect(attachList, &QListWidget::customContextMenuRequested,
                      [&](const QPoint &pos) {
         QListWidgetItem *item = attachList->itemAt(pos);
         if (!item) return;
-        attached.removeAt(attachList->row(item));
-        delete item;
+        attached.removeAt(attachList->row(item));  // Удаляем путь из списка
+        delete item;   // Удаляем строку из QListWidget (delete виджет!)
         updateStats();
     });
 
+    // ── Ограничение по cooldown ───────────────────────────────────────────────
+    // BugReporter позволяет отправлять не чаще раза в COOLDOWN_HOURS часов.
     const bool canSend = BugReporter::canSend();
     if (!canSend) {
         const int hoursLeft = BugReporter::COOLDOWN_HOURS - BugReporter::hoursSinceLast();
@@ -426,6 +506,7 @@ static void showFeedbackDialog(QWidget *parent)
         vl->addWidget(infoLbl);
     }
 
+    // ── Кнопки «Отмена» и «Отправить» ────────────────────────────────────────
     auto *btnRow    = new QHBoxLayout;
     auto *cancelBtn = new QPushButton(FTR("Отмена"), dlg.body());
     auto *sendBtn   = new QPushButton(FTR("📩  Отправить"), dlg.body());
@@ -433,12 +514,13 @@ static void showFeedbackDialog(QWidget *parent)
     sendBtn->setStyleSheet(SD_OK_BTN);
     cancelBtn->setCursor(Qt::PointingHandCursor);
     sendBtn->setCursor(Qt::PointingHandCursor);
-    sendBtn->setEnabled(false);
+    sendBtn->setEnabled(false);  // Активируется когда введено >= 10 символов
     btnRow->addStretch();
     btnRow->addWidget(cancelBtn);
     btnRow->addWidget(sendBtn);
     vl->addLayout(btnRow);
 
+    // Активируем кнопку «Отправить» как только введено >= 10 символов
     QObject::connect(descEdit, &QTextEdit::textChanged, [&]() {
         sendBtn->setEnabled(canSend &&
                             descEdit->toPlainText().trimmed().length() >= 10);
@@ -446,21 +528,26 @@ static void showFeedbackDialog(QWidget *parent)
 
     QObject::connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
 
+    // Кнопка «Отправить»: создаём BugReporter и отправляем.
     QObject::connect(sendBtn, &QPushButton::clicked, [&, parent]() {
+        // Тип: индекс 0 = Bug (жалоба), 1 = Feature (пожелание)
         const BugReporter::Type selType = (typeBox->currentIndex() == 0)
             ? BugReporter::Type::Bug : BugReporter::Type::Feature;
         sendBtn->setEnabled(false);
         sendBtn->setText(FTR("Отправка..."));
 
+        // Создаём BugReporter с parent как родителем (не dlg — он исчезнет)
         auto *reporter = new BugReporter(parent);
         reporter->send(selType, descEdit->toPlainText(), attached);
 
+        // По сигналу sent — закрываем диалог и показываем «Спасибо!»
         QObject::connect(reporter, &BugReporter::sent, [&, reporter, parent]() {
-            reporter->deleteLater();
+            reporter->deleteLater();  // Удаляем reporter когда управление вернётся в Qt
             dlg.accept();
             sdInfo(parent, FTR("Спасибо!"),
                    FTR("Сообщение отправлено. Мы обязательно его рассмотрим!"));
         });
+        // По сигналу failed — показываем ошибку, разблокируем кнопку
         QObject::connect(reporter, &BugReporter::failed, [&, reporter, parent](const QString &err) {
             reporter->deleteLater();
             sendBtn->setEnabled(true);
@@ -471,24 +558,31 @@ static void showFeedbackDialog(QWidget *parent)
     });
 
     dlg.exec();
-#undef FTR
+#undef FTR   // Убираем макрос — он больше не нужен за пределами функции
 }
 
-// ─── Конструктор ─────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+//  КОНСТРУКТОР SettingsDialog
+//  Собирает все 5 вкладок и подключает логику кнопки «Сохранить».
+// ════════════════════════════════════════════════════════════════════════════════
 SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     : QDialog(parent)
 {
-    Q_UNUSED(db)
+    Q_UNUSED(db)  // db не нужен в этом конструкторе напрямую (передаётся в лямбды)
 
+    // Убираем стандартный заголовок Windows, делаем фон прозрачным
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
     setWindowTitle(tr("Настройки SmartClip"));
     setMinimumSize(520, 560);
 
-    // ── Глобальный стиль ──────────────────────────────────────────────────
+    // ── Глобальный QSS-стиль для всего диалога ───────────────────────────────
+    // QSS (Qt Style Sheet) — это CSS для Qt-виджетов.
+    // Здесь мы задаём стили для QTabWidget, QGroupBox, QLabel, QCheckBox,
+    // QSpinBox, QComboBox, QLineEdit, QListWidget, QPushButton, QScrollBar.
     setStyleSheet(
         "QWidget { background: transparent; }"
-        // Вкладки
+        // Вкладки (QTabWidget) — основной контейнер настроек
         "QTabWidget::pane {"
         "  background: rgba(20,20,32,210);"
         "  border: 1px solid rgba(255,255,255,35);"
@@ -504,25 +598,23 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         "QTabBar::tab:hover:!selected {"
         "  border: 1px solid rgba(255,255,255,70);"
         "  color: rgba(255,255,255,200); }"
-        // Группы
+        // Группирующие рамки
         "QGroupBox {"
         "  color: rgba(255,255,255,180);"
         "  border: 1px solid rgba(255,255,255,30);"
         "  border-radius: 8px; margin-top: 10px; padding-top: 10px; font-size: 12px; }"
         "QGroupBox::title {"
         "  subcontrol-origin: margin; left: 10px; padding: 0 6px; }"
-        // Метки
         "QLabel { color: #c0c0d0; font-size: 12px; background: transparent; }"
-        // Чекбоксы
         "QCheckBox { color: #c0c0d0; font-size: 12px; spacing: 6px; }"
-        // SpinBox
+        // Числовое поле
         "QSpinBox {"
         "  background: rgba(28,28,44,245); color: #f0f0f0;"
         "  border: 1px solid rgba(255,255,255,55);"
         "  border-radius: 4px; padding: 4px 8px; font-size: 12px; }"
         "QSpinBox::up-button, QSpinBox::down-button {"
         "  background: rgba(40,40,60,200); border: none; width: 18px; }"
-        // ComboBox
+        // Выпадающий список
         "QComboBox {"
         "  background: rgba(28,28,44,245); color: #f0f0f0;"
         "  border: 1px solid rgba(255,255,255,55);"
@@ -532,20 +624,20 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         "  background: rgba(22,22,36,252); color: #e0e0e0;"
         "  border: 1px solid rgba(255,255,255,55);"
         "  selection-background-color: rgba(255,255,255,18); outline: none; padding: 2px; }"
-        // LineEdit
+        // Текстовое поле
         "QLineEdit {"
         "  background: rgba(28,28,44,245); color: #f0f0f0;"
         "  border: 1px solid rgba(255,255,255,55);"
         "  border-radius: 4px; padding: 4px 8px; font-size: 12px; }"
         "QLineEdit:focus { border: 1px solid rgba(255,255,255,90); }"
-        // ListWidget
+        // Список
         "QListWidget {"
         "  background: rgba(22,22,36,200); color: #e0e0e0;"
         "  border: 1px solid rgba(255,255,255,40);"
         "  border-radius: 6px; font-size: 12px; outline: none; }"
         "QListWidget::item { padding: 3px 6px; }"
         "QListWidget::item:selected { background: rgba(255,255,255,18); color: #fff; }"
-        // Кнопки (по умолчанию)
+        // Обычные кнопки
         "QPushButton {"
         "  background: rgba(28,28,44,245); color: rgba(255,255,255,200);"
         "  border: 1px solid rgba(255,255,255,55);"
@@ -553,12 +645,12 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         "QPushButton:hover {"
         "  background: rgba(40,40,62,245);"
         "  border: 1px solid rgba(255,255,255,90); color: #fff; }"
-        // Кнопка «Сохранить»
+        // Кнопка «Сохранить» — зелёная (выбирается по objectName="saveBtn")
         "QPushButton#saveBtn {"
         "  background: rgba(30,80,40,220); color: #aaffaa;"
         "  border: 1px solid rgba(100,200,100,80); }"
         "QPushButton#saveBtn:hover { background: rgba(40,120,55,240); color: #fff; }"
-        // ScrollBar
+        // Полоса прокрутки — тонкая (4px), без кнопок
         "QScrollBar:vertical { background: transparent; width: 4px; margin: 4px 0; }"
         "QScrollBar::handle:vertical {"
         "  background: rgba(255,255,255,45); border-radius: 2px; min-height: 28px; }"
@@ -567,12 +659,12 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         "QScrollArea { background: transparent; border: none; }"
     );
 
-    // ── Главный лейаут ────────────────────────────────────────────────────
+    // ── Главный вертикальный лейаут ───────────────────────────────────────────
     auto *master = new QVBoxLayout(this);
     master->setContentsMargins(0, 0, 0, 0);
     master->setSpacing(0);
 
-    // Шапка
+    // ── Шапка с заголовком и кнопкой закрытия ────────────────────────────────
     m_titleBar = new QWidget(this);
     m_titleBar->setFixedHeight(36);
     m_titleBar->setStyleSheet("background: transparent;");
@@ -587,7 +679,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     tl->addWidget(closeBtn, 0, Qt::AlignVCenter);
     master->addWidget(m_titleBar);
 
-    // Тело
+    // ── Тело диалога — содержит вкладки и кнопки внизу ───────────────────────
     auto *body = new QWidget(this);
     body->setStyleSheet("background: transparent;");
     auto *bodyLayout = new QVBoxLayout(body);
@@ -597,15 +689,17 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     auto *tabs = new QTabWidget(body);
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Вкладка 1: Система
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка 1: Система
+    //  Горячая клавиша, автозапуск, язык, масштаб, внешний вид
+    // ═══════════════════════════════════════════════════════════════════════════
     auto *sysTab = new QWidget();
     auto *sysLayout = new QVBoxLayout(sysTab);
     sysLayout->setContentsMargins(14, 14, 14, 14);
     sysLayout->setSpacing(12);
 
-    // Горячая клавиша
+    // ── Горячая клавиша ───────────────────────────────────────────────────────
+    // HotkeyEdit — наш виджет для захвата горячих клавиш (см. HotkeyEdit.h/cpp).
     auto *hkGroup  = new QGroupBox(tr("Горячая клавиша"), sysTab);
     auto *hkLayout = new QVBoxLayout(hkGroup);
     hkLayout->setSpacing(8);
@@ -619,7 +713,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     hkLayout->addWidget(hkHint);
     hkLayout->addWidget(hotkeyEdit);
 
-    // Автозапуск
+    // ── Автозапуск ────────────────────────────────────────────────────────────
     auto *startGroup  = new QGroupBox(tr("Запуск системы"), sysTab);
     auto *startLayout = new QVBoxLayout(startGroup);
     auto *autostartCheck = new SdCheckBox(tr("Запускать SmartClip вместе с Windows"), startGroup);
@@ -631,7 +725,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     startLayout->addWidget(autostartCheck);
     startLayout->addWidget(startHint);
 
-    // Язык
+    // ── Язык ──────────────────────────────────────────────────────────────────
+    // itemData() хранит код языка ("ru", "ua", "en", "de") — используется при сохранении.
     auto *langGroup  = new QGroupBox(tr("Язык интерфейса"), sysTab);
     auto *langLayout = new QVBoxLayout(langGroup);
     langLayout->setSpacing(8);
@@ -650,7 +745,29 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     langLayout->addWidget(langCombo);
     langLayout->addWidget(langHint);
 
-    // Внешний вид
+    // ── Масштаб интерфейса ────────────────────────────────────────────────────
+    // itemData() хранит числовое значение масштаба (75, 90, 100, 110, 125).
+    auto *scaleGroup  = new QGroupBox(tr("Масштаб интерфейса"), sysTab);
+    auto *scaleLayout = new QVBoxLayout(scaleGroup);
+    scaleLayout->setSpacing(8);
+    auto *scaleCombo = new QComboBox(scaleGroup);
+    scaleCombo->addItem(tr("75% — компактный"),    75);
+    scaleCombo->addItem(tr("90%"),                 90);
+    scaleCombo->addItem(tr("100% — стандартный"), 100);
+    scaleCombo->addItem(tr("110%"),               110);
+    scaleCombo->addItem(tr("125% — крупный"),     125);
+    int curScale = AppSettings::get().uiScale();
+    for (int i = 0; i < scaleCombo->count(); ++i)
+        if (scaleCombo->itemData(i).toInt() == curScale) { scaleCombo->setCurrentIndex(i); break; }
+    auto *scaleHint = new QLabel(
+        tr("Изменение масштаба требует перезапуска приложения."), scaleGroup);
+    scaleHint->setWordWrap(true);
+    scaleHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
+    scaleLayout->addWidget(scaleCombo);
+    scaleLayout->addWidget(scaleHint);
+
+    // ── Внешний вид ───────────────────────────────────────────────────────────
+    // solidPanels — тёмный непрозрачный фон за колонками.
     auto *uiGroup  = new QGroupBox(tr("Внешний вид"), sysTab);
     auto *uiLayout = new QVBoxLayout(uiGroup);
     auto *blurCheck = new SdCheckBox(tr("Тёмный фон за колонками"), uiGroup);
@@ -662,32 +779,36 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     uiLayout->addWidget(blurCheck);
     uiLayout->addWidget(blurHint);
 
+    // Добавляем группы на вкладку и растягиваем (addStretch → свободное место снизу)
     sysLayout->addWidget(hkGroup);
     sysLayout->addWidget(startGroup);
     sysLayout->addWidget(langGroup);
+    sysLayout->addWidget(scaleGroup);
     sysLayout->addWidget(uiGroup);
     sysLayout->addStretch();
 
     tabs->addTab(sysTab, tr("⚙️  Система"));
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Вкладка 2: История (с прокруткой — много контента)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка 2: История
+    //  Завёрнута в QScrollArea — содержимого много, не всегда помещается
+    // ═══════════════════════════════════════════════════════════════════════════
     auto *histScroll = new QScrollArea();
-    histScroll->setWidgetResizable(true);
+    histScroll->setWidgetResizable(true);      // Виджет внутри подстраивается по ширине
     histScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto *histTab    = new QWidget();
     auto *histLayout = new QVBoxLayout(histTab);
     histLayout->setContentsMargins(14, 14, 14, 14);
     histLayout->setSpacing(12);
 
-    // Лимит записей
+    // ── Лимит записей ─────────────────────────────────────────────────────────
+    // QFormLayout — удобный лейаут для формы: «метка» | «поле ввода».
     auto *limitGroup  = new QGroupBox(tr("Размер буфера"), histTab);
     auto *limitLayout = new QFormLayout(limitGroup);
     limitLayout->setSpacing(8);
     auto *maxRecordsSpin = new QSpinBox(limitGroup);
     maxRecordsSpin->setRange(10, 2000);
-    maxRecordsSpin->setSingleStep(50);
+    maxRecordsSpin->setSingleStep(50);   // Шаг изменения при нажатии ▲▼
     maxRecordsSpin->setValue(AppSettings::get().maxHistoryRecords());
     auto *limitHint = new QLabel(
         tr("Сколько записей хранить в истории. При превышении\nстарые записи удаляются автоматически."), limitGroup);
@@ -695,15 +816,17 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     limitLayout->addRow(tr("Максимум записей:"), maxRecordsSpin);
     limitLayout->addRow(limitHint);
 
-    // Поведение
+    // ── Поведение при копировании ─────────────────────────────────────────────
     auto *behavGroup  = new QGroupBox(tr("Поведение"), histTab);
     auto *behavLayout = new QVBoxLayout(behavGroup);
     behavLayout->setSpacing(10);
     auto *saveImagesCheck = new SdCheckBox(tr("Сохранять изображения из буфера"), behavGroup);
     saveImagesCheck->setChecked(AppSettings::get().saveImages());
+    // Дедупликация: не сохранять если такой текст уже есть в истории
     auto *dedupCheck = new SdCheckBox(
         tr("Дедупликация — не сохранять если такой текст уже есть"), behavGroup);
     dedupCheck->setChecked(AppSettings::get().deduplication());
+    // Минимальная длина текста — игнорировать слишком короткие копирования
     auto *minLenLayout = new QHBoxLayout();
     auto *minLenLabel  = new QLabel(tr("Минимальная длина текста:"), behavGroup);
     auto *minLenSpin   = new QSpinBox(behavGroup);
@@ -720,7 +843,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     behavLayout->addWidget(dedupCheck);
     behavLayout->addLayout(minLenLayout);
 
-    // Автоочистка
+    // ── Автоочистка ───────────────────────────────────────────────────────────
+    // setSpecialValueText("Выкл") — когда значение = minimum (0), показывает "Выкл".
     auto *cleanGroup  = new QGroupBox(tr("Автоочистка"), histTab);
     auto *cleanLayout = new QHBoxLayout(cleanGroup);
     cleanLayout->setSpacing(8);
@@ -728,7 +852,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *cleanSpin  = new QSpinBox(cleanGroup);
     cleanSpin->setRange(0, 365);
     cleanSpin->setValue(AppSettings::get().autocleanDays());
-    cleanSpin->setSpecialValueText(tr("Выкл"));
+    cleanSpin->setSpecialValueText(tr("Выкл"));  // 0 → "Выкл"
     cleanSpin->setFixedWidth(90);
     auto *cleanDaysLabel = new QLabel(tr("дней"), cleanGroup);
     cleanDaysLabel->setStyleSheet("color: rgba(255,255,255,100);");
@@ -737,7 +861,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     cleanLayout->addWidget(cleanDaysLabel);
     cleanLayout->addStretch();
 
-    // Исключения приложений
+    // ── Исключения приложений ─────────────────────────────────────────────────
+    // Список программ из которых НЕ сохранять в историю (например: KeePass).
     auto *exclGroup  = new QGroupBox(tr("Исключения приложений"), histTab);
     auto *exclLayout = new QVBoxLayout(exclGroup);
     exclLayout->setSpacing(6);
@@ -748,6 +873,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     exclHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
     auto *exclList = new QListWidget(exclGroup);
     exclList->setFixedHeight(100);
+    // Заполняем список сохранёнными исключениями
     for (const QString &app : AppSettings::get().excludedApps())
         exclList->addItem(app);
     auto *exclBtnRow    = new QHBoxLayout();
@@ -777,6 +903,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     exclLayout->addWidget(exclList);
     exclLayout->addLayout(exclBtnRow);
 
+    // «+ Из истории» — показывает список приложений из БД
     connect(addFromHistBtn, &QPushButton::clicked, [=]() {
         QStringList apps = db->getAppNames();
         if (apps.isEmpty()) {
@@ -784,6 +911,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
                    tr("В истории пока нет записей с именами приложений."));
             return;
         }
+        // Убираем приложения которые уже в списке исключений
         for (int i = 0; i < exclList->count(); ++i)
             apps.removeAll(exclList->item(i)->text());
         if (apps.isEmpty()) {
@@ -796,17 +924,21 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         if (!chosen.isEmpty()) exclList->addItem(chosen);
     });
 
+    // «+ Вручную» — пользователь вводит имя .exe сам
     connect(addManualBtn, &QPushButton::clicked, [=]() {
         QString name = sdInputText(this, tr("Добавить исключение"),
                                    tr("Имя .exe файла (без расширения):"));
         if (!name.isEmpty()) exclList->addItem(name);
     });
 
+    // «✕ Удалить» — удаляет выделенные строки из списка
     connect(exclDelBtn, &QPushButton::clicked, [=]() {
         for (auto *item : exclList->selectedItems()) delete item;
     });
 
-    // Формат изображений
+    // ── Формат изображений ────────────────────────────────────────────────────
+    // PNG — без потерь (больше места), JPEG — меньше места (с артефактами).
+    // qualSpin активен только при выборе JPEG (для PNG качество не настраивается).
     auto *imgGroup  = new QGroupBox(tr("Формат изображений"), histTab);
     auto *imgLayout = new QVBoxLayout(imgGroup);
     imgLayout->setSpacing(8);
@@ -822,10 +954,11 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *qualSpin  = new QSpinBox(imgGroup);
     qualSpin->setRange(1, 100);
     qualSpin->setValue(AppSettings::get().imageQuality());
-    qualSpin->setSuffix("%");
+    qualSpin->setSuffix("%");  // Добавляет «%» после числа: «85%»
     qualSpin->setFixedWidth(75);
     qualRow->addWidget(qualLabel); qualRow->addWidget(qualSpin); qualRow->addStretch();
-    qualSpin->setEnabled(fmtCombo->currentIndex() == 1);
+    qualSpin->setEnabled(fmtCombo->currentIndex() == 1);  // Активно только для JPEG
+    // QOverload<int>::of — уточняем какой именно сигнал currentIndexChanged (с int)
     connect(fmtCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             [=](int idx){ qualSpin->setEnabled(idx == 1); });
     imgLayout->addLayout(fmtRow);
@@ -838,12 +971,13 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     histLayout->addWidget(exclGroup);
     histLayout->addStretch();
 
-    histScroll->setWidget(histTab);
+    histScroll->setWidget(histTab);  // Вставляем виджет в прокручиваемую область
     tabs->addTab(histScroll, tr("📋  История"));
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Вкладка 3: Закрепы
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка 3: Закрепы
+    //  Опции поведения при закреплении и настройка вкладки «Все»
+    // ═══════════════════════════════════════════════════════════════════════════
     auto *pinsTab    = new QWidget();
     auto *pinsLayout = new QVBoxLayout(pinsTab);
     pinsLayout->setContentsMargins(14, 14, 14, 14);
@@ -852,12 +986,14 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *pinsGroup  = new QGroupBox(tr("Поведение"), pinsTab);
     auto *pinsGrpLay = new QVBoxLayout(pinsGroup);
     pinsGrpLay->setSpacing(10);
+    // noName — закреп без имени (не спрашивать название)
     auto *noNameCheck = new SdCheckBox(tr("Не спрашивать название при закреплении"), pinsGroup);
     noNameCheck->setChecked(AppSettings::get().pinsNoName());
     auto *noNameHint = new QLabel(
         tr("Закреп сохраняется без имени, диалог названия не появляется."), pinsGroup);
     noNameHint->setWordWrap(true);
     noNameHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px; margin-bottom: 6px;");
+    // noFolder — закреп без папки (не спрашивать куда сохранить)
     auto *noFolderCheck = new SdCheckBox(tr("Не спрашивать папку при закреплении"), pinsGroup);
     noFolderCheck->setChecked(AppSettings::get().pinsNoFolder());
     auto *noFolderHint = new QLabel(
@@ -870,6 +1006,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     pinsGrpLay->addWidget(noFolderHint);
     pinsLayout->addWidget(pinsGroup);
 
+    // Лимит «недавних» во вкладке «Все»
     auto *recentGroup  = new QGroupBox(tr("Вкладка «Все»"), pinsTab);
     auto *recentLayout = new QFormLayout(recentGroup);
     recentLayout->setSpacing(8);
@@ -887,14 +1024,16 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     tabs->addTab(pinsTab, tr("📌  Закрепы"));
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Вкладка 4: Экспорт / Импорт
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка 4: Экспорт / Импорт
+    //  JSON-бекап закрепов, профилей, настроек; автобекап по расписанию
+    // ═══════════════════════════════════════════════════════════════════════════
     auto *ioTab    = new QWidget();
     auto *ioLayout = new QVBoxLayout(ioTab);
     ioLayout->setContentsMargins(14, 14, 14, 14);
     ioLayout->setSpacing(12);
 
+    // ── Экспорт ───────────────────────────────────────────────────────────────
     auto *exportGroup  = new QGroupBox(tr("Экспорт"), ioTab);
     auto *exportLayout = new QVBoxLayout(exportGroup);
     exportLayout->setSpacing(8);
@@ -912,6 +1051,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     exportLayout->addWidget(exportHint);
     exportLayout->addWidget(exportBtn, 0, Qt::AlignLeft);
 
+    // ── Импорт ────────────────────────────────────────────────────────────────
     auto *importGroup  = new QGroupBox(tr("Импорт"), ioTab);
     auto *importLayout = new QVBoxLayout(importGroup);
     importLayout->setSpacing(8);
@@ -929,6 +1069,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     importLayout->addWidget(importHint);
     importLayout->addWidget(importBtn, 0, Qt::AlignLeft);
 
+    // ── Автобекап ─────────────────────────────────────────────────────────────
+    // Автоматически сохраняет бекап в заданную папку раз в N дней.
     auto *backupGroup  = new QGroupBox(tr("Автобекап"), ioTab);
     auto *backupLayout = new QVBoxLayout(backupGroup);
     backupLayout->setSpacing(8);
@@ -953,11 +1095,13 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     backupBrowseBtn->setToolTip(tr("Выбрать папку"));
     backupPathRow->addWidget(backupPathEdit);
     backupPathRow->addWidget(backupBrowseBtn);
+    // Кнопка 📁 — открывает диалог выбора папки
     connect(backupBrowseBtn, &QPushButton::clicked, [=]() {
         QString dir = QFileDialog::getExistingDirectory(
             this, tr("Папка для автобекапов"), backupPathEdit->text());
         if (!dir.isEmpty()) backupPathEdit->setText(dir);
     });
+    // Блокируем/разблокируем поля в зависимости от состояния чекбокса
     auto toggleBackup = [=](bool on) {
         backupDaysSpin->setEnabled(on);
         backupPathEdit->setEnabled(on);
@@ -976,14 +1120,16 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     tabs->addTab(ioTab, tr("💾  Экспорт / Импорт"));
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Вкладка 5: Бета
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка 5: Специальные возможности (Бета)
+    //  Экспериментальные функции + обратная связь + версия + обновления
+    // ═══════════════════════════════════════════════════════════════════════════
     auto *betaTab    = new QWidget();
     auto *betaLayout = new QVBoxLayout(betaTab);
     betaLayout->setContentsMargins(14, 14, 14, 14);
     betaLayout->setSpacing(12);
 
+    // Предупреждение что функции экспериментальные
     auto *betaHintLabel = new QLabel(
         tr("⚡ Бета-функции — могут работать нестабильно.\n"
            "Присылай баги, будем фиксить!"), betaTab);
@@ -993,6 +1139,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         "background:rgba(50,40,10,120);border:1px solid rgba(200,160,0,60);"
         "border-radius:6px;padding:7px 10px;");
 
+    // ── Автозахват записей экрана ─────────────────────────────────────────────
+    // VideoWatcher следит за папкой и добавляет новые видео в историю.
     auto *videoGroup  = new QGroupBox(tr("Автозахват записей экрана"), betaTab);
     auto *videoLayout = new QVBoxLayout(videoGroup);
     videoLayout->setSpacing(8);
@@ -1019,6 +1167,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             this, tr("Папка с видеозаписями"), videoPathEdit->text());
         if (!dir.isEmpty()) videoPathEdit->setText(dir);
     });
+    // Блокируем поле пути если функция выключена
     auto toggleVideo = [=](bool on) {
         videoPathEdit->setEnabled(on);
         videoBrowseBtn->setEnabled(on);
@@ -1029,7 +1178,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     videoLayout->addWidget(videoHint);
     videoLayout->addLayout(videoPathRow);
 
-    // Кнопка обратной связи
+    // ── Кнопка «Сообщить об ошибке» ──────────────────────────────────────────
     auto *feedbackBtn = new QPushButton(
         tr("📩  Сообщить об ошибке / пожелании"), betaTab);
     feedbackBtn->setStyleSheet(
@@ -1040,26 +1189,115 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         "border-color:rgba(160,200,255,200);}");
     feedbackBtn->setCursor(Qt::PointingHandCursor);
     connect(feedbackBtn, &QPushButton::clicked, this, [this]() {
-        showFeedbackDialog(this);
+        showFeedbackDialog(this);  // Показываем диалог обратной связи
     });
 
+    // ── Версия ────────────────────────────────────────────────────────────────
+    // APP_VERSION — константа из Version.h, например "1.0.2".
+    // QLatin1String — быстрое создание QString из ASCII-строки.
     auto *versionLbl = new QLabel(
         tr("SmartClip v%1").arg(QLatin1String(APP_VERSION)), betaTab);
     versionLbl->setStyleSheet(
         "color:rgba(255,255,255,80);font-size:11px;background:transparent;");
     versionLbl->setAlignment(Qt::AlignRight);
 
+    // ── Ручная проверка обновлений ────────────────────────────────────────────
+    // При нажатии создаём UpdateChecker и запускаем check(false) (false = не показывать
+    // диалог при актуальной версии, только если есть обновление).
+    auto *checkUpdBtn = new QPushButton(tr("🔍  Проверить наличие обновлений"), betaTab);
+    checkUpdBtn->setStyleSheet(
+        "QPushButton{background:rgba(255,255,255,12);color:rgba(255,255,255,180);"
+        "border:1px solid rgba(255,255,255,40);border-radius:6px;padding:6px 14px;font-size:12px;}"
+        "QPushButton:hover{background:rgba(255,255,255,22);color:#fff;}");
+    checkUpdBtn->setCursor(Qt::PointingHandCursor);
+
+    connect(checkUpdBtn, &QPushButton::clicked, this, [this, checkUpdBtn]() {
+        checkUpdBtn->setEnabled(false);
+        checkUpdBtn->setText(tr("⏳  Проверка..."));
+
+        // UpdateChecker — объект одноразового запроса к GitHub API.
+        // Родитель this — если диалог закроется, Qt удалит uc автоматически.
+        auto *uc = new UpdateChecker(this);
+
+        // Нашли новую версию — обновляем плашку и текст кнопки
+        connect(uc, &UpdateChecker::updateAvailable, this,
+                [this, checkUpdBtn](const QString &ver, const QString &url, const QString &notes) {
+            setPendingUpdate(ver, url, notes);
+            checkUpdBtn->setText(tr("🆙  Найдена версия %1").arg(ver));
+            checkUpdBtn->setEnabled(true);
+        });
+        // Версия актуальная — сообщаем пользователю
+        connect(uc, &UpdateChecker::upToDate, this, [checkUpdBtn]() {
+            checkUpdBtn->setText(tr("✓  Уже актуальная версия"));
+            checkUpdBtn->setEnabled(true);
+        });
+        // Ошибка соединения — сообщаем пользователю
+        connect(uc, &UpdateChecker::checkFailed, this, [checkUpdBtn](const QString &) {
+            checkUpdBtn->setText(tr("✕  Ошибка соединения"));
+            checkUpdBtn->setEnabled(true);
+        });
+
+        // check(false) — false означает «не форсировать показ диалога при upToDate»
+        uc->check(false);
+    });
+
+    // ── Плашка обновления (скрыта до setPendingUpdate) ────────────────────────
+    // Показывается когда UpdateChecker нашёл новую версию.
+    // m_updateBanner — хранится в h-файле чтобы setPendingUpdate() мог к ней обратиться.
+    m_updateBanner = new QWidget(betaTab);
+    m_updateBanner->setStyleSheet(
+        "background:rgba(255,200,50,18);border:1px solid rgba(255,200,50,80);"
+        "border-radius:8px;");
+    m_updateBanner->hide();  // Скрыта до получения информации об обновлении
+
+    auto *bannerRow  = new QHBoxLayout(m_updateBanner);
+    bannerRow->setContentsMargins(14, 10, 14, 10);
+    bannerRow->setSpacing(10);
+
+    auto *bannerIcon = new QLabel("🆙", m_updateBanner);
+    bannerIcon->setStyleSheet("background:transparent;font-size:18px;");
+
+    // bannerText имеет objectName — по нему найдём этот QLabel в setPendingUpdate()
+    // через findChild<QLabel*>("bannerText")
+    auto *bannerText = new QLabel(m_updateBanner);
+    bannerText->setObjectName("bannerText");
+    bannerText->setStyleSheet(
+        "background:transparent;color:rgba(255,220,100,220);font-size:12px;");
+    bannerText->setWordWrap(true);
+
+    auto *bannerBtn = new QPushButton(tr("Обновить"), m_updateBanner);
+    bannerBtn->setFixedWidth(90);
+    bannerBtn->setStyleSheet(
+        "QPushButton{background:rgba(255,200,50,200);color:#1a1200;"
+        "border:none;border-radius:5px;padding:5px 10px;font-weight:bold;font-size:12px;}"
+        "QPushButton:hover{background:rgba(255,220,80,230);}");
+
+    bannerRow->addWidget(bannerIcon);
+    bannerRow->addWidget(bannerText, 1);
+    bannerRow->addWidget(bannerBtn);
+
+    // Кнопка «Обновить» — отправляет сигнал updateRequested и закрывает диалог.
+    connect(bannerBtn, &QPushButton::clicked, this, [this]() {
+        emit updateRequested(m_pendingVersion, m_pendingUrl, m_pendingNotes);
+        reject();  // Закрываем настройки (MainWindow откроет браузер)
+    });
+
     betaLayout->addWidget(betaHintLabel);
     betaLayout->addWidget(videoGroup);
     betaLayout->addWidget(feedbackBtn);
+    betaLayout->addWidget(checkUpdBtn);
     betaLayout->addStretch();
+    betaLayout->addWidget(m_updateBanner);
     betaLayout->addWidget(versionLbl);
     betaLayout->addStretch();
 
     tabs->addTab(betaTab, tr("⚡  Специальные возможности"));
 
-    // ── Логика экспорта ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Логика экспорта (JSON-файл с закрепами, профилями, настройками)
+    // ═══════════════════════════════════════════════════════════════════════════
     connect(exportBtn, &QPushButton::clicked, [=]() {
+        // getSaveFileName — стандартный диалог «Сохранить как»
         QString path = QFileDialog::getSaveFileName(
             this, tr("Экспорт SmartClip"), "smartclip_backup.json",
             tr("JSON файл (*.json)"));
@@ -1069,6 +1307,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         root["version"]     = "1.0";
         root["exported_at"] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
+        // Собираем все закрепы: сначала без папки, потом по каждой папке
         QJsonArray allPins;
         auto addPinsFromFolder = [&](const QString &folder) {
             for (const PinItem &p : db->getPins(folder)) {
@@ -1081,11 +1320,12 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
                 allPins.append(obj);
             }
         };
-        addPinsFromFolder("");
+        addPinsFromFolder("");  // Закрепы без папки
         for (const FolderItem &f : db->getAllFolders())
-            addPinsFromFolder(f.name);
+            addPinsFromFolder(f.name);  // Закрепы из каждой папки
         root["pins"] = allPins;
 
+        // Профили (горячие клавиши)
         QJsonArray profArr;
         for (const ProfileItem &p : db->getProfiles()) {
             QJsonObject obj;
@@ -1096,6 +1336,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         }
         root["profiles"] = profArr;
 
+        // Основные настройки
         QJsonObject cfg;
         cfg["mainHotkey"]    = AppSettings::get().mainHotkey();
         cfg["maxRecords"]    = AppSettings::get().maxHistoryRecords();
@@ -1107,8 +1348,10 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         cfg["pinsNoName"]    = AppSettings::get().pinsNoName();
         root["settings"]     = cfg;
 
+        // Записываем JSON в файл
         QFile file(path);
         if (file.open(QIODevice::WriteOnly)) {
+            // QJsonDocument::Indented — форматируем с отступами (читаемый JSON)
             file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
             file.close();
             sdInfo(this, tr("Экспорт завершён"),
@@ -1118,7 +1361,9 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         }
     });
 
-    // ── Логика импорта ────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Логика импорта (читаем JSON и добавляем данные в БД)
+    // ═══════════════════════════════════════════════════════════════════════════
     connect(importBtn, &QPushButton::clicked, [=]() {
         QString path = QFileDialog::getOpenFileName(
             this, tr("Импорт SmartClip"), "",
@@ -1130,6 +1375,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             sdInfo(this, tr("Ошибка"), tr("Не удалось открыть файл."));
             return;
         }
+        // fromJson + QJsonParseError — проверяем что файл валидный JSON
         QJsonParseError err;
         QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
         file.close();
@@ -1141,6 +1387,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
         QJsonObject root = doc.object();
         int pinCount = 0, profCount = 0;
+        // Добавляем закрепы из JSON в БД (не удаляя существующие)
         for (const QJsonValue &v : root["pins"].toArray()) {
             QJsonObject o = v.toObject();
             db->addPin(o["folder"].toString(), o["name"].toString(),
@@ -1148,11 +1395,13 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
                        o["filepath"].toString());
             ++pinCount;
         }
+        // Добавляем профили
         for (const QJsonValue &v : root["profiles"].toArray()) {
             QJsonObject o = v.toObject();
             db->addProfile(o["name"].toString(), o["hotkey"].toString(), o["text"].toString());
             ++profCount;
         }
+        // Применяем настройки из бекапа если они есть
         if (root.contains("settings")) {
             QJsonObject cfg = root["settings"].toObject();
             if (cfg.contains("maxRecords"))    AppSettings::get().setMaxHistoryRecords(cfg["maxRecords"].toInt());
@@ -1168,17 +1417,19 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
                 AppSettings::get().setExcludedApps(excl);
             }
         }
-        emit settingsChanged();
+        emit settingsChanged();  // Уведомляем MainWindow что настройки изменились
         sdInfo(this, tr("Импорт завершён"),
                tr("Импортировано: закрепов — %1, профилей — %2.\n"
                   "Перезагрузите историю чтобы увидеть изменения.").arg(pinCount).arg(profCount));
     });
 
-    // ── Кнопки внизу ─────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Кнопки «Отмена» и «Сохранить» внизу диалога
+    // ═══════════════════════════════════════════════════════════════════════════
     auto *btnBox   = new QHBoxLayout();
     auto *cancelBtn = new QPushButton(tr("Отмена"), body);
     auto *saveBtn   = new QPushButton(tr("Сохранить"), body);
-    saveBtn->setObjectName("saveBtn");
+    saveBtn->setObjectName("saveBtn");  // По этому имени QSS применяет зелёный стиль
     cancelBtn->setCursor(Qt::PointingHandCursor);
     saveBtn->setCursor(Qt::PointingHandCursor);
     btnBox->addStretch();
@@ -1190,14 +1441,16 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
 
+    // ── Кнопка «Сохранить» — применяет все настройки ─────────────────────────
     connect(saveBtn, &QPushButton::clicked, this, [=]() {
+
         // Горячая клавиша
         QString newHotkey = hotkeyEdit->text().trimmed();
         if (newHotkey.isEmpty()) newHotkey = "Ctrl+Shift+V";
         bool hotkeyChanged = (newHotkey != AppSettings::get().mainHotkey());
         AppSettings::get().setMainHotkey(newHotkey);
 
-        // Автозапуск
+        // Автозапуск (записывает/удаляет ключ реестра)
         bool autostartOn = autostartCheck->isChecked();
         AppSettings::get().setAutostart(autostartOn);
         applyAutostart(autostartOn);
@@ -1214,7 +1467,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         AppSettings::get().setImageFormat(fmtCombo->currentData().toString());
         AppSettings::get().setImageQuality(qualSpin->value());
 
-        // Исключения
+        // Исключения: собираем строки из QListWidget в QStringList
         QStringList excluded;
         for (int i = 0; i < exclList->count(); ++i)
             excluded << exclList->item(i)->text();
@@ -1230,46 +1483,81 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         AppSettings::get().setAutoBackupDays(backupDaysSpin->value());
         AppSettings::get().setAutoBackupPath(backupPathEdit->text().trimmed());
 
-        // Бета: видео
+        // Бета: видеомонитор
         AppSettings::get().setVideoMonitorEnabled(videoCheck->isChecked());
         AppSettings::get().setVideoMonitorPath(videoPathEdit->text().trimmed());
 
+        // Отправляем сигналы об изменениях
         if (hotkeyChanged) emit mainHotkeyChanged(newHotkey);
         emit settingsChanged();
 
-        // Язык
+        // Язык — проверяем изменился ли (нужен перезапуск)
         QString newLang  = langCombo->currentData().toString();
         bool langChanged = (newLang != AppSettings::get().language());
         AppSettings::get().setLanguage(newLang);
 
-        accept();
+        // Масштаб — тоже требует перезапуска
+        int newScale   = scaleCombo->currentData().toInt();
+        bool scaleChanged = (newScale != AppSettings::get().uiScale());
+        AppSettings::get().setUiScale(newScale);
 
-        if (langChanged) {
+        accept();  // Закрываем диалог с результатом «принято»
+
+        // Если сменился язык или масштаб — предлагаем перезапуск
+        if (langChanged || scaleChanged) {
             if (sdQuestion(parentWidget(),
-                           tr("Смена языка"),
-                           tr("Для применения языка необходимо перезапустить приложение.\n"
+                           tr("Перезапуск"),
+                           tr("Для применения изменений необходимо перезапустить приложение.\n"
                               "Перезапустить сейчас?"))) {
+                // setRestartRequested → main.cpp перезапустит SmartClip через QProcess::startDetached
                 AppSettings::get().setRestartRequested(true);
+                // singleShot(0) — выход из цикла событий после завершения текущего обработчика
                 QTimer::singleShot(0, qApp, &QCoreApplication::quit);
             }
         }
     });
 }
 
-// ─── Отрисовка ───────────────────────────────────────────────────────────────
+// ─── setPendingUpdate — показать/обновить плашку об обновлении ───────────────
+// Вызывается из UpdateChecker::updateAvailable или при ручной проверке.
+// Обновляет текст плашки и делает её видимой.
+void SettingsDialog::setPendingUpdate(const QString &version, const QString &url,
+                                      const QString &notes)
+{
+    if (version.isEmpty() || url.isEmpty() || !m_updateBanner)
+        return;
+
+    m_pendingVersion = version;
+    m_pendingUrl     = url;
+    m_pendingNotes   = notes;
+
+    // findChild — ищем QLabel с objectName == "bannerText" среди дочерних виджетов
+    auto *lbl = m_updateBanner->findChild<QLabel*>("bannerText");
+    if (lbl)
+        lbl->setText(tr("Доступна новая версия %1 — нажми «Обновить» чтобы установить.").arg(version));
+
+    m_updateBanner->show();  // Показываем ранее скрытую плашку
+}
+
+// ─── paintEvent — рисуем скруглённый тёмный фон диалога ─────────────────────
 void SettingsDialog::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     QPainterPath path;
+    // adjusted(1,1,-1,-1) — уменьшаем на 1px чтобы рамка не обрезалась
     path.addRoundedRect(QRectF(rect()).adjusted(1,1,-1,-1), 12, 12);
-    p.fillPath(path, QColor(18, 18, 30, 252));
-    p.setPen(QPen(QColor(255,255,255,55), 2));
+    p.fillPath(path, QColor(18, 18, 30, 252));          // Тёмно-синий фон
+    p.setPen(QPen(QColor(255,255,255,55), 2));           // Полупрозрачная рамка
     p.drawPath(path);
 }
 
+// ─── Перетаскивание диалога за тайтл-бар ─────────────────────────────────────
+// Та же логика что и в SdDialog::mousePressEvent.
+
 void SettingsDialog::mousePressEvent(QMouseEvent *e)
 {
+    // Начинаем перетаскивание только если нажали в области тайтл-бара
     if (m_titleBar && m_titleBar->geometry().contains(e->pos()) && e->button() == Qt::LeftButton)
         m_drag = e->globalPosition().toPoint() - frameGeometry().topLeft();
     else
@@ -1279,12 +1567,13 @@ void SettingsDialog::mousePressEvent(QMouseEvent *e)
 
 void SettingsDialog::mouseMoveEvent(QMouseEvent *e)
 {
+    // !m_drag.isNull() — перетаскивание активно только если нажали в тайтл-баре
     if (!m_drag.isNull() && (e->buttons() & Qt::LeftButton))
         move(e->globalPosition().toPoint() - m_drag);
 }
 
 void SettingsDialog::mouseReleaseEvent(QMouseEvent *e)
 {
-    m_drag = {};
+    m_drag = {};  // Сбрасываем — перетаскивание завершено
     QDialog::mouseReleaseEvent(e);
 }
