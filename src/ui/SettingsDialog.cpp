@@ -20,7 +20,9 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 #include "SettingsDialog.h"
+#include "core/Backup.h"   // Экспорт/импорт JSON (общий с автобэкапом)
 #include "HotkeyEdit.h"             // Виджет захвата горячих клавиш
+#include "Anim.h"                   // Плавное появление окон
 #include "core/AppSettings.h"       // Синглтон настроек
 #include "core/Database.h"          // Чтение/запись в SQLite
 #include "core/BugReporter.h"       // Отправка обратной связи в Telegram
@@ -57,6 +59,7 @@
 #include <QSettings>            // Чтение/запись реестра Windows
 #include <QCoreApplication>     // applicationFilePath(), quit()
 #include <QFileInfo>            // baseName() — имя файла без пути и расширения
+#include <QPointer>             // Безопасные ссылки на виджеты из асинхронных обработчиков
 #include <QDir>                 // toNativeSeparators() — слэши → обратные слэши
 #include <QDebug>               // qDebug() — вывод в консоль разработчика
 
@@ -79,6 +82,19 @@ static void applyAutostart(bool enable)
         // Удаляем ключ — программа больше не запускается автоматически
         reg.remove("SmartClip");
     }
+}
+
+// Реальное состояние автозапуска — есть ли запись в реестре.
+// Раньше галочка бралась из ini (по умолчанию «выкл»), хотя установщик
+// включает автозапуск через реестр. В итоге любое «Сохранить» в настройках
+// молча выключало автозапуск.
+static bool isAutostartEnabled()
+{
+    QSettings reg(
+        "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        QSettings::NativeFormat
+    );
+    return reg.contains("SmartClip");
 }
 
 // ─── SdCloseBtn — кнопка закрытия диалога ────────────────────────────────────
@@ -192,6 +208,11 @@ public:
     // body() — возвращает виджет-контейнер куда вставляется содержимое.
     QWidget *body() { return m_body; }
 protected:
+    // «Выпрыгивает» из центра с пружинкой (см. Anim.h)
+    void showEvent(QShowEvent *e) override {
+        QDialog::showEvent(e);
+        Anim::dialogIn(this);
+    }
     // Рисуем скруглённый тёмный фон диалога (как у SettingsDialog).
     void paintEvent(QPaintEvent *) override {
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
@@ -225,7 +246,10 @@ static const char *SD_OK_BTN =
     "QPushButton{background:rgba(28,28,44,245);color:rgba(160,200,255,240);"
     "border:1px solid rgba(120,160,255,160);border-radius:6px;"
     "padding:5px 18px;font-size:13px;min-width:60px;}"
-    "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}";
+    "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}"
+    // Неактивная кнопка должна ВЫГЛЯДЕТЬ неактивной — раньше она была
+    // неотличима от обычной, и казалось, что «Отправить» просто сломана
+    "QPushButton:disabled{color:rgba(160,200,255,80);border-color:rgba(120,160,255,50);}";
 static const char *SD_CANCEL_BTN =
     "QPushButton{background:rgba(28,28,44,245);color:rgba(255,255,255,200);"
     "border:1px solid rgba(255,255,255,55);border-radius:6px;"
@@ -456,6 +480,14 @@ static void showFeedbackDialog(QWidget *parent)
 
         for (const QString &path : files) {
             if (attached.contains(path)) continue;  // Не добавлять дубликаты
+            // Telegram не принимает файлы больше 50 МБ — раньше подсказка про лимит
+            // была, а проверки не было, и отправка просто падала с ошибкой
+            if (QFileInfo(path).size() > 50LL * 1024 * 1024) {
+                sdInfo(&dlg, FTR("Прикрепить файлы"),
+                       FTR("Файл «%1» больше 50 МБ и не будет отправлен.")
+                           .arg(QFileInfo(path).fileName()));
+                continue;
+            }
             const auto kind = BugReporter::kindOfFile(path);
             // Считаем текущее количество каждого типа
             int photos = 0, videos = 0, audios = 0;
@@ -520,11 +552,21 @@ static void showFeedbackDialog(QWidget *parent)
     btnRow->addWidget(sendBtn);
     vl->addLayout(btnRow);
 
-    // Активируем кнопку «Отправить» как только введено >= 10 символов
-    QObject::connect(descEdit, &QTextEdit::textChanged, [&]() {
-        sendBtn->setEnabled(canSend &&
-                            descEdit->toPlainText().trimmed().length() >= 10);
-    });
+    // Активируем кнопку «Отправить» как только введено >= 10 символов.
+    // Подсказка со счётчиком — раньше условие нигде не показывалось, и при
+    // коротком тексте кнопка выглядела просто «сломанной».
+    constexpr int MIN_LEN = 10;
+    auto *lenHint = new QLabel(dlg.body());
+    lenHint->setStyleSheet("color:rgba(160,160,180,150);font-size:11px;background:transparent;");
+    vl->insertWidget(vl->indexOf(descEdit) + 1, lenHint);
+    auto updateSend = [&, lenHint]() {
+        const int len = descEdit->toPlainText().trimmed().length();
+        sendBtn->setEnabled(canSend && len >= MIN_LEN);
+        lenHint->setVisible(canSend && len < MIN_LEN);
+        lenHint->setText(FTR("Опишите подробнее — ещё минимум %1 симв.").arg(MIN_LEN - len));
+    };
+    QObject::connect(descEdit, &QTextEdit::textChanged, updateSend);
+    updateSend();
 
     QObject::connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
 
@@ -540,18 +582,27 @@ static void showFeedbackDialog(QWidget *parent)
         auto *reporter = new BugReporter(parent);
         reporter->send(selType, descEdit->toPlainText(), attached);
 
+        // QPointer обнуляется сам, если диалог закрыли до ответа сервера.
+        // Раньше обработчики ниже держали ссылки на уже уничтоженные dlg/sendBtn —
+        // закрыл окно во время отправки → вылет программы.
+        QPointer<QDialog>     dlgGuard(&dlg);
+        QPointer<QPushButton> btnGuard(sendBtn);
+
         // По сигналу sent — закрываем диалог и показываем «Спасибо!»
-        QObject::connect(reporter, &BugReporter::sent, [&, reporter, parent]() {
+        QObject::connect(reporter, &BugReporter::sent, reporter, [reporter, parent, dlgGuard]() {
             reporter->deleteLater();  // Удаляем reporter когда управление вернётся в Qt
-            dlg.accept();
+            if (dlgGuard) dlgGuard->accept();
             sdInfo(parent, FTR("Спасибо!"),
                    FTR("Сообщение отправлено. Мы обязательно его рассмотрим!"));
         });
         // По сигналу failed — показываем ошибку, разблокируем кнопку
-        QObject::connect(reporter, &BugReporter::failed, [&, reporter, parent](const QString &err) {
+        QObject::connect(reporter, &BugReporter::failed, reporter,
+                         [reporter, parent, btnGuard](const QString &err) {
             reporter->deleteLater();
-            sendBtn->setEnabled(true);
-            sendBtn->setText(FTR("📩  Отправить"));
+            if (btnGuard) {
+                btnGuard->setEnabled(true);
+                btnGuard->setText(FTR("📩  Отправить"));
+            }
             sdInfo(parent, FTR("Ошибка отправки"),
                    FTR("Не удалось отправить: %1").arg(err));
         });
@@ -717,7 +768,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *startGroup  = new QGroupBox(tr("Запуск системы"), sysTab);
     auto *startLayout = new QVBoxLayout(startGroup);
     auto *autostartCheck = new SdCheckBox(tr("Запускать SmartClip вместе с Windows"), startGroup);
-    autostartCheck->setChecked(AppSettings::get().autostart());
+    autostartCheck->setChecked(isAutostartEnabled());
     auto *startHint = new QLabel(
         tr("SmartClip будет автоматически стартовать при входе в систему."), startGroup);
     startHint->setWordWrap(true);
@@ -824,7 +875,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     saveImagesCheck->setChecked(AppSettings::get().saveImages());
     // Дедупликация: не сохранять если такой текст уже есть в истории
     auto *dedupCheck = new SdCheckBox(
-        tr("Дедупликация — не сохранять если такой текст уже есть"), behavGroup);
+        tr("Дедупликация — без повторов (повторно скопированный текст поднимается наверх)"), behavGroup);
     dedupCheck->setChecked(AppSettings::get().deduplication());
     // Минимальная длина текста — игнорировать слишком короткие копирования
     auto *minLenLayout = new QHBoxLayout();
@@ -1231,10 +1282,13 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             checkUpdBtn->setText(tr("✓  Уже актуальная версия"));
             checkUpdBtn->setEnabled(true);
         });
-        // Ошибка соединения — сообщаем пользователю
-        connect(uc, &UpdateChecker::checkFailed, this, [checkUpdBtn](const QString &) {
+        // Ошибка соединения — сообщаем пользователю (временно показываем текст
+        // реальной ошибки в тултипе, чтобы понять причину сбоя на конкретной машине)
+        connect(uc, &UpdateChecker::checkFailed, this, [this, checkUpdBtn](const QString &err) {
             checkUpdBtn->setText(tr("✕  Ошибка соединения"));
+            checkUpdBtn->setToolTip(err);
             checkUpdBtn->setEnabled(true);
+            sdInfo(this, tr("Ошибка соединения"), err);
         });
 
         // check(false) — false означает «не форсировать показ диалога при upToDate»
@@ -1278,8 +1332,11 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     // Кнопка «Обновить» — отправляет сигнал updateRequested и закрывает диалог.
     connect(bannerBtn, &QPushButton::clicked, this, [this]() {
+        // Сначала закрываем настройки, и только потом MainWindow открывает окно
+        // обновления. Раньше оно открывалось ПОВЕРХ ещё открытых настроек
+        // (два вложенных модальных окна).
         emit updateRequested(m_pendingVersion, m_pendingUrl, m_pendingNotes);
-        reject();  // Закрываем настройки (MainWindow откроет браузер)
+        reject();
     });
 
     betaLayout->addWidget(betaHintLabel);
@@ -1303,62 +1360,13 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             tr("JSON файл (*.json)"));
         if (path.isEmpty()) return;
 
-        QJsonObject root;
-        root["version"]     = "1.0";
-        root["exported_at"] = QDateTime::currentDateTime().toString(Qt::ISODate);
-
-        // Собираем все закрепы: сначала без папки, потом по каждой папке
-        QJsonArray allPins;
-        auto addPinsFromFolder = [&](const QString &folder) {
-            for (const PinItem &p : db->getPins(folder)) {
-                QJsonObject obj;
-                obj["folder"]   = p.folder;
-                obj["name"]     = p.name;
-                obj["type"]     = p.type;
-                obj["content"]  = p.content;
-                obj["filepath"] = p.filepath;
-                allPins.append(obj);
-            }
-        };
-        addPinsFromFolder("");  // Закрепы без папки
-        for (const FolderItem &f : db->getAllFolders())
-            addPinsFromFolder(f.name);  // Закрепы из каждой папки
-        root["pins"] = allPins;
-
-        // Профили (горячие клавиши)
-        QJsonArray profArr;
-        for (const ProfileItem &p : db->getProfiles()) {
-            QJsonObject obj;
-            obj["name"]   = p.name;
-            obj["hotkey"] = p.hotkey;
-            obj["text"]   = p.text;
-            profArr.append(obj);
-        }
-        root["profiles"] = profArr;
-
-        // Основные настройки
-        QJsonObject cfg;
-        cfg["mainHotkey"]    = AppSettings::get().mainHotkey();
-        cfg["maxRecords"]    = AppSettings::get().maxHistoryRecords();
-        cfg["autocleanDays"] = AppSettings::get().autocleanDays();
-        cfg["saveImages"]    = AppSettings::get().saveImages();
-        cfg["deduplication"] = AppSettings::get().deduplication();
-        cfg["minTextLength"] = AppSettings::get().minTextLength();
-        cfg["excludedApps"]  = QJsonArray::fromStringList(AppSettings::get().excludedApps());
-        cfg["pinsNoName"]    = AppSettings::get().pinsNoName();
-        root["settings"]     = cfg;
-
-        // Записываем JSON в файл
-        QFile file(path);
-        if (file.open(QIODevice::WriteOnly)) {
-            // QJsonDocument::Indented — форматируем с отступами (читаемый JSON)
-            file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-            file.close();
+        // Вся логика — в core/Backup.cpp (общая с автобэкапом)
+        QString error;
+        if (Backup::exportToFile(db, path, &error))
             sdInfo(this, tr("Экспорт завершён"),
                    tr("Данные сохранены в:\n%1").arg(path));
-        } else {
-            sdInfo(this, tr("Ошибка"), tr("Не удалось сохранить файл."));
-        }
+        else
+            sdInfo(this, tr("Ошибка"), tr("Не удалось сохранить файл.") + "\n" + error);
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1370,57 +1378,32 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             tr("JSON файл (*.json)"));
         if (path.isEmpty()) return;
 
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            sdInfo(this, tr("Ошибка"), tr("Не удалось открыть файл."));
-            return;
-        }
-        // fromJson + QJsonParseError — проверяем что файл валидный JSON
-        QJsonParseError err;
-        QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
-        file.close();
-        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        // Уже существующие закрепы/профили не дублируются — повторный импорт
+        // того же файла ничего не меняет.
+        const Backup::ImportResult r = Backup::importFromFile(db, path);
+        if (!r.ok) {
             sdInfo(this, tr("Ошибка"),
                    tr("Файл повреждён или не является бекапом SmartClip."));
             return;
         }
 
-        QJsonObject root = doc.object();
-        int pinCount = 0, profCount = 0;
-        // Добавляем закрепы из JSON в БД (не удаляя существующие)
-        for (const QJsonValue &v : root["pins"].toArray()) {
-            QJsonObject o = v.toObject();
-            db->addPin(o["folder"].toString(), o["name"].toString(),
-                       o["type"].toString(),   o["content"].toString(),
-                       o["filepath"].toString());
-            ++pinCount;
-        }
-        // Добавляем профили
-        for (const QJsonValue &v : root["profiles"].toArray()) {
-            QJsonObject o = v.toObject();
-            db->addProfile(o["name"].toString(), o["hotkey"].toString(), o["text"].toString());
-            ++profCount;
-        }
-        // Применяем настройки из бекапа если они есть
-        if (root.contains("settings")) {
-            QJsonObject cfg = root["settings"].toObject();
-            if (cfg.contains("maxRecords"))    AppSettings::get().setMaxHistoryRecords(cfg["maxRecords"].toInt());
-            if (cfg.contains("autocleanDays")) AppSettings::get().setAutocleanDays(cfg["autocleanDays"].toInt());
-            if (cfg.contains("saveImages"))    AppSettings::get().setSaveImages(cfg["saveImages"].toBool());
-            if (cfg.contains("deduplication")) AppSettings::get().setDeduplication(cfg["deduplication"].toBool());
-            if (cfg.contains("minTextLength")) AppSettings::get().setMinTextLength(cfg["minTextLength"].toInt());
-            if (cfg.contains("pinsNoName"))    AppSettings::get().setPinsNoName(cfg["pinsNoName"].toBool());
-            if (cfg.contains("excludedApps")) {
-                QStringList excl;
-                for (const QJsonValue &a : cfg["excludedApps"].toArray())
-                    excl << a.toString();
-                AppSettings::get().setExcludedApps(excl);
-            }
-        }
-        emit settingsChanged();  // Уведомляем MainWindow что настройки изменились
-        sdInfo(this, tr("Импорт завершён"),
-               tr("Импортировано: закрепов — %1, профилей — %2.\n"
-                  "Перезагрузите историю чтобы увидеть изменения.").arg(pinCount).arg(profCount));
+        if (r.mainHotkeyChanged) emit mainHotkeyChanged(AppSettings::get().mainHotkey());
+        emit settingsChanged();
+        emit dataImported();  // MainWindow перезагрузит закрепы и хоткеи профилей
+
+        QString msg = tr("Добавлено: закрепов — %1, профилей — %2.").arg(r.pinsAdded).arg(r.profilesAdded);
+        if (r.pinsSkipped || r.profilesSkipped)
+            msg += "\n" + tr("Пропущено (уже есть): закрепов — %1, профилей — %2.")
+                              .arg(r.pinsSkipped).arg(r.profilesSkipped);
+        if (r.settingsApplied)
+            msg += "\n\n" + tr("Настройки из файла применены. Окно настроек будет закрыто, "
+                                "чтобы старые значения не перезаписали импортированные.");
+        sdInfo(this, tr("Импорт завершён"), msg);
+
+        // Раньше после импорта окно оставалось открытым, и кнопка «Сохранить»
+        // записывала СТАРЫЕ значения из полей поверх импортированных —
+        // поэтому казалось, что настройки «не импортировались».
+        if (r.settingsApplied) reject();
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1537,6 +1520,13 @@ void SettingsDialog::setPendingUpdate(const QString &version, const QString &url
         lbl->setText(tr("Доступна новая версия %1 — нажми «Обновить» чтобы установить.").arg(version));
 
     m_updateBanner->show();  // Показываем ранее скрытую плашку
+}
+
+// ─── showEvent — плавное появление окна настроек ─────────────────────────────
+void SettingsDialog::showEvent(QShowEvent *e)
+{
+    QDialog::showEvent(e);
+    Anim::dialogIn(this);
 }
 
 // ─── paintEvent — рисуем скруглённый тёмный фон диалога ─────────────────────

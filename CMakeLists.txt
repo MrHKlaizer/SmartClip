@@ -1,5 +1,23 @@
 cmake_minimum_required(VERSION 3.16)
-project(SmartClip VERSION 1.0 LANGUAGES CXX)
+# ════════════════════════════════════════════════════════════════════════════
+#  ВЕРСИЯ — меняется ТОЛЬКО здесь, при каждом релизе.
+#  Отсюда она автоматически попадает в программу (Version.h), в установщик,
+#  в «Программы и компоненты» и в имя файла релиза (make_release.bat).
+# ════════════════════════════════════════════════════════════════════════════
+#  Формат: «2.0» для больших версий, «2.0.1» для мелких правок.
+project(SmartClip VERSION 2.0 LANGUAGES CXX)
+
+add_compile_definitions(SMARTCLIP_VERSION="${PROJECT_VERSION}")
+file(WRITE "${CMAKE_BINARY_DIR}/version.txt" "${PROJECT_VERSION}")
+
+# Тег для GitHub — ВСЕГДА из трёх чисел (v2.0.0, а не v2.0): старые версии
+# SmartClip (1.0.2–1.0.4) понимают только формат X.Y.Z и иначе не увидят обновление.
+if("${PROJECT_VERSION_PATCH}" STREQUAL "")
+    set(SMARTCLIP_TAG "v${PROJECT_VERSION}.0")
+else()
+    set(SMARTCLIP_TAG "v${PROJECT_VERSION}")
+endif()
+file(WRITE "${CMAKE_BINARY_DIR}/tag.txt" "${SMARTCLIP_TAG}")
 
 # Стандарт C++17 — обязательно, используем современные фичи
 set(CMAKE_CXX_STANDARD 17)
@@ -41,12 +59,15 @@ set(SOURCES
     src/core/UpdateChecker.cpp
     src/core/BugReporter.h
     src/core/BugReporter.cpp
+    src/core/Backup.h
+    src/core/Backup.cpp
     src/core/VideoWatcher.h
     src/core/VideoWatcher.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
     src/ui/ClickableCard.h
     src/ui/SmartButton.h
+    src/ui/Anim.h
     src/ui/HotkeyEdit.h
     src/ui/ImageViewer.h
     src/ui/ImageViewer.cpp

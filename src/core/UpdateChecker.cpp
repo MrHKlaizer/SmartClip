@@ -11,10 +11,11 @@
 // Qt-модули для работы с сетью и JSON:
 #include <QNetworkRequest>  // Описание HTTP-запроса (URL, заголовки)
 #include <QNetworkReply>    // Ответ сервера (статус, тело)
-#include <QJsonDocument>    // Парсер JSON-документа
-#include <QJsonObject>      // Доступ к полям JSON-объекта (ключ → значение)
-#include <QJsonArray>       // Итерация по JSON-массиву (список assets)
-#include <QUrl>             // Класс для работы с URL
+#include <QJsonDocument>        // Парсер JSON-документа
+#include <QJsonObject>          // Доступ к полям JSON-объекта (ключ → значение)
+#include <QJsonArray>           // Итерация по JSON-массиву (список assets)
+#include <QUrl>                 // Класс для работы с URL
+#include <QRegularExpression>   // Для извлечения версии из тега любого формата
 
 // ─── Конструктор ─────────────────────────────────────────────────────────────
 // Создаём объект. Список инициализации ": QObject(parent)" передаёт родителя
@@ -72,10 +73,12 @@ void UpdateChecker::check(bool silent)
         QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
 
         // ── Читаем номер версии ────────────────────────────────────────────────
-        // GitHub хранит версию в поле "tag_name". Формат: "v1.2.3" или "1.2.3"
-        // Если начинается с 'v' — отбрасываем его: "v1.2.3" → "1.2.3"
-        QString tag     = obj[QStringLiteral("tag_name")].toString();
-        QString version = tag.startsWith('v') ? tag.mid(1) : tag;
+        // Тег может быть любого формата: "v1.2.3", "SmartClip_Installer_v1.2.3"
+        // Regex вытащит "X.Y.Z" из любого варианта.
+        QString tag = obj[QStringLiteral("tag_name")].toString();
+        QRegularExpression versionRe(QStringLiteral(R"((\d+(?:\.\d+){1,2}))"));  // "1.2" или "1.2.3"
+        auto vMatch = versionRe.match(tag);
+        QString version = vMatch.hasMatch() ? vMatch.captured(1) : tag;
 
         // ── Читаем описание релиза ─────────────────────────────────────────────
         // Поле "body" — текст описания релиза (что нового).
@@ -83,15 +86,28 @@ void UpdateChecker::check(bool silent)
         QString releaseNotes = obj[QStringLiteral("body")].toString().trimmed();
 
         // ── Ищем ссылку на установщик ─────────────────────────────────────────
-        // "assets" — массив прикреплённых файлов к релизу.
-        // Нас интересует файл с "Installer" в имени (SmartClip_Installer.exe).
-        QString downloadUrl;
+        // Приоритет: .exe (standalone установщик). Если нет — берём первый .zip
+        // (архив со структурой _data\ который распакует MainWindow через PowerShell).
+        // Массив assets содержит только вручную загруженные файлы — source code там нет.
+        // Начиная с 1.0.5 релиз — один файл SmartClip_Installer_vX.Y.Z.exe.
+        // Оценка: 3 = .exe с «Installer»/«Setup» в имени, 2 = любой .exe, 1 = .zip (старый формат)
+        QString downloadUrl, sha256;
+        int bestScore = 0;
         for (const QJsonValue &val : obj[QStringLiteral("assets")].toArray()) {
             QJsonObject asset = val.toObject();
             QString name = asset[QStringLiteral("name")].toString();
-            if (name.contains(QStringLiteral("Installer"), Qt::CaseInsensitive)) {
+            int score = 0;
+            if (name.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive))
+                score = (name.contains(QStringLiteral("Installer"), Qt::CaseInsensitive) ||
+                         name.contains(QStringLiteral("Setup"), Qt::CaseInsensitive)) ? 3 : 2;
+            else if (name.endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive))
+                score = 1;
+            if (score > bestScore) {
+                bestScore   = score;
                 downloadUrl = asset[QStringLiteral("browser_download_url")].toString();
-                break;  // Нашли — выходим из цикла
+                // GitHub сам считает SHA-256 каждого файла: "sha256:abcdef..."
+                const QString digest = asset[QStringLiteral("digest")].toString();
+                sha256 = digest.startsWith(QStringLiteral("sha256:")) ? digest.mid(7) : QString();
             }
         }
 
@@ -106,7 +122,7 @@ void UpdateChecker::check(bool silent)
         // versionToInt("1.2.3") → 1002003
         // Если число на GitHub > нашего → есть обновление.
         if (versionToInt(version) > versionToInt(QStringLiteral(APP_VERSION))) {
-            emit updateAvailable(version, downloadUrl, releaseNotes);
+            emit updateAvailable(version, downloadUrl, releaseNotes, sha256);
         } else {
             // Версия актуальная. При ручной проверке (silent=false) сообщаем об этом.
             if (!m_silent) emit upToDate();
@@ -126,8 +142,9 @@ int UpdateChecker::versionToInt(const QString &ver)
 {
     const QStringList parts = ver.split('.');  // ["1", "2", "3"]
     int result = 0;
-    // Берём не более 3 частей (MAJOR.MINOR.PATCH)
-    for (int i = 0; i < 3 && i < parts.size(); ++i)
-        result = result * 1000 + parts[i].toInt();
+    // Всегда ровно 3 части (MAJOR.MINOR.PATCH): недостающие считаем нулями,
+    // иначе "1.1" дало бы 1001 и оказалось бы «меньше» чем "1.0.0" = 1000000.
+    for (int i = 0; i < 3; ++i)
+        result = result * 1000 + parts.value(i).toInt();
     return result;
 }

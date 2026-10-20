@@ -56,10 +56,14 @@ void ImageViewer::resetView()
     // width()/height() — размер просмотрщика (= размер MainWindow).
     // m_pixmap.width()/height() — размер загруженной картинки.
     if (!m_pixmap.isNull()) {
-        m_offset = QPoint(
-            (width()  - m_pixmap.width())  / 2,   // горизонтальный отступ
-            (height() - m_pixmap.height()) / 2    // вертикальный отступ
-        );
+        // Большую картинку (скриншот 4K на экране Full HD) сразу вписываем в экран —
+        // раньше она открывалась в 100% и не помещалась
+        const qreal fit = qMin(width()  * 0.95 / m_pixmap.width(),
+                               height() * 0.95 / m_pixmap.height());
+        if (fit < 1.0) m_scale = fit;
+        const int w = static_cast<int>(m_pixmap.width()  * m_scale);
+        const int h = static_cast<int>(m_pixmap.height() * m_scale);
+        m_offset = QPoint((width() - w) / 2, (height() - h) / 2);
     }
     update();  // Просим Qt перерисовать виджет (вызовет paintEvent)
 }

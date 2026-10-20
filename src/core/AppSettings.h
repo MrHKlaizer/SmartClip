@@ -156,6 +156,27 @@ public:
     void setSolidPanels(bool b)
         { m_s.setValue("ui/solidPanels", b); m_s.sync(); }
 
+    // ─── Оформление и анимации (кнопка 🖌 в главном окне) ────────────────────
+
+    // Настройки ОТДЕЛЬНО для каждого вида анимации (kind — "menu", "dialog",
+    // "open", "close"; список видов — в src/ui/Anim.h).
+    //
+    // Включён ли «новый» стиль для этого вида (false = «Классика», как раньше).
+    // Если для вида ещё ничего не сохранено — берём старую общую настройку
+    // (ui/animations из первых сборок 2.0), а по умолчанию — новый стиль.
+    bool animOn(const QString &kind) const
+        { return m_s.value("anim/" + kind + "/on", m_s.value("ui/animations", true)).toBool(); }
+    void setAnimOn(const QString &kind, bool b)
+        { m_s.setValue("anim/" + kind + "/on", b); m_s.sync(); }
+
+    // Скорость этого вида в процентах: 100 = обычная, 200 = в 2 раза быстрее,
+    // 50 = в 2 раза медленнее. Допустимо 50–200.
+    int animSpeed(const QString &kind) const
+        { return qBound(50, m_s.value("anim/" + kind + "/speed",
+                                      m_s.value("ui/animSpeed", 100)).toInt(), 200); }
+    void setAnimSpeed(const QString &kind, int pct)
+        { m_s.setValue("anim/" + kind + "/speed", qBound(50, pct, 200)); m_s.sync(); }
+
     // Масштаб интерфейса в процентах. Допустимые значения: 75, 90, 100, 110, 125.
     // 100 = стандартный размер. Применяется после перезапуска программы.
     int uiScale() const

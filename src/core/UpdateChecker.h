@@ -48,9 +48,11 @@ signals:
     // newVersion    — строка типа "1.1.0" — номер новой версии
     // downloadUrl   — ссылка на скачивание установщика
     // releaseNotes  — описание что нового (из GitHub Releases)
+    // sha256        — контрольная сумма файла (GitHub считает её сам), может быть пустой
     void updateAvailable(const QString &newVersion,
                          const QString &downloadUrl,
-                         const QString &releaseNotes);
+                         const QString &releaseNotes,
+                         const QString &sha256);
 
     // Версия актуальная — обновлений нет (сигналится только если silent=false)
     void upToDate();

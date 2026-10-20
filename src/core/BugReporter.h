@@ -67,7 +67,7 @@ public:
 
     // ─── Лимиты вложений ──────────────────────────────────────────────────────
     static const int COOLDOWN_HOURS = 6;  // Антиспам: минимальный интервал между отправками
-    static const int MAX_PHOTOS     = 10; // Максимум фото/видео в одном альбоме (ограничение Telegram)
+    static const int MAX_PHOTOS     = 8;  // Фото + видео в одном альбоме ≤ 10 (ограничение Telegram): 8 + 2
     static const int MAX_VIDEOS     = 2;  // Максимум видео
     static const int MAX_AUDIOS     = 4;  // Максимум аудиофайлов
 

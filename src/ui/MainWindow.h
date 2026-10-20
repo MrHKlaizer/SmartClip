@@ -26,7 +26,8 @@
 #include <QHBoxLayout>   // Горизонтальное расположение (слева направо)
 #include <QScrollArea>   // Прокручиваемая область (для длинных списков карточек)
 #include <QLineEdit>     // Строка ввода (поле поиска)
-#include <QPointer>      // «Умный» указатель Qt: автоматически обнуляется если объект удалён
+#include <QPointer>
+#include "Anim.h"         // Анимации 2.0 (Anim::Piece)      // «Умный» указатель Qt: автоматически обнуляется если объект удалён
 #include <QList>         // Динамический список
 #include <QPair>         // Пара значений (для отложенной загрузки картинок)
 #include <QLabel>        // Виджет для текста и изображений (карточки истории)
@@ -59,6 +60,15 @@ public slots:
     // Вызывается из HotkeyManager когда пользователь нажимает горячую клавишу.
     void showWindow();
 
+    // Закрыть окно с анимацией ухода (обратная лесенка, в 2 раза быстрее).
+    // Для вставки по клику на карточку — обычный hide(), без задержки.
+    void hideAnimated();
+
+    // Открыто ли окно для пользователя (видно и не уезжает прямо сейчас).
+    // Во время анимации ухода isVisible() ещё true — для переключения по
+    // горячей клавише нужно именно это.
+    bool isOpen() const;
+
     // Пометить историю как «устаревшую» — при следующем показе окна перезагрузить.
     // Вызывается ClipboardManager когда в истории появилась новая запись.
     void markHistoryDirty();
@@ -67,9 +77,19 @@ public slots:
     void pasteTextSilent(const QString &text);
 
     // Обработать уведомление о новой версии от UpdateChecker.
-    // Показывает диалог с предложением обновиться (только для major/minor обновлений).
+    // Запоминает обновление; сам диалог открывается по клику в трее или при открытии окна.
+    // sha256 — контрольная сумма файла из GitHub (может быть пустой).
     void onUpdateAvailable(const QString &version, const QString &downloadUrl,
-                           const QString &releaseNotes = {});
+                           const QString &releaseNotes = {}, const QString &sha256 = {});
+
+    // Открыть диалог для найденного обновления (клик по уведомлению в трее).
+    void showPendingUpdate();
+
+    // Показать диалог скачивания обновления БЕЗ проверки major/minor.
+    // Вызывается кнопкой «Обновить» из плашки в настройках — пользователь
+    // уже явно попросил обновление, фильтровать patch-версии нельзя.
+    void showUpdateDialog(const QString &version, const QString &downloadUrl,
+                          const QString &releaseNotes = {});
 
 // ─── Сигналы ─────────────────────────────────────────────────────────────────
 signals:
@@ -120,7 +140,7 @@ private:
 
     // ─── Drag-to-reorder закрепов ─────────────────────────────────────────────
     // Пользователь может перетаскивать карточки закрепов мышью чтобы изменить порядок.
-    class ClickableCard *m_dragCard   = nullptr;  // Карточка которую тащим
+    QPointer<class ClickableCard> m_dragCard;     // Карточка которую тащим (QPointer — сам обнулится, если карточку удалят)
     QVBoxLayout         *m_dragLayout = nullptr;  // Колонка в которой перемещаем
 
     void onCardDragMoved(const QPoint &globalPos);   // Обновить положение во время перетаскивания
@@ -145,7 +165,7 @@ private:
 
     // ─── Загрузка и отображение данных ───────────────────────────────────────
     void setupLayout();                     // Создать все виджеты и лейауты (вызывается в конструкторе)
-    void loadHistory();                     // Загрузить историю из БД и отрисовать карточки
+    void loadHistory(bool textsOnly = false); // Загрузить историю из БД (textsOnly — только тексты, для поиска)
     void loadPins(bool allFolders = false); // Загрузить закрепы (всей папки или всех сразу)
     void loadFolderBar();                   // Перестроить полосу папок (вкладки папок в режиме Pins)
     void filterHistory(const QString &query);  // Фильтровать историю по тексту поиска
@@ -168,6 +188,8 @@ private:
     // ─── Профили быстрой вставки ─────────────────────────────────────────────
     void showProfilesMenu();    // Выпадающее меню со списком профилей
     void showProfileManager();  // Диалог создания/редактирования/удаления профилей
+    void showAppearanceSettings(); // Окно «Оформление» (кнопка 🖌): стиль и скорость анимаций
+    QList<Anim::Piece> buildOpenPieces(); // Куски окна для анимации сборки/ухода
 
     // ─── Настройки ───────────────────────────────────────────────────────────
     void showSettings();  // Открыть SettingsDialog
@@ -198,7 +220,11 @@ private:
 
     // ─── Данные ───────────────────────────────────────────────────────────────
     Database    *m_db;                   // База данных SmartClip
+    QPointer<Anim::SnapshotOverlay> m_overlay; // Текущая сцена анимации окна (появление/уход)
+    bool         m_hidePending = false;  // Уход начался, окно спрячется через пару кадров
+    int          m_hideSeq     = 0;      // Счётчик: отменяет устаревшее отложенное скрытие
     bool         m_historyDirty = true;  // true = история устарела, нужно перезагрузить при показе
+    class QTimer *m_searchTimer = nullptr; // Задержка поиска по истории (не искать на каждую букву)
     ImageViewer *m_imageViewer  = nullptr; // Полноэкранный просмотрщик (создаётся при первом использовании)
 
     // Ожидающее обновление (данные о новой версии от UpdateChecker).
@@ -206,6 +232,8 @@ private:
     QString m_pendingUpdateVersion;   // "1.1.0" или пусто
     QString m_pendingUpdateUrl;       // Ссылка на установщик
     QString m_pendingReleaseNotes;    // Описание что нового
+    QString m_pendingUpdateSha256;    // Контрольная сумма установщика (из GitHub API)
+    bool    m_updatePromptShown = false; // Диалог обновления уже предлагали в этой сессии
 
     // ─── Масштаб интерфейса ───────────────────────────────────────────────────
     // Читается из AppSettings ОДИН РАЗ при запуске. Для смены нужен перезапуск.
@@ -239,6 +267,7 @@ private:
     SmartButton *m_pinsBtn     = nullptr; // Кнопка «Закрепы»
     SmartButton *m_editBtn     = nullptr; // Кнопка мультивыбора (только в режиме Закрепов)
     SmartButton *m_profilesBtn = nullptr; // Кнопка «Профили»
+    SmartButton *m_designBtn   = nullptr; // Кнопка 🖌 — оформление и анимации
     SmartButton *m_sortBtn     = nullptr; // Кнопка сортировки
     SmartButton *m_clearBtn    = nullptr; // Кнопка очистки истории
     SmartButton *m_settingsBtn = nullptr; // Кнопка настроек (шестерёнка)

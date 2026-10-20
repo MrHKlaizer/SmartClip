@@ -104,6 +104,17 @@ public:
 
     // Публичный метод-обёртка для вызова из лямбды внутри LL-хука.
     // Прямой вызов stopCapture() был бы private — недоступен.
+    // Если поле удаляют во время захвата (закрыли окно крестиком) — обязательно
+    // снимаем глобальный хук. Иначе он остаётся висеть со ссылкой на удалённый
+    // виджет, и следующее нажатие Win+клавиша роняет программу.
+    ~HotkeyEdit() override
+    {
+        if (s_inst == this) {
+            if (s_hook) { UnhookWindowsHookEx(s_hook); s_hook = nullptr; }
+            s_inst = nullptr;
+        }
+    }
+
     void doStopCapture(bool accepted) { stopCapture(accepted); }
 
 protected:
@@ -160,6 +171,25 @@ protected:
         if (mods & Qt::ShiftModifier)   combo += "Shift+";
         if (mods & Qt::AltModifier)     combo += "Alt+";
         if (mods & Qt::MetaModifier)    combo += "Win+";
+
+        // Буква/цифра БЕЗ модификатора — недопустима: глобальный хоткей «A»
+        // перехватил бы каждое нажатие буквы A во всей системе (печатать
+        // стало бы невозможно). F1–F12 без модификаторов — можно.
+        const bool hasMod = mods & (Qt::ControlModifier | Qt::ShiftModifier |
+                                    Qt::AltModifier | Qt::MetaModifier);
+        const bool isFKey = key >= Qt::Key_F1 && key <= Qt::Key_F12;
+        if (!hasMod && !isFKey) {
+            setPlaceholderText(tr("Нужен Ctrl, Alt, Shift или Win + клавиша"));
+            return;  // Продолжаем ждать правильную комбинацию
+        }
+        // Ctrl+C/V/X заняты самим копированием/вставкой (Ctrl+V как хоткей
+        // профиля вызывал бы бесконечную вставку) — не принимаем
+        if ((mods & (Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier))
+                == Qt::ControlModifier &&
+            (key == Qt::Key_C || key == Qt::Key_V || key == Qt::Key_X)) {
+            setPlaceholderText(tr("Ctrl+C / Ctrl+V / Ctrl+X нельзя — выберите другую"));
+            return;
+        }
 
         // Добавляем основную клавишу
         if (key >= Qt::Key_A && key <= Qt::Key_Z)

@@ -24,6 +24,7 @@
 // QPainterPath — путь для векторного рисования (скруглённые прямоугольники, кривые).
 // Позволяет точно обрезать область отрисовки → чистые углы без артефактов.
 #include <QPainterPath>
+#include <QFontDatabase>
 
 // ─── Класс SmartButton ────────────────────────────────────────────────────────
 // Полностью кастомная кнопка — Qt не рисует её стандартным способом.
@@ -79,6 +80,25 @@ public:
     // Проверить текущее состояние кнопки (для логики в коде).
     bool isActiveState() const { return m_active; }
 
+    // Показать вместо текста значок из системного шрифта значков Windows
+    // (Segoe Fluent Icons в Win11, Segoe MDL2 Assets в Win10).
+    // glyph — код значка, например QChar(0xE713) = шестерёнка.
+    void setIconGlyph(QChar glyph, int pixelSize = 14)
+    {
+        m_glyph   = glyph;
+        m_glyphPx = pixelSize;
+        update();
+    }
+
+    static QString iconFontFamily()
+    {
+        static const QString family =
+            QFontDatabase::families().contains(QStringLiteral("Segoe Fluent Icons"))
+                ? QStringLiteral("Segoe Fluent Icons")
+                : QStringLiteral("Segoe MDL2 Assets");
+        return family;
+    }
+
 // ─── Переопределение методов QWidget ─────────────────────────────────────────
 protected:
     // paintEvent — главный метод рисования. Qt вызывает его когда нужно перерисовать кнопку.
@@ -116,7 +136,16 @@ protected:
         p.setPen(textCol);
         p.setFont(font());
         // Qt::TextShowMnemonic — поддержка «горячих букв» (например &О → подчёркнутая О)
-        p.drawText(rect(), Qt::AlignCenter | Qt::TextShowMnemonic, text());
+        if (!m_glyph.isNull()) {
+            // Значок из системного шрифта Windows: одинаковый размер и стиль у
+            // всех квадратных кнопок, ровно по центру (в отличие от эмодзи)
+            QFont f(iconFontFamily());
+            f.setPixelSize(m_glyphPx);
+            p.setFont(f);
+            p.drawText(rect(), Qt::AlignCenter, QString(m_glyph));
+        } else {
+            p.drawText(rect(), Qt::AlignCenter | Qt::TextShowMnemonic, text());
+        }
     }
 
     // При наведении/уходе курсора — перерисовываем для hover-эффекта рамки
@@ -133,4 +162,6 @@ private:
     QColor m_activeText{ 255, 255, 255, 255 }; // Текст активного состояния (полностью белый)
     int    m_radius = 8;   // Радиус скругления углов в пикселях
     bool   m_active = false; // Текущее состояние: false = обычное, true = активное
+    QChar  m_glyph;          // Значок вместо текста (пусто = обычный текст)
+    int    m_glyphPx = 14;   // Размер значка в пикселях
 };

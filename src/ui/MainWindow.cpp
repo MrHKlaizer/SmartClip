@@ -34,6 +34,7 @@
 #include "SmartButton.h"        // Кнопка с QPainterPath (без артефактов)
 #include "ImageViewer.h"        // Полноэкранный просмотр картинок
 #include "HotkeyEdit.h"         // Поле захвата горячих клавиш
+#include "Anim.h"               // Плавные анимации 2.0 (меню, окна)
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
 #include "core/Database.h"      // SQLite CRUD
 #include "core/AppSettings.h"   // Синглтон настроек
@@ -45,6 +46,9 @@
 #include <QNetworkRequest>      // Запрос с URL и заголовками
 #include <QProgressBar>         // Прогресс скачивания установщика
 #include <QStandardPaths>       // TempLocation — путь для временных файлов
+#include <QProcess>             // Запуск PowerShell для распаковки ZIP
+#include <QDirIterator>         // Рекурсивный поиск Installer.exe в архиве
+#include <QCryptographicHash>   // SHA-256 скачанного обновления
 #include "core/Version.h"       // APP_VERSION — строка версии
 #include "core/UpdateChecker.h" // Проверка обновлений через GitHub API
 #include <QStyle>
@@ -58,9 +62,12 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QSlider>          // Ползунок скорости анимаций (окно «Оформление»)
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDesktopServices>
@@ -237,6 +244,13 @@ public:
     QWidget *body() { return m_body; }
 
 protected:
+    // Диалог «выпрыгивает» из центра с пружинкой (см. Anim.h)
+    void showEvent(QShowEvent *e) override
+    {
+        QDialog::showEvent(e);
+        Anim::dialogIn(this);
+    }
+
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
@@ -525,6 +539,13 @@ public:
         );
     }
 protected:
+    // Меню разворачивается сверху вниз, как шторка (см. Anim.h)
+    void showEvent(QShowEvent *e) override
+    {
+        QMenu::showEvent(e);
+        Anim::menuIn(this);
+    }
+
     void paintEvent(QPaintEvent *e) override
     {
         // 1. Рисуем скруглённый фон через QPainter (без артефактов)
@@ -647,7 +668,7 @@ static bool fuzzyMatch(const QString &text, const QString &query)
     const QString tl = text.toLower();
     const QString ql = query.toLower();
 
-    // ��с���й п���: �о�ное в�ождение всего зап�оса
+    // Быстрый путь: точное вхождение всего запроса
     if (tl.contains(ql)) return true;
 
     // Разбиваем текст на слова по пробелам и знакам препинания
@@ -734,6 +755,20 @@ static void applyHighlight(QLabel *card, const QString &query)
 
     card->setTextFormat(Qt::RichText);
     card->setText(html);
+}
+
+// ─── clearLayout ─────────────────────────────────────────────────────────────
+// Убрать все виджеты из колонки/полосы. deleteLater, а не delete: этот код часто
+// вызывается из обработчика клика или меню САМОЙ удаляемой карточки/кнопки —
+// мгновенное удаление = вылет. keepLast — сколько элементов оставить в конце
+// (например, растяжку в списке тегов).
+static void clearLayout(QLayout *layout, int keepLast = 0)
+{
+    while (layout->count() > keepLast) {
+        QLayoutItem *item = layout->takeAt(0);
+        if (QWidget *w = item->widget()) { w->hide(); w->deleteLater(); }
+        delete item;
+    }
 }
 
 // ─── softWrap ────────────────────────────────────────────────────────────────
@@ -848,6 +883,15 @@ void MainWindow::setupLayout()
     applyBtnShadow(m_profilesBtn);
     connect(m_profilesBtn, &QPushButton::clicked, this, &MainWindow::showProfilesMenu);
 
+    // Кнопка 🖌 — оформление и анимации (квадратная, как шестерёнка)
+    m_designBtn = new SmartButton(QString(), m_topPanel);
+    m_designBtn->setIconGlyph(QChar(0xE771));  // Кисточка (Personalize)
+    m_designBtn->setFixedSize(BTN_H, BTN_H);
+    m_designBtn->setBtnStyle(QColor(20,20,32,245), QColor(255,255,255,160), 6);
+    m_designBtn->setToolTip(tr("Оформление и анимации"));
+    applyBtnShadow(m_designBtn);
+    connect(m_designBtn, &QPushButton::clicked, this, &MainWindow::showAppearanceSettings);
+
     m_sortBtn = new SmartButton(sortLabel(), m_topPanel);
     m_sortBtn->setFixedHeight(BTN_H);
     m_sortBtn->setFont(btnFont);
@@ -864,7 +908,8 @@ void MainWindow::setupLayout()
     connect(m_clearBtn, &QPushButton::clicked, this, &MainWindow::showClearMenu);
 
     // Иконка настроек — квадратная
-    m_settingsBtn = new SmartButton("⚙️", m_topPanel);
+    m_settingsBtn = new SmartButton(QString(), m_topPanel);
+    m_settingsBtn->setIconGlyph(QChar(0xE713));  // Шестерёнка
     m_settingsBtn->setFixedSize(BTN_H, BTN_H);
     m_settingsBtn->setBtnStyle(QColor(20,20,32,245), QColor(255,255,255,160), 6);
     m_settingsBtn->setToolTip(tr("Настройки"));
@@ -873,7 +918,8 @@ void MainWindow::setupLayout()
     connect(m_settingsBtn, &QPushButton::clicked, this, &MainWindow::showSettings);
 
     // Кнопка режима мультивыбора — видна только в Закрепах
-    m_editBtn = new SmartButton(tr("✏"), m_topPanel);
+    m_editBtn = new SmartButton(QString(), m_topPanel);
+    m_editBtn->setIconGlyph(QChar(0xE70F));  // Карандаш
     m_editBtn->setFixedSize(BTN_H, BTN_H);
     m_editBtn->setFont(btnFont);
     m_editBtn->setBtnStyle(QColor(20,20,32,245), QColor(255,255,255,150), 8);
@@ -889,12 +935,13 @@ void MainWindow::setupLayout()
     topLayout->addWidget(m_pinsBtn);
     topLayout->addStretch();
     topLayout->addWidget(m_editBtn);
+    topLayout->addWidget(m_designBtn);
     topLayout->addWidget(m_profilesBtn);
     topLayout->addWidget(m_sortBtn);
     topLayout->addWidget(m_clearBtn);
     topLayout->addWidget(m_settingsBtn);
 
-    // �� �олоса папок (показ�вае�ся �ол�ко в �ежиме �ак�епов) �����������������
+    // ── Полоса папок (показывается только в режиме закрепов) ──────────────────
     m_foldersBar = new QWidget(this);
     m_foldersBar->setObjectName("foldersBar");
     m_foldersBar->setFixedHeight(sc(BASE_FOLD));
@@ -919,6 +966,9 @@ void MainWindow::setupLayout()
     m_leftScroll->setFixedWidth(sc(BASE_LEFT));
     m_leftScroll->setWidgetResizable(true);
     m_leftScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Полосу прокрутки не показываем (листать — колёсиком/тачпадом): она
+    // ломалась во время анимаций и только занимала место
+    m_leftScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_leftScroll->setFocusPolicy(Qt::WheelFocus);
     m_leftScroll->viewport()->setStyleSheet("background: transparent;");
     QScrollArea *leftScroll = m_leftScroll;
@@ -942,6 +992,9 @@ void MainWindow::setupLayout()
     m_rightScroll->setFixedWidth(sc(BASE_RIGHT));
     m_rightScroll->setWidgetResizable(true);
     m_rightScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Полосу прокрутки не показываем (листать — колёсиком/тачпадом): она
+    // ломалась во время анимаций и только занимала место
+    m_rightScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_rightScroll->setFocusPolicy(Qt::WheelFocus);
     m_rightScroll->viewport()->setStyleSheet("background: transparent;");
     QScrollArea *rightScroll = m_rightScroll;
@@ -957,7 +1010,7 @@ void MainWindow::setupLayout()
     middleLayout->addWidget(centerSpacer);
     middleLayout->addWidget(rightScroll);
 
-    // �� Нижняя панел� ��������������������������������������������������������
+    // ── Нижняя панель ───────────────────────────────────────────────────────────
     m_bottomPanel = new QWidget(this);
     m_bottomPanel->setObjectName("bottomPanel");
     m_bottomPanel->setFixedHeight(sc(BASE_BOT));
@@ -970,19 +1023,36 @@ void MainWindow::setupLayout()
     m_searchEdit->setPlaceholderText(tr("Поиск по тексту..."));
     bottomLayout->addWidget(searchBar);
 
-    // При вводе — фильтруем в зависимости от текущего режима
-    connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString &q) {
+    // Поиск по истории идёт по ВСЕЙ базе (раньше — только по 40 карточкам на экране,
+    // и всё скопированное раньше просто не находилось). Чтобы не тормозить на
+    // каждой букве, ищем через 200мс после последнего нажатия.
+    m_searchTimer = new QTimer(this);
+    m_searchTimer->setSingleShot(true);
+    m_searchTimer->setInterval(200);
+    connect(m_searchTimer, &QTimer::timeout, this, [this]() {
+        const QString q = m_searchEdit->text();
         if (m_viewMode == ViewMode::History) {
+            // Перестраиваем ТОЛЬКО колонку текстов — картинки справа не трогаем
+            // (иначе на каждую паузу в наборе заново грузились бы 40 картинок)
+            loadHistory(true);
             filterHistory(q);
         } else {
             // В режиме закрепов: если есть запрос — загружаем ВСЕ папки и фильтруем;
             // если запрос пуст — возвращаемся к текущей папке
-            if (q.isEmpty())
-                loadPins(false);
-            else
-                loadPins(true);
+            loadPins(!q.isEmpty());
             filterPins(q);
         }
+    });
+
+    // При вводе — мгновенно фильтруем то, что уже на экране,
+    // а полную перезагрузку делаем через 200мс после последней буквы
+    // (раньше закрепы перестраивались целиком на КАЖДУЮ букву).
+    connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString &q) {
+        if (m_viewMode == ViewMode::History)
+            filterHistory(q);
+        else
+            filterPins(q);
+        m_searchTimer->start();
     });
 
     mainLayout->addWidget(m_topPanel);
@@ -1003,35 +1073,50 @@ void MainWindow::setupLayout()
 //      Фаза 3: видео → аналогично изображениям но с иконкой 🎬.
 //   5. loadNextImage() запускается через singleShot(0) — загружает по одному
 //      изображению за итерацию главного цикла, не блокируя UI.
-void MainWindow::loadHistory()
+void MainWindow::loadHistory(bool textsOnly)
 {
-    // Отменяем незавершённую ленивую загрузку прошлого поколения.
-    // QPointer<QLabel> внутри loadNextImage() увидит что gen != m_loadGeneration и остановится.
-    ++m_loadGeneration;
-    m_pendingImages.clear();
-
-    // Очищаем колонки перед загрузкой
-    QLayoutItem *item;
-    while ((item = m_leftLayout->takeAt(0)) != nullptr) {
-        delete item->widget();
-        delete item;
+    // textsOnly — перестроить только колонку текстов (при поиске).
+    // Картинки справа и их ленивая загрузка в этом случае не трогаются.
+    if (!textsOnly) {
+        // Отменяем незавершённую ленивую загрузку прошлого поколения.
+        // QPointer<QLabel> внутри loadNextImage() увидит что gen != m_loadGeneration и остановится.
+        ++m_loadGeneration;
+        m_pendingImages.clear();
+        clearLayout(m_rightLayout);
     }
-    while ((item = m_rightLayout->takeAt(0)) != nullptr) {
-        delete item->widget();
-        delete item;
+    clearLayout(m_leftLayout);
+
+    // ── Фаза 1: тексты — мгновенно ─────────────────────────────────────────────
+    // Без поиска — 40 последних. С поиском — ищем по всей истории и показываем
+    // первые 40 совпадений. Огромные тексты (логи на мегабайты) проверяем только
+    // по первым 20 000 символам, чтобы поиск не подвешивал окно.
+    const QString query = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
+    QList<HistoryItem> texts;
+    if (query.isEmpty()) {
+        texts = m_db->getHistoryByType("text", 40, 0);
+    } else {
+        const int limit = qMax(AppSettings::get().maxHistoryRecords(), 40);
+        for (const HistoryItem &h : m_db->getHistoryByType("text", limit, 0)) {
+            // Точное вхождение ищем по 20 000 символам (быстро), а нечёткий
+            // поиск (Левенштейн по каждому слову — дорого) только по первым
+            // 2 000 — иначе на большой истории окно подвисало при наборе
+            const QString head = h.content.left(20000);
+            if (head.contains(query, Qt::CaseInsensitive) ||
+                fuzzyMatch(head.left(2000), query)) {
+                texts.append(h);
+                if (texts.size() >= 40) break;
+            }
+        }
     }
 
-    // �� Фаза 1: �екс�� � мгновенно ������������������������������������������
-    QList<HistoryItem> texts = m_db->getHistoryByType("text", 40, 0);
-
-    // ��именяем со��и�овк� (�� всегда возв�а�ае� DESC � п�и ASC п�ос�о �азво�а�иваем)
+    // Применяем сортировку (БД всегда возвращает DESC, при ASC просто разворачиваем)
     if (m_sortOrder == SortOrder::DateAsc)
         std::reverse(texts.begin(), texts.end());
     for (const HistoryItem &entry : texts) {
         ClickableCard *card = new ClickableCard();
         applyCardShadow(card);
         card->setWordWrap(true);
-        card->setMaximumWidth(sc(BASE_LEFT) - 36); // да�м Qt �в��д�� �и�ин� � длинн�е слова лома��ся
+        card->setMaximumWidth(sc(BASE_LEFT) - 36); // даём Qt твёрдую ширину — длинные слова ломаются
         card->setCardStyle(QColor(20, 20, 32, 245));
         card->setStyleSheet(QString("color: #f0f0f0; padding: %1; font-size: %2;").arg(spx(8), spx(12)));
 
@@ -1050,7 +1135,7 @@ void MainWindow::loadHistory()
             pasteText(fullContent);
         });
 
-        // ��ав�й клик � кон�екс�ное мен� (�ак�епи�� / Удали��)
+        // Правый клик — контекстное меню (Закрепить / Удалить)
         int textId = entry.id;
         card->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(card, &QWidget::customContextMenuRequested, this,
@@ -1061,7 +1146,9 @@ void MainWindow::loadHistory()
         m_leftLayout->addWidget(card);
     }
 
-    // �� Фаза 2: ка��инки � сна�ала загл��ки, по�ом ленивая заг��зка ���������
+    if (textsOnly) return;  // Картинки и видео при поиске не перестраиваем
+
+    // ── Фаза 2: картинки — сначала заглушки, потом ленивая загрузка ───────────
     QList<HistoryItem> images = m_db->getHistoryByType("image", 40, 0);
 
     if (m_sortOrder == SortOrder::DateAsc)
@@ -1071,10 +1158,10 @@ void MainWindow::loadHistory()
         applyCardShadow(card);
         card->setFixedSize(sc(BASE_LEFT) - 36, sc(120));
         card->setAlignment(Qt::AlignCenter);
-        // Се�ая загл��ка � о�об�ажае�ся мгновенно, до заг��зки �еал�ного �айла
+        // Серая заглушка — отображается мгновенно, до загрузки реального файла
         card->setCardStyle(QColor(20, 20, 32, 245));
         card->setStyleSheet(QString("color: rgba(255,255,255,60); font-size: %1;").arg(spx(20)));
-        card->setText("");  // ней��ал�н�й плейс�олде�
+        card->setText("");  // нейтральный плейсхолдер
 
         card->setProperty("filepath", entry.filepath);
         card->setProperty("itemId", entry.id);
@@ -1084,7 +1171,7 @@ void MainWindow::loadHistory()
             pasteImage(fp);
         });
 
-        // ��ав�й клик � кон�екс�ное мен� (��осмо��е�� / �ак�епи�� / Удали��)
+        // Правый клик — контекстное меню (Просмотреть / Закрепить / Удалить)
         int imgId = entry.id;
         card->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(card, &QWidget::customContextMenuRequested, this,
@@ -1094,11 +1181,11 @@ void MainWindow::loadHistory()
 
         m_rightLayout->addWidget(card);
 
-        // �обавляем в о�е�ед� ленивой заг��зки
+        // Добавляем в очередь ленивой загрузки
         m_pendingImages.append({QPointer<QLabel>(card), fp});
     }
 
-    // �� Фаза 3: видео из папки мони�о�инга ����������������������������������
+    // ── Фаза 3: видео из папки мониторинга ─────────────────────────────────────
     QList<HistoryItem> videos = m_db->getHistoryByType("video", 40, 0);
     if (m_sortOrder == SortOrder::DateAsc)
         std::reverse(videos.begin(), videos.end());
@@ -1129,10 +1216,10 @@ void MainWindow::loadHistory()
         connect(card, &QWidget::customContextMenuRequested, this,
                 [this, vidId, fp, card](const QPoint &pos) {
             RoundedMenu menu(this);
-            menu.addAction(tr("Поиск по названию..."), [this, fp]() {
+            menu.addAction(tr("📌  Закрепить"), [this, fp]() {
                 bool ok = false;
                 QString name = QInputDialog::getText(
-                    this, tr("Изображение"), tr("Новые сначала"),
+                    this, tr("Закрепить видео"), tr("Название:"),
                     QLineEdit::Normal, QFileInfo(fp).baseName(), &ok);
                 if (!ok || name.trimmed().isEmpty()) return;
                 QString folder = "";
@@ -1144,7 +1231,7 @@ void MainWindow::loadHistory()
                 m_db->addPin(folder, name.trimmed(), "video", "", fp);
             });
             menu.addSeparator();
-            menu.addAction(tr("Старые сначала"), [this, vidId, card]() {
+            menu.addAction(tr("🗑  Удалить"), [this, vidId, card]() {
                 deleteCard(vidId, card);
             });
             menu.exec(card->mapToGlobal(pos));
@@ -1183,14 +1270,14 @@ void MainWindow::loadNextImage(int gen)
                 Qt::KeepAspectRatio,
                 Qt::SmoothTransformation
             ));
-            cardPtr->setStyleSheet(""); // �би�аем плейс�олде� "�"
+            cardPtr->setStyleSheet(""); // убираем стиль плейсхолдера
         } else {
             cardPtr->setText(tr("Изображение"));
             cardPtr->setStyleSheet(QString("color: rgba(255,255,255,80); font-size: %1;").arg(spx(12)));
         }
     }
 
-    // След���ая ка��инка � на след���ей и�е�а�ии event loop
+    // Следующая картинка — на следующей итерации event loop
     if (!m_pendingImages.isEmpty()) {
         QTimer::singleShot(0, this, [this, gen]() { loadNextImage(gen); });
     }
@@ -1198,17 +1285,34 @@ void MainWindow::loadNextImage(int gen)
 
 void MainWindow::showWindow()
 {
-    QScreen *screen = QApplication::primaryScreen();
+    // Экран, на котором сейчас курсор (раньше — всегда основной монитор,
+    // и на втором мониторе приходилось поворачивать голову)
+    QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
+    if (!screen) screen = QApplication::primaryScreen();
     setGeometry(screen->geometry());
 
     // Запоминаем окно, которое было активным ДО нас — вернём ему фокус при вставке
     m_prevFocusHwnd = reinterpret_cast<quintptr>(GetForegroundWindow());
 
-    // Сбрасываем поиск
+    // Сбрасываем поиск и закрываем просмотр картинки, если остался с прошлого раза
     if (m_searchEdit)
         m_searchEdit->clear();
+    if (m_imageViewer)
+        m_imageViewer->hide();
 
-    // Показываем окно СРАЗУ — пользователь не ждёт пока загрузятся данные
+    // Окно открывают снова, пока ещё играет уход, — убираем старую сцену
+    // и отменяем отложенное скрытие (см. hideAnimated)
+    m_hidePending = false;
+    ++m_hideSeq;
+    if (m_overlay) m_overlay->abort();
+
+    // Показываем окно СРАЗУ — пользователь не ждёт пока загрузятся данные.
+    // Анимацию сборки запускаем ниже, когда карточки уже на месте.
+    // В новом стиле окно прячем ДО show(): иначе оно на миг мелькало уже
+    // собранным, и только потом начиналась анимация.
+    // (Без анимаций — наоборот, обязательно полная видимость: после ухода
+    //  окно остаётся прозрачным, а «Классику» могли включить уже после этого.)
+    setWindowOpacity(Anim::enabled(Anim::Kind::WindowOpen) ? 0.0 : 1.0);
     show();
     raise();
     activateWindow();
@@ -1221,6 +1325,162 @@ void MainWindow::showWindow()
     } else if (m_viewMode == ViewMode::Pins) {
         loadPins(); // закрепов обычно мало — всегда перегружаем
     }
+
+    // Новый стиль: панели съезжаются с краёв экрана, а карточки выезжают
+    // лесенкой — от верхней к нижней, в обеих колонках
+    if (Anim::enabled(Anim::Kind::WindowOpen)) {
+        // Карточки только что добавлены. Qt показывает их и раскладывает
+        // ОТЛОЖЕННО (на следующем шаге цикла событий), поэтому сейчас они ещё
+        // невидимы и с нулевыми координатами — показываем и раскладываем сами.
+        // Скрытые поиском (явно спрятанные) не трогаем.
+        for (QVBoxLayout *lay : {m_leftLayout, m_rightLayout})
+            for (int i = 0; i < lay->count(); ++i)
+                if (QWidget *w = lay->itemAt(i)->widget())
+                    if (!w->testAttribute(Qt::WA_WState_ExplicitShowHide))
+                        w->show();
+        for (int i = 0; i < 3; ++i)
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+
+        // Сцену оставляем жить после появления, только если закрытие тоже
+        // анимированное — тогда уход стартует мгновенно на готовой сцене
+        m_overlay = Anim::playIn(Anim::Kind::WindowOpen, this, buildOpenPieces(), 620, 1.3,
+                                 /*keepAlive=*/Anim::enabled(Anim::Kind::WindowClose));
+    }
+
+    // Есть обновление, а уведомление в трее пропустили — предлагаем один раз,
+    // когда пользователь сам открыл SmartClip (после того как окно отрисуется)
+    if (!m_pendingUpdateVersion.isEmpty() && !m_updatePromptShown) {
+        m_updatePromptShown = true;
+        QTimer::singleShot(300, this, [this]() { if (isVisible()) showPendingUpdate(); });
+    }
+}
+
+// ─── buildOpenPieces ─────────────────────────────────────────────────────────
+// Куски окна для анимации сборки/ухода: верхняя и нижняя панели + по полосе на
+// каждую видимую карточку (лесенка). Одни и те же куски проигрываются вперёд
+// при открытии и задом наперёд (в 2 раза быстрее) при закрытии.
+QList<Anim::Piece> MainWindow::buildOpenPieces()
+{
+    const int W = width();
+    QRect top = m_topPanel->geometry();
+    if (m_foldersBar->isVisible()) top = top.united(m_foldersBar->geometry());
+    const QRect bottom = m_bottomPanel->geometry();
+    const int colTop = top.bottom() + 1;
+    const int colBot = bottom.top();
+
+    QList<Anim::Piece> pcs;
+    auto add = [&](QRect r, QPointF from, qreal delay, qreal scale) {
+        if (r.isEmpty()) return;
+        Anim::Piece pc;
+        pc.src = r; pc.fromOffset = from; pc.delay = delay;
+        pc.anchor = QRectF(r).center();
+        pc.fromScaleX = pc.fromScaleY = scale;
+        pcs << pc;
+    };
+    add(top,    QPointF(0, -top.height() - 20),    0.00, 0.98);
+    add(bottom, QPointF(0, bottom.height() + 20),  0.06, 0.98);
+
+    // Колонку режем на горизонтальные полосы по середине промежутков между
+    // карточками: каждая полоса = одна карточка со своей тенью, и полосы не
+    // перекрываются (иначе края соседних карточек рисовались бы дважды)
+    auto column = [&](QVBoxLayout *lay, QScrollArea *area, int x0, int x1, qreal dir) {
+        const QRect view(area->viewport()->mapTo(this, QPoint(0, 0)), area->viewport()->size());
+        QList<QRect> cards;
+        for (int i = 0; i < lay->count(); ++i) {
+            QWidget *w = lay->itemAt(i)->widget();
+            if (!w || !w->isVisible()) continue;
+            const QRect r(w->mapTo(this, QPoint(0, 0)), w->size());
+            if (r.intersects(view)) cards << r;
+        }
+        for (int i = 0; i < cards.size(); ++i) {
+            const int y0 = (i == 0) ? colTop : (cards[i - 1].bottom() + cards[i].top()) / 2;
+            const int y1 = (i == cards.size() - 1) ? colBot
+                                                    : (cards[i].bottom() + cards[i + 1].top()) / 2;
+            const qreal delay = qMin(0.10 + i * 0.06, 0.55);  // Лесенка сверху вниз
+            add(QRect(x0, y0, x1 - x0, y1 - y0), QPointF(dir * 110, 0), delay, 0.92);
+        }
+    };
+    column(m_leftLayout,  m_leftScroll,  0, m_leftScroll->geometry().right() + 1, -1.0);
+    column(m_rightLayout, m_rightScroll, m_rightScroll->geometry().left(), W, +1.0);
+
+    return pcs;
+}
+
+// ─── hideAnimated ────────────────────────────────────────────────────────────
+// Закрыть окно с анимацией ухода (клик в пустое место, Esc, горячая клавиша).
+// Настоящее окно прячется СРАЗУ — фокус и клики уходят без задержки, а
+// разлетающиеся карточки — это только картинка поверх экрана.
+// Вставка по клику на карточку использует обычный hide() — без анимации.
+void MainWindow::hideAnimated()
+{
+    if (!isVisible() || m_hidePending) return;
+
+    // Почему не hide() сразу: у полноэкранного полупрозрачного окна hide()
+    // занимает в Windows ~80мс, и всё это время программа стоит — анимация
+    // замирала, а потом прыгала («моргание»). Поэтому на время анимации окно
+    // делаем полностью прозрачным (мгновенно; полностью прозрачное окно Windows
+    // пропускает клики насквозь), а настоящий hide() — когда анимация доиграла.
+    m_hidePending = true;
+    const int seq = ++m_hideSeq;
+    auto hideNow = [this, seq]() {
+        if (seq == m_hideSeq && m_hidePending) {
+            m_hidePending = false;
+            hide();
+        }
+    };
+    auto vanish = [this, seq]() {
+        if (seq == m_hideSeq && m_hidePending) setWindowOpacity(0.0);
+    };
+    // Фокус клавиатуры сразу возвращаем окну, где пользователь работал, —
+    // иначе нажатые сразу после Esc клавиши уходили бы в невидимый SmartClip
+    auto releaseFocus = [this]() {
+        HWND prev = reinterpret_cast<HWND>(m_prevFocusHwnd);
+        if (isActiveWindow() && prev && IsWindow(prev))
+            SetForegroundWindow(prev);
+    };
+
+    // Ещё играет появление — разворачиваем его обратно с текущего места.
+    // Настоящее окно в этот момент и так прозрачное.
+    if (m_overlay && m_overlay->isPlaying() && !m_overlay->isReverse()) {
+        if (!Anim::enabled(Anim::Kind::WindowClose)) {
+            // Закрытие — «Классика»: просто обрываем появление и прячем окно
+            m_overlay->abort();
+            m_hidePending = false;
+            hide();
+            return;
+        }
+        setWindowOpacity(0.0);
+        m_overlay->setOnFinished(hideNow);
+        m_overlay->reverseNow();
+        releaseFocus();
+        QTimer::singleShot(1500, this, hideNow);  // Страховка
+        return;
+    }
+
+    if (Anim::enabled(Anim::Kind::WindowClose) && windowOpacity() > 0.99) {
+        const QList<Anim::Piece> pcs = buildOpenPieces();
+        if (m_overlay && m_overlay->isIdle()) {
+            // Сцена от появления уже на экране — уход стартует мгновенно
+            m_overlay->replayOut(pcs, Anim::ms(Anim::Kind::WindowClose, 310), vanish);  // В 2 раза быстрее появления
+        } else {
+            if (m_overlay) m_overlay->abort();
+            m_overlay = Anim::playOut(Anim::Kind::WindowClose, this, pcs, 310, 1.3);
+            if (m_overlay) m_overlay->setOnFirstFrame(vanish);
+        }
+        if (m_overlay) m_overlay->setOnFinished(hideNow);
+        else           hideNow();
+        releaseFocus();
+        QTimer::singleShot(Anim::ms(Anim::Kind::WindowClose, 310) + 1000, this, hideNow);  // Страховка
+        return;
+    }
+    m_hidePending = false;
+    hide();
+}
+
+bool MainWindow::isOpen() const
+{
+    // Окно на экране и не в процессе ухода
+    return isVisible() && !m_hidePending;
 }
 
 // markHistoryDirty — помечает историю «грязной» (требует перезагрузки).
@@ -1241,7 +1501,9 @@ void MainWindow::filterHistory(const QString &query)
         if (query.isEmpty()) {
             widget->show();
         } else {
-            widget->setVisible(fuzzyMatch(fullText, query));
+            const QString head = fullText.left(20000);
+            widget->setVisible(head.contains(query.trimmed(), Qt::CaseInsensitive) ||
+                               fuzzyMatch(head.left(2000), query));
         }
 
         // Подсветка совпадений в тексте (только у карточек с displayText)
@@ -1272,7 +1534,7 @@ void MainWindow::filterPins(const QString &query)
                 widget->setVisible(matchesName || matchesTags);
             }
 
-            // �одсве�ка в �екс�ов�� пин-ка��о�ка�
+            // Подсветка в текстовых пин-карточках
             if (widget->isVisible()) {
                 if (QLabel *label = qobject_cast<QLabel*>(widget))
                     applyHighlight(label, effectiveQuery);
@@ -1285,14 +1547,42 @@ void MainWindow::filterPins(const QString &query)
 
 bool MainWindow::isInteractiveArea(const QPoint &pos) const
 {
-    // childAt возв�а�ае� сам�й гл�бокий до�е�ний видже� в э�ой �о�ке
+    // childAt возвращает самый глубокий дочерний виджет в этой точке
     QWidget *child = childAt(pos);
 
-    // �сли видже�а не� или э�о п�оз�а�н�й �ен�� � клик п�оваливае�ся
+    // Если виджета нет или это прозрачный центр — клик проваливается
     if (!child || child == m_centerSpacer)
         return false;
 
     return true;
+}
+
+// ─── Симуляция Ctrl+V ─────────────────────────────────────────────────────────
+// Перед Ctrl+V «отпускаем» Shift/Alt/Win, если пользователь их ещё держит.
+// Иначе хоткей профиля Ctrl+Shift+1 превращал вставку в Ctrl+Shift+V
+// (в Chrome/Word это «вставить без форматирования», в других программах —
+// вообще другое действие), а Alt+F2 — в Ctrl+Alt+V.
+static void sendCtrlV()
+{
+    INPUT inputs[10] = {};
+    int n = 0;
+    auto key = [&](WORD vk, bool up) {
+        inputs[n].type       = INPUT_KEYBOARD;
+        inputs[n].ki.wVk     = vk;
+        inputs[n].ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+        ++n;
+    };
+    // Ctrl нажимаем ПЕРВЫМ, а уже потом отпускаем Alt/Win: одиночное
+    // нажатие-отпускание Alt открывает меню программы (как F10), а Win — Пуск,
+    // и тогда Ctrl+V уходит в меню вместо вставки.
+    key(VK_CONTROL, false);  // нажать Ctrl
+    for (WORD vk : {WORD(VK_SHIFT), WORD(VK_MENU), WORD(VK_LWIN), WORD(VK_RWIN)})
+        if (GetAsyncKeyState(vk) & 0x8000)
+            key(vk, true);
+    key('V', false);         // нажать V
+    key('V', true);          // отпустить V
+    key(VK_CONTROL, true);   // отпустить Ctrl
+    SendInput(n, inputs, sizeof(INPUT));
 }
 
 void MainWindow::pasteText(const QString &text)
@@ -1311,25 +1601,7 @@ void MainWindow::pasteText(const QString &text)
         SetForegroundWindow(target);
 
     // 4. Ждём 150мс пока фокус успеет перейти, затем симулируем Ctrl+V
-    QTimer::singleShot(150, []() {
-        INPUT inputs[4] = {};
-
-        inputs[0].type   = INPUT_KEYBOARD;
-        inputs[0].ki.wVk = VK_CONTROL;           // нажать Ctrl
-
-        inputs[1].type   = INPUT_KEYBOARD;
-        inputs[1].ki.wVk = 'V';                  // нажать V
-
-        inputs[2].type         = INPUT_KEYBOARD;
-        inputs[2].ki.wVk       = 'V';            // отпустить V
-        inputs[2].ki.dwFlags   = KEYEVENTF_KEYUP;
-
-        inputs[3].type         = INPUT_KEYBOARD;
-        inputs[3].ki.wVk       = VK_CONTROL;     // отпустить Ctrl
-        inputs[3].ki.dwFlags   = KEYEVENTF_KEYUP;
-
-        SendInput(4, inputs, sizeof(INPUT));
-    });
+    QTimer::singleShot(150, &sendCtrlV);
 }
 
 void MainWindow::pasteImage(const QString &filepath)
@@ -1352,14 +1624,7 @@ void MainWindow::pasteImage(const QString &filepath)
     if (target && IsWindow(target))
         SetForegroundWindow(target);
 
-    QTimer::singleShot(150, []() {
-        INPUT inputs[4] = {};
-        inputs[0].type   = INPUT_KEYBOARD; inputs[0].ki.wVk = VK_CONTROL;
-        inputs[1].type   = INPUT_KEYBOARD; inputs[1].ki.wVk = 'V';
-        inputs[2].type   = INPUT_KEYBOARD; inputs[2].ki.wVk = 'V'; inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        inputs[3].type   = INPUT_KEYBOARD; inputs[3].ki.wVk = VK_CONTROL; inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(4, inputs, sizeof(INPUT));
-    });
+    QTimer::singleShot(150, &sendCtrlV);
 }
 
 void MainWindow::pasteFile(const QString &filepath)
@@ -1405,16 +1670,7 @@ void MainWindow::pasteFile(const QString &filepath)
     if (target && IsWindow(target))
         SetForegroundWindow(target);
 
-    QTimer::singleShot(150, []() {
-        INPUT inputs[4] = {};
-        inputs[0].type   = INPUT_KEYBOARD; inputs[0].ki.wVk = VK_CONTROL;
-        inputs[1].type   = INPUT_KEYBOARD; inputs[1].ki.wVk = 'V';
-        inputs[2].type   = INPUT_KEYBOARD; inputs[2].ki.wVk = 'V';
-        inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        inputs[3].type   = INPUT_KEYBOARD; inputs[3].ki.wVk = VK_CONTROL;
-        inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(4, inputs, sizeof(INPUT));
-    });
+    QTimer::singleShot(150, &sendCtrlV);
 }
 
 void MainWindow::importVideo()
@@ -1456,7 +1712,7 @@ void MainWindow::importAudio()
     for (const QString &fp : files) {
         bool ok = false;
         QString name = QInputDialog::getText(
-            this, tr("Закрепить видео"),
+            this, tr("Закрепить аудио"),
             tr("Название закрепа:"),
             QLineEdit::Normal, QFileInfo(fp).baseName(), &ok
         );
@@ -1716,11 +1972,7 @@ void MainWindow::applySortOrder(SortOrder order)
 void MainWindow::loadFolderBar()
 {
     // Очищаем все виджеты полосы папок
-    QLayoutItem *item;
-    while ((item = m_foldersLayout->takeAt(0)) != nullptr) {
-        delete item->widget();
-        delete item;
-    }
+    clearLayout(m_foldersLayout);
 
     const int FH = 28;
     QFont fbarFont = font();
@@ -1728,7 +1980,8 @@ void MainWindow::loadFolderBar()
 
     if (!m_currentFolder.isEmpty()) {
         // ── Внутри папки: кнопка "←" + хлебная крошка ──────────────────────
-        SmartButton *backBtn = new SmartButton("←", m_foldersBar);
+        SmartButton *backBtn = new SmartButton(QString(), m_foldersBar);
+        backBtn->setIconGlyph(QChar(0xE72B), 12);  // Стрелка «назад»
         backBtn->setBtnStyle(QColor(20,20,32,242), QColor(255,255,255,150), 5);
         backBtn->setFixedSize(FH, FH);
         backBtn->setFont(fbarFont);
@@ -1744,7 +1997,7 @@ void MainWindow::loadFolderBar()
 
         // Хлебная крошка — SmartButton в активном стиле (показывает текущий путь)
         QString leafName = m_currentFolder.mid(m_currentFolder.lastIndexOf('/') + 1);
-        SmartButton *breadcrumb = new SmartButton("📁 " + leafName, m_foldersBar);
+        SmartButton *breadcrumb = new SmartButton("📁 " + QString(leafName).replace('&', "&&"), m_foldersBar);
         breadcrumb->setFixedHeight(FH);
         breadcrumb->setFont(fbarFont);
         breadcrumb->setBtnStyle(QColor(20,20,32,242), QColor(255,255,255,120), 5);
@@ -1757,7 +2010,7 @@ void MainWindow::loadFolderBar()
         m_foldersLayout->addWidget(breadcrumb);
 
     } else {
-        // �� �о�ен�: кнопка "Все" ���������������������������������������������
+        // ── Корень: кнопка "Все" ───────────────────────────────────────────────
         SmartButton *allBtn = new SmartButton(tr("Все"), m_foldersBar);
         allBtn->setFixedHeight(FH);
         allBtn->setFont(fbarFont);
@@ -1773,7 +2026,7 @@ void MainWindow::loadFolderBar()
         m_foldersLayout->addWidget(allBtn);
     }
 
-    // �� �одпапки �ек��его ��овня ����������������������������������������������
+    // ── Подпапки текущего уровня ────────────────────────────────────────────────
     QList<FolderItem> folders = m_db->getFolders(m_currentFolder);
     for (const FolderItem &folder : folders) {
         // Показываем только листовое имя (без родительского пути)
@@ -1781,6 +2034,7 @@ void MainWindow::loadFolderBar()
         QString fullName    = folder.name;
         // Закреплённые папки помечаем булавкой 📌
         QString btnLabel = folder.pinned ? ("📌 " + displayName) : displayName;
+        btnLabel.replace('&', "&&");  // Иначе «Tom & Jerry» показывалось как «Tom  Jerry»
 
         SmartButton *btn = new SmartButton(btnLabel, m_foldersBar);
         btn->setFixedHeight(FH);
@@ -1803,7 +2057,7 @@ void MainWindow::loadFolderBar()
                 [this, fullName, displayName, btn, isPinned = folder.pinned](const QPoint &pos) {
             RoundedMenu menu(this);
 
-            // �ак�епи�� / ��к�епи�� папк� (всегда пе�вая)
+            // Закрепить / открепить папку (всегда первая)
             QString pinLabel = isPinned ? tr("📌  Открепить папку") : tr("📌  Закрепить первой");
             menu.addAction(pinLabel, [this, fullName, isPinned]() {
                 m_db->setFolderPinned(fullName, !isPinned);
@@ -1814,15 +2068,25 @@ void MainWindow::loadFolderBar()
             menu.addAction(tr("✏️  Переименовать"), [this, fullName, displayName]() {
                 bool ok = false;
                 QString newLeaf = askText(this, tr("Переименовать папку"), tr("Новое название:"), displayName, &ok);
-                if (!ok || newLeaf.trimmed().isEmpty() || newLeaf.trimmed() == displayName) return;
-                // С��оим нов�й полн�й п��� (меняем �ол�ко лис�овое имя)
+                // '/' — разделитель вложенности, в имени папки его быть не может
+                newLeaf = newLeaf.trimmed().replace('/', '-');
+                if (!ok || newLeaf.isEmpty() || newLeaf == displayName) return;
+                // Строим новый полный путь (меняем только листовое имя)
                 int sep = fullName.lastIndexOf('/');
                 QString newFullName = (sep >= 0)
-                    ? fullName.left(sep + 1) + newLeaf.trimmed()
-                    : newLeaf.trimmed();
-                m_db->renameFolder(fullName, newFullName);
+                    ? fullName.left(sep + 1) + newLeaf
+                    : newLeaf;
+                if (!m_db->renameFolder(fullName, newFullName)) {
+                    // Раньше ошибка молча игнорировалась, а текущая папка
+                    // «переключалась» на несуществующую
+                    confirmDialog(this, tr("Переименовать папку"),
+                                  tr("Папка «%1» уже существует.").arg(newLeaf), false);
+                    return;
+                }
                 if (m_currentFolder == fullName)
                     m_currentFolder = newFullName;
+                else if (m_currentFolder.startsWith(fullName + "/"))
+                    m_currentFolder = newFullName + m_currentFolder.mid(fullName.length());
                 loadFolderBar();
                 loadPins();
             });
@@ -1830,14 +2094,21 @@ void MainWindow::loadFolderBar()
             menu.addAction(tr("📁  Создать подпапку"), [this, fullName]() {
                 bool ok = false;
                 QString name = askText(this, tr("Новая подпапка"), tr("Название подпапки:"), "", &ok);
-                if (ok && !name.trimmed().isEmpty()) {
-                    m_db->addFolder(name.trimmed(), fullName);
+                name = name.trimmed().replace('/', '-');
+                if (ok && !name.isEmpty()) {
+                    m_db->addFolder(name, fullName);
                     loadFolderBar();
                 }
             });
 
             menu.addSeparator();
-            menu.addAction(tr("🗑  Удалить папку"), [this, fullName]() {
+            menu.addAction(tr("🗑  Удалить папку"), [this, fullName, displayName]() {
+                // Раньше папка удалялась сразу, без вопроса
+                if (!confirmDialog(this, tr("Удалить папку"),
+                        tr("Удалить папку «%1» и все её подпапки?\n"
+                           "Закрепы из неё не удалятся — они переместятся во «Все».")
+                            .arg(displayName), true))
+                    return;
                 m_db->deleteFolder(fullName);
                 if (m_currentFolder == fullName ||
                     m_currentFolder.startsWith(fullName + "/"))
@@ -1852,7 +2123,7 @@ void MainWindow::loadFolderBar()
         m_foldersLayout->addWidget(btn);
     }
 
-    // �� �нопки импо��а видео и а�дио �����������������������������������������
+    // ── Кнопки импорта видео и аудио ────────────────────────────────────────────
     SmartButton *importVideoBtn = new SmartButton(tr("🎬 Видео"), m_foldersBar);
     importVideoBtn->setFixedHeight(FH);
     importVideoBtn->setFont(fbarFont);
@@ -1872,7 +2143,8 @@ void MainWindow::loadFolderBar()
     m_foldersLayout->addWidget(importAudioBtn);
 
     // Кнопка "+" — квадратная, как backBtn
-    SmartButton *addBtn = new SmartButton("+", m_foldersBar);
+    SmartButton *addBtn = new SmartButton(QString(), m_foldersBar);
+    addBtn->setIconGlyph(QChar(0xE710), 12);  // Плюс
     addBtn->setFixedSize(FH, FH);
     addBtn->setFont(fbarFont);
     addBtn->setBtnStyle(QColor(20,20,32,242), QColor(255,255,255,150), 5);
@@ -1882,8 +2154,9 @@ void MainWindow::loadFolderBar()
         bool ok = false;
         QString title = m_currentFolder.isEmpty() ? tr("Новая папка") : tr("Новая подпапка");
         QString name  = askText(this, title, tr("Название:"), "", &ok);
-        if (ok && !name.trimmed().isEmpty()) {
-            m_db->addFolder(name.trimmed(), m_currentFolder);
+        name = name.trimmed().replace('/', '-');  // '/' — разделитель вложенности
+        if (ok && !name.isEmpty()) {
+            m_db->addFolder(name, m_currentFolder);
             loadFolderBar();
         }
     });
@@ -2009,7 +2282,11 @@ void MainWindow::showPinBatchContextMenu(const QPoint &globalPos)
         menu.addSeparator();
     }
 
-    menu.addAction(tr("🗑  Удалить выбранные (%1)").arg(n), [this]() {
+    menu.addAction(tr("🗑  Удалить выбранные (%1)").arg(n), [this, n]() {
+        if (!confirmDialog(this, tr("Удалить закрепы"),
+                           tr("Удалить выбранные закрепы (%1)?\nЭто действие нельзя отменить.").arg(n),
+                           true))
+            return;
         for (int id : std::as_const(m_selectedPinIds))
             m_db->deletePin(id);
         m_selectedPinIds.clear();
@@ -2021,28 +2298,25 @@ void MainWindow::showPinBatchContextMenu(const QPoint &globalPos)
 
 void MainWindow::loadPins(bool allFolders)
 {
-    // ��меняем незаве���нн�� ленив�� заг��зк�
+    // Карточки сейчас будут удалены — перетаскивание (если шло) прерываем
+    m_dragCard   = nullptr;
+    m_dragLayout = nullptr;
+
+    // Отменяем незавершённую ленивую загрузку картинок из прошлого вызова
     ++m_loadGeneration;
     m_pendingImages.clear();
 
-    // ��и�аем колонки
-    QLayoutItem *item;
-    while ((item = m_leftLayout->takeAt(0)) != nullptr) {
-        delete item->widget();
-        delete item;
-    }
-    while ((item = m_rightLayout->takeAt(0)) != nullptr) {
-        delete item->widget();
-        delete item;
-    }
+    // Чистим колонки
+    clearLayout(m_leftLayout);
+    clearLayout(m_rightLayout);
 
     // allFolders=true используется при поиске, чтобы найти закрепы из любой папки
     QList<PinItem> pins = allFolders ? m_db->getAllPins() : m_db->getPins(m_currentFolder);
 
-    // Со��и�овка
+    // Сортировка
     switch (m_sortOrder) {
         case SortOrder::DateAsc:
-            std::reverse(pins.begin(), pins.end()); // �� да�� DESC, �азво�а�иваем
+            std::reverse(pins.begin(), pins.end()); // из БД пришло по дате DESC, разворачиваем
             break;
         case SortOrder::NameAsc:
             std::sort(pins.begin(), pins.end(), [](const PinItem &a, const PinItem &b) {
@@ -2059,7 +2333,7 @@ void MainWindow::loadPins(bool allFolders)
 
     for (const PinItem &pin : pins) {
         if (pin.type == "text") {
-            // �� Текс�ов�й зак�еп ���������������������������������������������
+            // ── Текстовый закреп ───────────────────────────────────────────────
             ClickableCard *card = new ClickableCard();
             applyCardShadow(card);
             card->setWordWrap(true);
@@ -2118,8 +2392,8 @@ void MainWindow::loadPins(bool allFolders)
             m_leftLayout->addWidget(card);
 
         } else if (pin.type == "image") {
-            // �� �зоб�ажение-зак�еп �������������������������������������������
-            // �а��о�ка: ��пл�й �он как � �екс�ов�� зак�епов, све��� "⭐ Название"
+            // ── Изображение-закреп ─────────────────────────────────────────────
+            // Раскладка: тот же фон что у текстовых закрепов, сверху "⭐ Название"
             ClickableCard *card = new ClickableCard();
             applyCardShadow(card);
             card->setFixedSize(sc(BASE_RIGHT) - 36, sc(148));
@@ -2129,7 +2403,7 @@ void MainWindow::loadPins(bool allFolders)
             card->setProperty("pinId",   pin.id);
             card->setEditMode(m_editMode);
 
-            // �� С��ока с именем све��� (как � �екс�ов��) ���������������������
+            // ── Строка с именем сверху (как у текстовых) ──────────────────────
             QString displayName = pin.name.isEmpty() ? "⭐" : QString("⭐ %1").arg(pin.name);
             QLabel *nameLabel = new QLabel(displayName, card);
             nameLabel->setStyleSheet(
@@ -2143,7 +2417,7 @@ void MainWindow::loadPins(bool allFolders)
             nameLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
             nameLabel->show();
 
-            // �� �зоб�ажение ниже с��оки с именем �����������������������������
+            // ── Изображение ниже строки с именем ───────────────────────────────
             QLabel *imgLabel = new QLabel(card);
             const int imgTop = 26;
             imgLabel->setFixedSize(card->width() - 4, card->height() - imgTop - 2);
@@ -2159,7 +2433,8 @@ void MainWindow::loadPins(bool allFolders)
                     Qt::KeepAspectRatio, Qt::SmoothTransformation
                 ));
             } else {
-                imgLabel->setText(tr("Название для «%1»:"));
+                // Раньше здесь по ошибке выводилась строка «Название для «%1»:»
+                imgLabel->setText(tr("Файл изображения не найден"));
                 imgLabel->setStyleSheet("color: #888; background: transparent;");
             }
             imgLabel->show();
@@ -2191,9 +2466,9 @@ void MainWindow::loadPins(bool allFolders)
                 });
                 menu.addSeparator();
 
-                // �е�еименова��
+                // Переименовать
                 menu.addAction(tr("🏷  Переименовать"), [this, pinId, card, nameLabel]() {
-                    // ���езаем "⭐ " из �ек��его имени
+                    // Берём текущее имя без "⭐ " — оно хранится отдельно в pinName
                     QString cur = card->property("pinName").toString();
                     bool ok = false;
                     QString newName = askText(this, tr("Переименовать закреп"), tr("Новое название:"), cur, &ok);
@@ -2207,7 +2482,7 @@ void MainWindow::loadPins(bool allFolders)
                 });
                 menu.addSeparator();
 
-                // �е�емес�и�� в папк�
+                // Переместить в папку
                 QList<FolderItem> folders = m_db->getAllFolders();
                 if (!folders.isEmpty()) {
                     QMenu *moveMenu = menu.addMenu(tr("📁  Переместить в папку"));
@@ -2248,7 +2523,7 @@ void MainWindow::loadPins(bool allFolders)
             m_rightLayout->addWidget(card);
 
         } else if (pin.type == "video") {
-            // �� �идео-зак�еп ��������������������������������������������������
+            // ── Видео-закреп ───────────────────────────────────────────────────
             ClickableCard *card = new ClickableCard();
             applyCardShadow(card);
             card->setFixedSize(sc(BASE_RIGHT) - 36, sc(148));
@@ -2258,7 +2533,7 @@ void MainWindow::loadPins(bool allFolders)
             card->setProperty("pinId",   pin.id);
             card->setEditMode(m_editMode);
 
-            // С��ока с именем све���
+            // Строка с именем сверху
             QString displayName = pin.name.isEmpty()
                 ? QFileInfo(pin.filepath).fileName() : pin.name;
             QLabel *nameLabel = new QLabel(QString("🎬  %1").arg(displayName), card);
@@ -2273,7 +2548,7 @@ void MainWindow::loadPins(bool allFolders)
             nameLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
             nameLabel->show();
 
-            // ��ев�� ниже с��оки с именем
+            // Превью ниже строки с именем
             QLabel *imgLabel = new QLabel(card);
             const int imgTop = 26;
             imgLabel->setFixedSize(card->width() - 4, card->height() - imgTop - 2);
@@ -2282,7 +2557,7 @@ void MainWindow::loadPins(bool allFolders)
             imgLabel->setStyleSheet("background: transparent;");
             imgLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
-            // ���зим п�ев�� �е�ез Shell � �е же миниа���� ��о в п�оводнике
+            // Берём превью через Shell — та же миниатюра что и в проводнике
             QPixmap thumb = shellThumbnail(pin.filepath, imgLabel->width(), imgLabel->height());
             if (!thumb.isNull()) {
                 imgLabel->setPixmap(thumb.scaled(
@@ -2369,7 +2644,7 @@ void MainWindow::loadPins(bool allFolders)
             m_rightLayout->addWidget(card);
 
         } else if (pin.type == "audio") {
-            // �� А�дио-зак�еп ��������������������������������������������������
+            // ── Аудио-закреп ───────────────────────────────────────────────────
             ClickableCard *card = new ClickableCard();
             applyCardShadow(card);
             card->setWordWrap(true);
@@ -2406,7 +2681,7 @@ void MainWindow::loadPins(bool allFolders)
                     return;
                 }
                 RoundedMenu menu(this);
-                menu.addAction(tr("🎵 Аудио"), [fp]() {
+                menu.addAction(tr("▶  Воспроизвести"), [fp]() {
                     QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
                 });
                 menu.addSeparator();
@@ -2556,7 +2831,7 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(10);
 
-    // �� ��ок���иваем�й список �егов ������������������������������������������
+    // ── Прокручиваемый список тегов ─────────────────────────────────────────────
     QScrollArea *scroll = new QScrollArea(&dlg);
     scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -2572,11 +2847,11 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
     scroll->setWidget(chipsWidget);
     vl->addWidget(scroll);
 
-    // Ф�нк�ия пе�ес��ойки списка �егов (std::function � ��об� лямбда могла за�ва�и�� себя)
+    // Функция пересборки списка тегов (std::function — чтобы лямбда могла захватить себя)
     std::function<void()> rebuildChips = [&]() {
-        // Удаляем все с��оки к�оме последнего stretch
-        while (chipsLayout->count() > 1)
-            delete chipsLayout->takeAt(0)->widget();
+        // Удаляем все строки кроме последнего stretch
+        // deleteLater: функция вызывается из кнопки ✕ самой удаляемой строки
+        clearLayout(chipsLayout, 1);  // Оставляем растяжку в конце
 
         for (int i = 0; i < tags.size(); ++i) {
             QWidget *row = new QWidget(chipsWidget);
@@ -2585,7 +2860,7 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
             hl->setContentsMargins(0, 0, 0, 0);
             hl->setSpacing(6);
 
-            QLabel *lbl = new QLabel(QString("<b>#%1</b>").arg(tags[i]), row);
+            QLabel *lbl = new QLabel(QString("<b>#%1</b>").arg(tags[i].toHtmlEscaped()), row);
             lbl->setStyleSheet("color: #aaddff; font-size: 13px; background: transparent;");
 
             QPushButton *del = new QPushButton("✕", row);
@@ -2604,7 +2879,7 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
             hl->addStretch();
             hl->addWidget(del);
 
-            // �с�авляем пе�ед stretch
+            // Вставляем перед stretch
             chipsLayout->insertWidget(chipsLayout->count() - 1, row);
         }
 
@@ -2618,7 +2893,7 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
 
     rebuildChips();
 
-    // �� �опи�ова�� / �с�ави�� �еги �������������������������������������������
+    // ── Копировать / вставить теги ──────────────────────────────────────────────
     QHBoxLayout *clipRow = new QHBoxLayout();
     clipRow->setSpacing(6);
 
@@ -2627,7 +2902,7 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
     copyBtn->setCursor(Qt::PointingHandCursor);
     pasteBtn->setCursor(Qt::PointingHandCursor);
 
-    // �опи�ова��: соби�аем �ек��ие �еги с # и клад�м в б��е�
+    // Копировать: собираем текущие теги с # и кладём в буфер
     connect(copyBtn, &QPushButton::clicked, [&]() {
         if (tags.isEmpty()) return;
         QStringList withHash;
@@ -2635,7 +2910,7 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
         QApplication::clipboard()->setText(withHash.join(" "));
     });
 
-    // �с�ави��: �и�аем из б��е�а, па�сим �еги, добавляем без д�блика�ов
+    // Вставить: читаем из буфера, парсим теги, добавляем без дубликатов
     connect(pasteBtn, &QPushButton::clicked, [&]() {
         QString raw = QApplication::clipboard()->text();
         raw.replace(',', ' ').replace('#', ' ');
@@ -2656,7 +2931,7 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
     clipRow->addStretch();
     vl->addLayout(clipRow);
 
-    // �� �оле добавления нового �ега ������������������������������������������
+    // ── Поле добавления нового тега ─────────────────────────────────────────────
     QHBoxLayout *addRow = new QHBoxLayout();
     addRow->setSpacing(6);
     QLineEdit *addEdit = new QLineEdit(&dlg);
@@ -2685,7 +2960,7 @@ void MainWindow::showTagsDialog(int pinId, QWidget *card)
     connect(addBtn,  &QPushButton::clicked, addTag);
     connect(addEdit, &QLineEdit::returnPressed, addTag);
 
-    // �� �нопки ���������������������������������������������������������������
+    // ── Кнопки ─────────────────────────────────────────────────────────────────
     QHBoxLayout *btnRow = new QHBoxLayout();
     btnRow->setSpacing(8);
     QPushButton *cancelBtn = new QPushButton(tr("Отмена"), &dlg);
@@ -2711,29 +2986,32 @@ void MainWindow::showPinContextMenu(int pinId, const QString &currentFolder,
 {
     RoundedMenu menu(this);
 
-    // �е�еименова�� зак�еп
+    // Переименовать закреп
     menu.addAction(tr("✏️  Переименовать"), [this, pinId, card]() {
         if (!card) return;
-        // Тек��ее имя � пе�вая с��ока �екс�а ка��о�ки (без "⭐ ")
-        QString oldText  = card->text();
-        int nl           = oldText.indexOf('\n');
-        QString nameLine = (nl >= 0) ? oldText.left(nl) : oldText;
-        QString oldName  = nameLine.mid(nameLine.indexOf(' ') + 1); // �би�аем "⭐ "
+        // Имя берём из свойства, а не из текста карточки: при активном поиске
+        // там HTML-подсветка, и имя «разбиралось» с тегами внутри.
+        QString oldName = card->property("pinName").toString();
 
         bool ok = false;
         QString newName = askText(this, tr("Переименовать закреп"), tr("Новое название:"), oldName, &ok);
-        if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == oldName) return;
+        newName = newName.trimmed();
+        if (!ok || newName.isEmpty() || newName == oldName) return;
 
-        m_db->updatePinName(pinId, newName.trimmed());
+        m_db->updatePinName(pinId, newName);
 
-        // �бновляем ка��о�к� без пе�езаг��зки
+        // Обновляем карточку без перезагрузки — так же, как её строит loadPins()
         QString content = card->property("fullText").toString();
-        QString preview = content.trimmed().left(80);
-        if (content.length() > 80) preview += "...";
-        card->setText(QString("⭐ %1\n%2").arg(newName.trimmed(), preview));
+        QString preview = content.trimmed().left(200);
+        if (content.length() > 200) preview += "...";
+        QString pinDisplay = QString("⭐ %1\n%2").arg(newName, softWrap(preview));
+        card->setTextFormat(Qt::PlainText);
+        card->setText(pinDisplay);
+        card->setProperty("pinName",     newName);     // иначе поиск искал по старому имени
+        card->setProperty("displayText", pinDisplay);
     });
 
-    // Редак�и�ова�� �екс� зак�епа
+    // Редактировать текст закрепа
     menu.addAction(tr("📝  Редактировать"), [this, pinId, card]() {
         QString content = card ? card->property("fullText").toString() : "";
         editPin(pinId, content, card);
@@ -2744,12 +3022,12 @@ void MainWindow::showPinContextMenu(int pinId, const QString &currentFolder,
     });
     menu.addSeparator();
 
-    // �одмен� "�е�емес�и�� в папк�"
+    // Подменю "Переместить в папку"
     QList<FolderItem> folders = m_db->getAllFolders();
     if (!folders.isEmpty()) {
         QMenu *moveMenu = menu.addMenu(tr("📁  Переместить в папку"));
 
-        // "�ез папки" если зак�еп сей�ас в папке
+        // "Без папки" если закреп сейчас в папке
         if (!currentFolder.isEmpty()) {
             moveMenu->addAction(tr("Без папки"), [this, pinId, card]() {
                 m_db->movePinToFolder(pinId, "");
@@ -2760,7 +3038,7 @@ void MainWindow::showPinContextMenu(int pinId, const QString &currentFolder,
         }
 
         for (const FolderItem &f : folders) {
-            if (f.name == currentFolder) continue; // �же в э�ой папке
+            if (f.name == currentFolder) continue; // уже в этой папке
             QString fName = f.name;
             moveMenu->addAction(fName, [this, pinId, fName]() {
                 m_db->movePinToFolder(pinId, fName);
@@ -2798,20 +3076,11 @@ void MainWindow::deletePinCard(int pinId, QLabel *card)
 
 void MainWindow::pasteTextSilent(const QString &text)
 {
-    // �с�ави�� �екс� п�о�иля без о�к���ия/зак���ия окна SmartClip
+    // Вставить текст профиля без открытия/закрытия окна SmartClip
     emit pasteRequested();
     QApplication::clipboard()->setText(text);
 
-    QTimer::singleShot(150, []() {
-        INPUT inputs[4] = {};
-        inputs[0].type   = INPUT_KEYBOARD; inputs[0].ki.wVk = VK_CONTROL;
-        inputs[1].type   = INPUT_KEYBOARD; inputs[1].ki.wVk = 'V';
-        inputs[2].type   = INPUT_KEYBOARD; inputs[2].ki.wVk = 'V';
-        inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        inputs[3].type   = INPUT_KEYBOARD; inputs[3].ki.wVk = VK_CONTROL;
-        inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(4, inputs, sizeof(INPUT));
-    });
+    QTimer::singleShot(150, &sendCtrlV);
 }
 
 void MainWindow::showProfilesMenu()
@@ -2826,7 +3095,7 @@ void MainWindow::showProfilesMenu()
         for (const ProfileItem &p : profiles) {
             QString label = QString("%1  [%2]").arg(p.name, p.hotkey);
             menu.addAction(label, [this, text = p.text]() {
-                pasteText(text); // вс�авляем и п�я�ем окно
+                pasteText(text); // вставляем и прячем окно
             });
         }
     }
@@ -2868,7 +3137,7 @@ void MainWindow::showProfileManager()
     scroll->setWidget(listWidget);
     mainLayout->addWidget(scroll, 1);
 
-    // �� �спомога�ел�ная ��нк�ия: о�к���� �о�м� добавления/�едак�и�ования �����
+    // ── Вспомогательная функция: открыть форму добавления/редактирования ───────
     auto openForm = [&](int editId, const QString &initName,
                         const QString &initHotkey, const QString &initText) -> bool
     {
@@ -2893,7 +3162,7 @@ void MainWindow::showProfileManager()
 
         QLineEdit *nameField = mkField(tr("Название:"));
 
-        // �оле за�ва�а �о�кея � кликни и нажми комбина�и�
+        // Поле захвата хоткея — кликни и нажми комбинацию
         fl->addWidget(new QLabel(tr("Горячая клавиша:"), &form));
         HotkeyEdit *hotkeyField = new HotkeyEdit(&form);
         fl->addWidget(hotkeyField);
@@ -2947,13 +3216,9 @@ void MainWindow::showProfileManager()
         return true;
     };
 
-    // �� �е�ес��ойка списка (�е�ез QTimer ��об� не �даля�� видже� из его �эндле�а)
+    // ── Пересборка списка (через QTimer чтобы не удалять виджет из его хендлера)
     std::function<void()> rebuild = [&]() {
-        QLayoutItem *item;
-        while ((item = listLayout->takeAt(0)) != nullptr) {
-            if (item->widget()) item->widget()->deleteLater();
-            delete item;
-        }
+        clearLayout(listLayout);
 
         QList<ProfileItem> profiles = m_db->getProfiles();
         if (profiles.isEmpty()) {
@@ -3017,14 +3282,17 @@ void MainWindow::showProfileManager()
             int id = prof.id;
             QString pName = prof.name, pHotkey = prof.hotkey, pText = prof.text;
 
-            // Редак�и�ова��: о�к��ваем �о�м�, после � о�ложенная пе�ес��ойка
+            // Редактировать: открываем форму, после — отложенная пересборка
             connect(editBtn, &QPushButton::clicked, [=, &openForm, &rebuild]() {
                 if (openForm(id, pName, pHotkey, pText))
                     QTimer::singleShot(0, [&rebuild]() { rebuild(); });
             });
 
-            // Удали��: сна�ала возв�а�аемся из �эндле�а, по�ом �даляем видже��
-            connect(delBtn, &QPushButton::clicked, [=, &rebuild]() {
+            // Удалить: сначала возвращаемся из хендлера, потом удаляем виджеты
+            connect(delBtn, &QPushButton::clicked, [=, &rebuild, &dialog]() {
+                if (!confirmDialog(&dialog, tr("Удалить профиль"),
+                                   tr("Удалить профиль «%1»?").arg(pName), true))
+                    return;
                 m_db->deleteProfile(id);
                 emit profilesChanged();
                 QTimer::singleShot(0, [&rebuild]() { rebuild(); });
@@ -3034,7 +3302,7 @@ void MainWindow::showProfileManager()
 
     rebuild();
 
-    // �� Нижняя панел� ��������������������������������������������������������
+    // ── Нижняя панель ───────────────────────────────────────────────────────────
     QHBoxLayout *bottomRow = new QHBoxLayout();
 
     QPushButton *addBtn = new QPushButton(tr("+ Добавить профиль"), &dialog);
@@ -3063,6 +3331,160 @@ void MainWindow::showProfileManager()
     mainLayout->addLayout(bottomRow);
 
     dialog.exec();
+}
+
+// ─── showAppearanceSettings ──────────────────────────────────────────────────
+// Окно «Оформление» (кнопка 🖌): стиль (новый 2.0 / классика) и скорость
+// анимаций. Сюда же позже добавятся виды прокрутки, эффекты карточек и темы.
+void MainWindow::showAppearanceSettings()
+{
+    AppDialog dlg(this);
+    dlg.setWindowTitle(tr("Оформление"));
+    dlg.setMinimumWidth(520);
+
+    auto *vl = new QVBoxLayout(dlg.body());
+    vl->setContentsMargins(4, 4, 4, 4);
+    vl->setSpacing(6);
+
+    const QString titleCss = "color:#e0e0f0;font-size:13px;font-weight:bold;background:transparent;";
+    const QString hintCss  = "color:rgba(255,255,255,110);font-size:11px;background:transparent;";
+    const QString comboCss =
+        "QComboBox{background:rgba(28,28,44,245);color:#f0f0f0;"
+        "border:1px solid rgba(255,255,255,55);border-radius:6px;padding:4px 10px;font-size:12px;}"
+        "QComboBox:disabled{color:rgba(240,240,240,90);}"
+        "QComboBox QAbstractItemView{background:rgba(22,22,36,252);color:#e0e0e0;"
+        "border:1px solid rgba(255,255,255,55);selection-background-color:rgba(255,255,255,18);"
+        "outline:none;padding:2px;}";
+    const QString sliderCss =
+        "QSlider::groove:horizontal{height:4px;background:rgba(255,255,255,30);border-radius:2px;}"
+        "QSlider::sub-page:horizontal{background:rgba(160,200,255,170);border-radius:2px;}"
+        "QSlider::sub-page:horizontal:disabled{background:rgba(160,200,255,50);}"
+        "QSlider::handle:horizontal{width:14px;height:14px;margin:-5px 0;border-radius:7px;"
+        "background:#e0e8ff;}"
+        "QSlider::handle:horizontal:disabled{background:rgba(224,232,255,70);}";
+
+    auto *intro = new QLabel(
+        tr("Для каждого вида анимации — свой стиль и своя скорость. "
+           "«Классика» — как было раньше, без анимации."), dlg.body());
+    intro->setWordWrap(true);
+    intro->setStyleSheet(hintCss);
+    vl->addWidget(intro);
+    vl->addSpacing(6);
+
+    // ── По строке на каждый вид анимации ─────────────────────────────────────
+    struct Row { QString key; QComboBox *style; QSlider *speed; };
+    QList<Row> rows;
+
+    auto *grid = new QGridLayout();
+    grid->setHorizontalSpacing(12);
+    grid->setVerticalSpacing(4);
+    grid->setColumnStretch(2, 1);
+    int r = 0;
+    for (const Anim::KindInfo &info : Anim::kinds()) {
+        const QString key = QString::fromLatin1(info.key);
+
+        auto *title = new QLabel(tr(info.title), dlg.body());
+        title->setStyleSheet(titleCss);
+        auto *hint = new QLabel(tr(info.hint), dlg.body());
+        hint->setStyleSheet(hintCss);
+
+        auto *style = new QComboBox(dlg.body());
+        style->addItem(tr("Новый"), true);
+        style->addItem(tr("Классика"), false);
+        style->setCurrentIndex(AppSettings::get().animOn(key) ? 0 : 1);
+        style->setStyleSheet(comboCss);
+        style->setFixedWidth(120);
+
+        auto *speed = new QSlider(Qt::Horizontal, dlg.body());
+        speed->setRange(50, 200);
+        speed->setSingleStep(10);
+        speed->setPageStep(25);
+        speed->setValue(AppSettings::get().animSpeed(key));
+        speed->setStyleSheet(sliderCss);
+        speed->setToolTip(tr("Скорость: левее — медленнее, правее — быстрее"));
+
+        auto *speedLbl = new QLabel(dlg.body());
+        speedLbl->setStyleSheet(hintCss);
+        speedLbl->setFixedWidth(42);
+        speedLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        auto showSpeed = [speedLbl](int v) { speedLbl->setText(QString("%1%").arg(v)); };
+        showSpeed(speed->value());
+        connect(speed, &QSlider::valueChanged, &dlg, showSpeed);
+
+        // Скорость имеет смысл только для нового стиля
+        auto sync = [style, speed, speedLbl]() {
+            const bool on = style->currentData().toBool();
+            speed->setEnabled(on);
+            speedLbl->setEnabled(on);
+        };
+        sync();
+        connect(style, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg, sync);
+
+        grid->addWidget(title,    r,     0, 1, 4);
+        grid->addWidget(hint,     r + 1, 0, 1, 4);
+        grid->addWidget(style,    r + 2, 0);
+        grid->addWidget(speed,    r + 2, 1, 1, 2);
+        grid->addWidget(speedLbl, r + 2, 3);
+        grid->setRowMinimumHeight(r + 3, 10);  // Отступ до следующего вида
+        r += 4;
+
+        rows << Row{ key, style, speed };
+    }
+    vl->addLayout(grid);
+
+    // Анимации запрещены самой Windows — честно об этом говорим
+    if (!Anim::systemAllows()) {
+        auto *sysLbl = new QLabel(
+            tr("⚠ В Windows выключена анимация интерфейса, поэтому SmartClip тоже "
+               "работает без неё.\nВключить: Параметры → Специальные возможности → "
+               "Визуальные эффекты → Эффекты анимации."), dlg.body());
+        sysLbl->setWordWrap(true);
+        sysLbl->setStyleSheet("color:#ffcc66;font-size:11px;background:transparent;");
+        vl->addWidget(sysLbl);
+    }
+
+    auto *soonLbl = new QLabel(
+        tr("Скоро здесь: прокрутка, эффекты карточек и темы оформления."), dlg.body());
+    soonLbl->setWordWrap(true);
+    soonLbl->setStyleSheet(hintCss);
+    vl->addWidget(soonLbl);
+    vl->addStretch();
+
+    // ── Кнопки ───────────────────────────────────────────────────────────────
+    auto *btnRow    = new QHBoxLayout();
+    auto *resetBtn  = new QPushButton(tr("По умолчанию"), dlg.body());
+    auto *cancelBtn = new QPushButton(tr("Отмена"), dlg.body());
+    auto *saveBtn   = new QPushButton(tr("Сохранить"), dlg.body());
+    const QString btnCss =
+        "QPushButton{background:rgba(28,28,44,245);color:rgba(255,255,255,200);"
+        "border:1px solid rgba(255,255,255,55);border-radius:6px;padding:5px 18px;font-size:13px;}"
+        "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}";
+    resetBtn->setStyleSheet(btnCss);
+    cancelBtn->setStyleSheet(btnCss);
+    saveBtn->setStyleSheet(QString(btnCss).replace("rgba(255,255,255,200)", "rgba(160,200,255,240)"));
+    for (QPushButton *b : {resetBtn, cancelBtn, saveBtn}) b->setCursor(Qt::PointingHandCursor);
+    btnRow->addWidget(resetBtn);
+    btnRow->addStretch();
+    btnRow->addWidget(cancelBtn);
+    btnRow->addWidget(saveBtn);
+    vl->addLayout(btnRow);
+
+    // «По умолчанию» — везде новый стиль и скорость 100%
+    connect(resetBtn, &QPushButton::clicked, &dlg, [rows]() {
+        for (const Row &row : rows) {
+            row.style->setCurrentIndex(0);
+            row.speed->setValue(100);
+        }
+    });
+    connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
+    connect(saveBtn,   &QPushButton::clicked, &dlg, &QDialog::accept);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    for (const Row &row : rows) {
+        AppSettings::get().setAnimOn(row.key, row.style->currentData().toBool());
+        AppSettings::get().setAnimSpeed(row.key, row.speed->value());
+    }
 }
 
 void MainWindow::editPin(int id, const QString &content, QLabel *card)
@@ -3116,20 +3538,23 @@ void MainWindow::editPin(int id, const QString &content, QLabel *card)
     if (dialog.exec() != QDialog::Accepted) return;
 
     QString newContent = edit->toPlainText();
-    if (newContent == content) return; // ни�его не изменилос�
+    if (newContent == content) return; // ничего не изменилось
 
     m_db->updatePinContent(id, newContent);
 
-    // �бновляем ка��о�к� без полной пе�езаг��зки
+    // Обновляем карточку без полной перезагрузки
     if (card) {
         card->setProperty("fullText", newContent);
-        // �е��м с�а�ое название из �екс�а ка��о�ки (пе�вая с��ока после "⭐ ")
-        QString oldText = card->text();
-        int nl = oldText.indexOf('\n');
-        QString nameLine = (nl >= 0) ? oldText.left(nl) : oldText;
-        QString preview  = newContent.trimmed().left(80);
-        if (newContent.length() > 80) preview += "...";
-        card->setText(nameLine + "\n" + preview);
+        // Имя — из свойства (в тексте карточки может быть HTML-подсветка поиска).
+        // displayText обязательно обновляем: из него поиск восстанавливает текст,
+        // и раньше после поиска на карточке снова появлялся СТАРЫЙ текст.
+        QString preview = newContent.trimmed().left(200);
+        if (newContent.length() > 200) preview += "...";
+        QString pinDisplay = QString("⭐ %1\n%2")
+            .arg(card->property("pinName").toString(), softWrap(preview));
+        card->setTextFormat(Qt::PlainText);
+        card->setText(pinDisplay);
+        card->setProperty("displayText", pinDisplay);
     }
 }
 
@@ -3146,8 +3571,18 @@ void MainWindow::showSettings()
             this, &MainWindow::mainHotkeyChanged);
     connect(&dlg, &SettingsDialog::settingsChanged,
             this, &MainWindow::settingsChanged);
+    // Напрямую в showUpdateDialog (НЕ onUpdateAvailable!) — иначе patch-версии
+    // отфильтруются ранним return и кнопка «Обновить» не сделает ничего.
+    // Qt::QueuedConnection — окно обновления откроется, когда настройки уже закрыты
     connect(&dlg, &SettingsDialog::updateRequested,
-            this, &MainWindow::onUpdateAvailable);
+            this, &MainWindow::showUpdateDialog, Qt::QueuedConnection);
+    // После импорта: новые профили должны сразу заработать по хоткеям,
+    // а новые закрепы — появиться в окне (раньше — только после перезапуска).
+    connect(&dlg, &SettingsDialog::dataImported, this, [this]() {
+        emit profilesChanged();
+        loadPins();
+        markHistoryDirty();
+    });
 
     if (!m_pendingUpdateVersion.isEmpty())
         dlg.setPendingUpdate(m_pendingUpdateVersion, m_pendingUpdateUrl, m_pendingReleaseNotes);
@@ -3193,7 +3628,7 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
                 GetWindowThreadProcessId(activating, &activatingPid);
 
             if (activatingPid != GetCurrentProcessId())
-                hide();
+                hideAnimated();
         }
     }
 
@@ -3203,14 +3638,26 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
 void MainWindow::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
+    // Окно спрятано без анимации ухода (вставка по клику на карточку) —
+    // убираем пустую сцену. Прозрачное окно поверх экрана в полноэкранной
+    // игре может снижать FPS, держать его без дела нельзя.
+    if (m_overlay && m_overlay->isIdle())
+        m_overlay->abort();
+    m_hidePending = false;
 }
 
 // keyPressEvent — клавиша Escape скрывает окно SmartClip.
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
-    if (event->key() == Qt::Key_Escape)
-        hide();
-    else
+    if (event->key() == Qt::Key_Escape) {
+        // Сначала закрываем просмотр картинки, если он открыт. Раньше Esc прятал
+        // всё окно, а просмотрщик оставался «открытым» и при следующем показе
+        // SmartClip висел поверх всего.
+        if (m_imageViewer && m_imageViewer->isVisible())
+            m_imageViewer->hide();
+        else
+            hideAnimated();
+    } else
         QWidget::keyPressEvent(event);
 }
 
@@ -3257,31 +3704,41 @@ void MainWindow::paintEvent(QPaintEvent *event)
 
 // ─── Авто-обновление ─────────────────────────────────────────────────────────
 // onUpdateAvailable вызывается из UpdateChecker через сигнал updateAvailable().
-// Логика показа:
-//   - Если обновление только patch (1.0.1 → 1.0.2) — показываем только плашку
-//     в настройках (setPendingUpdate), не показываем popup-диалог.
-//   - Если обновление minor или major (1.0.x → 1.1.x или 2.x) — показываем
-//     полноэкранный popup с кнопкой «Скачать и установить».
-// Скачивание установщика идёт прямо в диалоге через QNetworkAccessManager.
-// После скачивания запускается через ShellExecuteW с "runas" (от администратора).
+// Запоминаем данные для плашки в настройках и сразу показываем диалог.
+// Раньше для patch-версий (1.0.1 → 1.0.2) диалог не показывался вообще —
+// только плашка в настройках, которую никто не замечал. А все релизы SmartClip
+// пока как раз patch, поэтому друзья просто не узнавали об обновлениях.
 void MainWindow::onUpdateAvailable(const QString &version, const QString &downloadUrl,
-                                   const QString &releaseNotes)
+                                   const QString &releaseNotes, const QString &sha256)
 {
-    // Сохраняем для плашки в Settings
     m_pendingUpdateVersion = version;
     m_pendingUpdateUrl     = downloadUrl;
     m_pendingReleaseNotes  = releaseNotes;
+    m_pendingUpdateSha256  = sha256;
+    // Сам диалог НЕ открываем: проверка идёт через 10с после запуска, и окно
+    // выскочило бы поверх игры/полноэкранного видео. main.cpp показывает
+    // уведомление в трее, а диалог откроется при клике по нему или когда
+    // пользователь сам откроет SmartClip (см. showWindow).
+    m_updatePromptShown = false;
+}
 
-    // Popup только при смене major или minor (1.0.x → 1.1.x или 2.x.x)
-    // При patch-обновлении (1.0.1 → 1.0.2) — только плашка в настройках
-    auto majorMinor = [](const QString &v) -> QPair<int,int> {
-        QStringList p = v.split('.');
-        return { p.value(0).toInt(), p.value(1).toInt() };
-    };
-    auto remote = majorMinor(version);
-    auto local  = majorMinor(QLatin1String(APP_VERSION));
-    if (remote.first <= local.first && remote.second <= local.second)
-        return; // только patch — не беспокоим пользователя, плашка в Settings
+void MainWindow::showPendingUpdate()
+{
+    if (m_pendingUpdateVersion.isEmpty()) return;
+    m_updatePromptShown = true;
+    showUpdateDialog(m_pendingUpdateVersion, m_pendingUpdateUrl, m_pendingReleaseNotes);
+}
+
+// ─── showUpdateDialog ─────────────────────────────────────────────────────────
+// Диалог «Доступна новая версия» с прогрессом скачивания.
+// Отдельный метод (без фильтра major/minor) — вызывается и из onUpdateAvailable,
+// и напрямую из плашки в настройках (сигнал updateRequested).
+void MainWindow::showUpdateDialog(const QString &version, const QString &downloadUrl,
+                                  const QString &releaseNotes)
+{
+    // Флаг ДО showWindow(): иначе showWindow() решит, что обновление ещё
+    // не предлагали, и откроет второй такой же диалог
+    m_updatePromptShown = true;
 
     // Показываем окно чтобы диалог не спрятался за треем
     showWindow();
@@ -3363,58 +3820,151 @@ void MainWindow::onUpdateAvailable(const QString &version, const QString &downlo
     connect(laterBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
 
     // ── Скачивание ────────────────────────────────────────────────────────────
-    connect(updateBtn, &QPushButton::clicked, &dlg, [&]() {
+    // Ожидаемый SHA-256 (GitHub отдаёт его в API) — только если это тот же файл
+    const QString expectedSha = (downloadUrl == m_pendingUpdateUrl) ? m_pendingUpdateSha256 : QString();
+    QDialog *dlgPtr = &dlg;
+
+    // Показать ошибку и дать пользователю повторить попытку или закрыть окно.
+    // (Раньше кнопки оставались выключенными — окно «зависало» навсегда.)
+    auto fail = [=](const QString &msg) {
+        progress->setRange(0, 100);
+        progress->hide();
+        statusLbl->setText(msg);
+        updateBtn->setText(tr("Повторить"));
+        updateBtn->setEnabled(true);
+        laterBtn->setEnabled(true);
+    };
+
+    // Запустить установщик с правами администратора. Если пользователь
+    // отказался в окне UAC — SmartClip НЕ закрываем (раньше закрывался молча).
+    auto launchInstaller = [=](const QString &exePath, bool updateMode) {
+        const std::wstring file = QDir::toNativeSeparators(exePath).toStdWString();
+        SHELLEXECUTEINFOW sei = {};
+        sei.cbSize       = sizeof(sei);
+        sei.lpVerb       = L"runas";
+        sei.lpFile       = file.c_str();
+        sei.lpParameters = updateMode ? L"/update" : nullptr;
+        sei.nShow        = SW_SHOW;
+        if (!ShellExecuteExW(&sei)) {
+            const DWORD err = GetLastError();
+            if (err == ERROR_CANCELLED)
+                fail(tr("Установка отменена. Нажмите «Повторить», когда будете готовы."));
+            else
+                fail(tr("Не удалось запустить установщик (код %1).").arg(err));
+            return;
+        }
+        statusLbl->setText(tr("Запуск установщика..."));
+        dlgPtr->accept();
+        // Установщик сам закроет SmartClip, но выходим и сами — чтобы файлы освободились
+        QTimer::singleShot(300, qApp, []() { QCoreApplication::quit(); });
+    };
+
+    connect(updateBtn, &QPushButton::clicked, &dlg, [=]() {
         updateBtn->setEnabled(false);
         laterBtn->setEnabled(false);
+        progress->setValue(0);
         progress->show();
         statusLbl->show();
         statusLbl->setText(tr("Подключение..."));
 
-        // Временный файл в Downloads
-        QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                           + "/SmartClip_Installer.exe";
+        // Временная папка — старые файлы чистим перед каждой попыткой
+        const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+                                + "/SmartClipUpdate";
+        QDir(tempDir).removeRecursively();
+        QDir().mkpath(tempDir);
 
-        auto *nam   = new QNetworkAccessManager(&dlg);
-        auto *reply = nam->get(QNetworkRequest(QUrl(downloadUrl)));
+        // Новый формат релиза — один .exe. Старый (до 1.0.5) — .zip с папкой _data.
+        const bool isZip = QUrl(downloadUrl).path().endsWith(".zip", Qt::CaseInsensitive);
+        const QString tempFile = tempDir + (isZip ? QString("/update.zip")
+                                                  : QString("/SmartClip_Installer_v%1.exe").arg(version));
 
-        connect(reply, &QNetworkReply::downloadProgress, &dlg,
+        auto *nam = new QNetworkAccessManager(dlgPtr);
+        QNetworkRequest req{QUrl{downloadUrl}};
+        // GitHub отдаёт 302 на CDN (objects.githubusercontent.com)
+        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+        req.setTransferTimeout(60000);  // 60с без данных — считаем что связь пропала
+        auto *reply = nam->get(req);
+
+        connect(reply, &QNetworkReply::downloadProgress, dlgPtr,
                 [progress, statusLbl](qint64 received, qint64 total) {
             if (total > 0) {
-                int pct = static_cast<int>(received * 100 / total);
-                progress->setValue(pct);
+                progress->setValue(static_cast<int>(received * 100 / total));
                 statusLbl->setText(QString("%1 / %2 MB")
                     .arg(received / 1048576.0, 0, 'f', 1)
                     .arg(total    / 1048576.0, 0, 'f', 1));
             }
         });
 
-        connect(reply, &QNetworkReply::finished, &dlg,
-                [reply, tempPath, &dlg, version, statusLbl]() {
+        connect(reply, &QNetworkReply::finished, dlgPtr, [=]() {
             reply->deleteLater();
+            nam->deleteLater();
 
             if (reply->error() != QNetworkReply::NoError) {
-                statusLbl->setText(tr("Ошибка: ") + reply->errorString());
+                fail(tr("Ошибка: ") + reply->errorString());
+                return;
+            }
+            const QByteArray data = reply->readAll();
+            if (data.size() < 1024) {
+                fail(tr("Сервер вернул пустой файл. Попробуйте позже."));
                 return;
             }
 
-            // Сохраняем файл
-            QFile f(tempPath);
-            if (f.open(QIODevice::WriteOnly)) {
-                f.write(reply->readAll());
-                f.close();
+            // Проверка целостности: файл скачался полностью и не подменён
+            if (!expectedSha.isEmpty()) {
+                const QString actual = QString::fromLatin1(
+                    QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
+                if (actual.compare(expectedSha, Qt::CaseInsensitive) != 0) {
+                    fail(tr("Файл повреждён при скачивании (не совпала контрольная сумма)."));
+                    return;
+                }
             }
 
-            statusLbl->setText(tr("Запуск установщика..."));
+            QFile f(tempFile);
+            if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size()) {
+                fail(tr("Ошибка записи файла: ") + f.errorString());
+                return;
+            }
+            f.close();
 
-            // Запускаем установщик от имени администратора и выходим из SmartClip
-            QTimer::singleShot(500, qApp, [tempPath]() {
-                ShellExecuteW(nullptr, L"runas",  // "runas" — запрос UAC (права администратора)
-                              reinterpret_cast<const wchar_t*>(tempPath.utf16()),
-                              nullptr, nullptr, SW_SHOW);
-                QCoreApplication::quit();
+            if (!isZip) {
+                launchInstaller(tempFile, true);
+                return;
+            }
+
+            // ── Старый формат: распаковываем .zip через PowerShell ───────────
+            statusLbl->setText(tr("Распаковка..."));
+            progress->setRange(0, 0);  // «Бегущая» полоска — прогресса распаковки нет
+
+            // Родитель — диалог: если его закроют, процесс удалится вместе с ним,
+            // и обработчик ниже не обратится к уже удалённым виджетам.
+            auto *proc = new QProcess(dlgPtr);
+            // Апостроф в пути (папка пользователя O'Brien) ломал команду —
+            // внутри '...' в PowerShell его нужно удваивать.
+            auto psQuote = [](const QString &p) {
+                QString n = QDir::toNativeSeparators(p);
+                n.replace("'", "''");
+                return "'" + n + "'";
+            };
+            const QString cmd = QString("Expand-Archive -Force -LiteralPath %1 -DestinationPath %2")
+                                    .arg(psQuote(tempFile), psQuote(tempDir));
+
+            connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), dlgPtr,
+                    [=](int, QProcess::ExitStatus) {
+                proc->deleteLater();
+                progress->setRange(0, 100);
+
+                // Ищем Installer.exe рекурсивно (структура папок внутри zip может отличаться)
+                QDirIterator it(tempDir, QStringList{"Installer.exe"}, QDir::Files,
+                                QDirIterator::Subdirectories);
+                if (!it.hasNext()) {
+                    fail(tr("Installer.exe не найден в архиве"));
+                    return;
+                }
+                launchInstaller(it.next(), false);
             });
 
-            dlg.accept();
+            proc->start("powershell", {"-NoProfile", "-NonInteractive", "-Command", cmd});
         });
     });
 

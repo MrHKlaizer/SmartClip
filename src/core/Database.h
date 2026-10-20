@@ -94,8 +94,13 @@ public:
     // content  — текст или имя файла
     // filepath — путь к файлу (для изображений, видео)
     // appName  — имя приложения-источника
-    bool addHistory(const QString &type, const QString &content,
+    // Возвращает id новой записи или -1 при ошибке.
+    int  addHistory(const QString &type, const QString &content,
                     const QString &filepath = "", const QString &appName = "");
+
+    // Удалить из истории все текстовые записи с таким же содержимым.
+    // Нужно для дедупликации: повторно скопированный текст «поднимается» наверх.
+    void removeTextDuplicates(const QString &text);
 
     // Удалить записи старше N дней (0 = не удалять).
     // Вызывается при старте программы согласно настройкам.
@@ -128,8 +133,8 @@ public:
     QStringList getAppNames();
 
     // ─── Закрепы (pins) ───────────────────────────────────────────────────────
-    // Добавить новый закреп.
-    bool addPin(const QString &folder, const QString &name, const QString &type,
+    // Добавить новый закреп. Возвращает id нового закрепа или -1 при ошибке.
+    int  addPin(const QString &folder, const QString &name, const QString &type,
                 const QString &content = "", const QString &filepath = "");
 
     // Получить закрепы из одной папки. folder="" = все закрепы.
@@ -187,6 +192,14 @@ public:
 private:
     QSqlDatabase m_db;         // Объект подключения к SQLite-базе данных
     QString      m_imagesPath; // Путь к папке с сохранёнными картинками
+
+    // Удалить файл с диска, но только если он «наш» (лежит в папке images)
+    // и на него больше не ссылается ни история, ни закреп.
+    // Защищает видео пользователя и картинки в закрепах от случайного удаления.
+    void removeFileIfUnused(const QString &path);
+
+    // Экранировать % и _ для LIKE (иначе папка "50%" совпадёт с чем угодно).
+    static QString escapeLike(const QString &s);
 
     // Вспомогательные методы (внутренние):
     bool createTables();     // Создать таблицы при первом запуске
