@@ -85,6 +85,11 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    // Аудио и видео в карточках играет FFmpeg (открытая библиотека, LGPL —
+    // её DLL лежат рядом с SmartClip.exe). Встроенный в Windows проигрыватель
+    // не справлялся с частью обычных mp4 и зависал на WAV.
+    qputenv("QT_MEDIA_BACKEND", "ffmpeg");
+
     // QApplication — «сердце» Qt-приложения. Управляет событиями, шрифтами, темой.
     // Должен быть создан первым, до любых других Qt-объектов.
     QApplication app(argc, argv);

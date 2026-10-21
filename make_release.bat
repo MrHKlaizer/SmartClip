@@ -59,6 +59,11 @@ copy /y "%BUILD%\SmartClip.exe" "%STAGE%\" > nul || goto :fail
 
 "%QT%\bin\windeployqt.exe" --release --no-translations --no-opengl-sw --no-system-d3d-compiler "%STAGE%\SmartClip.exe" > nul
 if errorlevel 1 goto :fail
+:: Аудио/видео играет FFmpeg (ffmpegmediaplugin + av*.dll) — windeployqt кладёт
+:: их сам. Проигрыватель Windows (windowsmediaplugin) не нужен — убираем
+if exist "%STAGE%\multimedia\windowsmediaplugin.dll" del /q "%STAGE%\multimedia\windowsmediaplugin.dll"
+:: Список открытых библиотек и их лицензий (Qt, FFmpeg — LGPL)
+copy /y "%~dp0assets\THIRD_PARTY_NOTICES.txt" "%STAGE%\" > nul
 echo  [+] Qt DLL
 
 for %%f in (libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll) do (

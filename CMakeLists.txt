@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 #  в «Программы и компоненты» и в имя файла релиза (make_release.bat).
 # ════════════════════════════════════════════════════════════════════════════
 #  Формат: «2.0» для больших версий, «2.0.1» для мелких правок.
-project(SmartClip VERSION 2.0.1 LANGUAGES CXX)
+project(SmartClip VERSION 2.1 LANGUAGES CXX)
 
 add_compile_definitions(SMARTCLIP_VERSION="${PROJECT_VERSION}")
 file(WRITE "${CMAKE_BINARY_DIR}/version.txt" "${PROJECT_VERSION}")
@@ -21,7 +21,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Qt6 — ищем нужные модули
-find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Gui Core Network LinguistTools)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Gui Core Network Multimedia LinguistTools)
 
 # Автоматическая обработка Qt-макросов (сигналы, слоты, ресурсы)
 set(CMAKE_AUTOMOC ON)
@@ -73,6 +73,8 @@ set(SOURCES
     src/ui/CardShadow.h
     src/ui/ScrollTopButton.h
     src/ui/DateRuler.h
+    src/ui/MediaCards.h
+    src/ui/VideoViewer.h
     src/ui/NavTabs.h
     src/ui/HotkeyEdit.h
     src/ui/ImageViewer.h
@@ -102,6 +104,7 @@ target_include_directories(SmartClip PRIVATE src)
 # Подключаем Qt6
 target_link_libraries(SmartClip PRIVATE
     Qt6::Widgets
+    Qt6::Multimedia   # Воспроизведение аудио и видео в карточках (2.1)
     Qt6::Sql
     Qt6::Gui
     Qt6::Core

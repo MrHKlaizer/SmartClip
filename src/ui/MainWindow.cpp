@@ -40,6 +40,8 @@
 #include "CardShadow.h"        // Быстрая тень карточек
 #include "ScrollTopButton.h"   // Кнопка «наверх» в колонках
 #include "DateRuler.h"         // Шкала дат при прокрутке
+#include "MediaCards.h"        // Аудио и видео прямо в карточках (2.1)
+#include "VideoViewer.h"       // Большой просмотр видео
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
 #include "core/Database.h"      // SQLite CRUD
 #include "core/AppSettings.h"   // Синглтон настроек
@@ -171,6 +173,81 @@ static QPixmap shellThumbnail(const QString &filepath, int w, int h)
     QPixmap result = hbitmapToPixmap(hBmp);
     DeleteObject(hBmp);
     return result;
+}
+
+// Кадр-превью и длительность видео — в фоновом потоке (Shell, как в Проводнике).
+// Возвращает [QImage, длительность в мс]. В фоне нельзя QPixmap — только QImage.
+static QVariant videoPosterWork(const QString &filepath, QSize px)
+{
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    QImage img;
+    qint64 durMs = 0;
+    IShellItem2 *item = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(QDir::toNativeSeparators(filepath).toStdWString().c_str(),
+                                              nullptr, IID_PPV_ARGS(&item))) && item) {
+        IShellItemImageFactory *factory = nullptr;
+        if (SUCCEEDED(item->QueryInterface(IID_PPV_ARGS(&factory))) && factory) {
+            HBITMAP hBmp = nullptr;
+            const SIZE sz = { px.width(), px.height() };
+            if (SUCCEEDED(factory->GetImage(sz, SIIGBF_BIGGERSIZEOK, &hBmp)) && hBmp) {
+                BITMAP bm = {};
+                if (GetObject(hBmp, sizeof(bm), &bm) && bm.bmWidth > 0 && bm.bmHeight > 0) {
+                    BITMAPINFOHEADER bi = {};
+                    bi.biSize = sizeof(bi);
+                    bi.biWidth = bm.bmWidth;
+                    bi.biHeight = -bm.bmHeight;  // Сверху вниз
+                    bi.biPlanes = 1;
+                    bi.biBitCount = 32;
+                    bi.biCompression = BI_RGB;
+                    img = QImage(bm.bmWidth, bm.bmHeight, QImage::Format_RGB32);
+                    HDC dc = GetDC(nullptr);
+                    GetDIBits(dc, hBmp, 0, bm.bmHeight, img.bits(), reinterpret_cast<BITMAPINFO *>(&bi), DIB_RGB_COLORS);
+                    ReleaseDC(nullptr, dc);
+                }
+                DeleteObject(hBmp);
+            }
+            factory->Release();
+        }
+        // System.Media.Duration — в 100-наносекундных единицах
+        static const PROPERTYKEY kDuration = { { 0x64440490, 0x4C8B, 0x11D1, { 0x8B, 0x70, 0x08, 0x00, 0x36, 0xB1, 0x1A, 0x03 } }, 3 };
+        ULONGLONG d = 0;
+        if (SUCCEEDED(item->GetUInt64(kDuration, &d))) durMs = qint64(d / 10000);
+        item->Release();
+    }
+    if (SUCCEEDED(co)) CoUninitialize();
+    return QVariantList{ img, durMs };
+}
+
+// Карточка видео: строка с названием сверху (nameH = 0 — без названия),
+// ниже — кадр (играет прямо тут)
+static Media::VideoSurface *setupVideoCard(QLabel *card, const QString &name, const QString &filepath,
+                                           const QString &nameCss, int nameH,
+                                           std::function<void(Media::VideoSurface *)> onExpand)
+{
+    if (nameH > 0) {
+        QLabel *nameLabel = new QLabel(QString("🎬  %1").arg(name), card);
+        nameLabel->setObjectName("videoName");
+        nameLabel->setStyleSheet(nameCss);
+        nameLabel->setFixedWidth(card->width());
+        nameLabel->setFixedHeight(nameH);
+        nameLabel->move(0, 0);
+        nameLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
+    const QRect area(2, nameH + 2, card->width() - 4, card->height() - nameH - 4);
+    Media::VideoSurface *surface = Media::attachVideo(card, filepath, area, onExpand);
+    const qreal dpr = card->devicePixelRatioF();
+    const QSize px = (QSizeF(area.size()) * dpr).toSize();
+    QPointer<QLabel> c = card;
+    Thumbs::runAsync(card, [filepath, px]() { return videoPosterWork(filepath, px); },
+                     [c, surface, dpr](const QVariant &v) {
+        if (!c) return;
+        const QVariantList r = v.toList();
+        QPixmap pm = QPixmap::fromImage(r.value(0).value<QImage>());
+        pm.setDevicePixelRatio(dpr);
+        surface->setPoster(pm);
+        Media::setVideoDuration(c, r.value(1).toLongLong());
+    });
+    return surface;
 }
 
 // ─── Вспомогательные UI-компоненты ──────────────────────────────────────────
@@ -900,6 +977,13 @@ MainWindow::MainWindow(Database *db, QWidget *parent)
     setupLayout();
 
     m_imageViewer = new ImageViewer(this);
+    m_videoViewer = new VideoViewer(this);
+    // Файл не играет (формат, который Windows не умеет) — предложить внешний плеер
+    Media::Playback::get().onUnsupported = [this](const QString &file) {
+        if (confirmDialog(this, tr("Воспроизведение"),
+                          tr("SmartClip не может воспроизвести этот файл.\nОткрыть в стандартном плеере?"), false))
+            QDesktopServices::openUrl(QUrl::fromLocalFile(file));
+    };
 
     // Клик мимо (в другую программу или на рабочий стол), пока поверх SmartClip
     // открыто окно (настройки, диалог) или меню: закрываем всё — окно, меню и
@@ -1400,13 +1484,16 @@ void MainWindow::addAudioCard(const HistoryItem &entry, int insertAt)
 
     QString name = entry.content.isEmpty() ? QFileInfo(entry.filepath).fileName() : entry.content;
     if (name.length() > 60) name = name.left(57) + "...";
-    card->setText(QString("🎵  %1").arg(name));
+    // В истории — без названия: только ▶ и полоска (название есть у закрепов)
+    card->setFixedHeight(sc(40));
+    card->setToolTip(name);
     card->setProperty("pinName", name);
     card->setProperty("itemId", entry.id);
     card->setProperty("filepath", entry.filepath);
     DateRuler::setCardDate(card, entry.createdAt);  // Для шкалы дат
 
     const QString fp = entry.filepath;
+    Media::attachAudio(card, fp);  // ▶ слева и полоска с временем — слушать прямо тут
     connect(card, &ClickableCard::clicked, this, [this, fp]() { pasteFile(fp); });
 
     const int audioId = entry.id;
@@ -1414,7 +1501,11 @@ void MainWindow::addAudioCard(const HistoryItem &entry, int insertAt)
     connect(card, &QWidget::customContextMenuRequested, this,
             [this, audioId, fp, card](const QPoint &pos) {
         RoundedMenu menu(this);
-        menu.addAction(tr("▶  Воспроизвести"), [fp]() {
+        menu.addAction(tr("▶  Воспроизвести"), [card, fp]() {
+            auto &pb = Media::Playback::get();
+            if (pb.isOwner(card)) pb.toggle(); else pb.start(fp, card, nullptr, false);
+        });
+        menu.addAction(tr("Открыть в плеере"), [fp]() {
             QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
         });
         menu.addAction(tr("📂  Показать в папке"), [fp]() {
@@ -1481,21 +1572,27 @@ void MainWindow::addVideoCard(const HistoryItem &entry, int insertAt)
 {
     ClickableCard *card = new ClickableCard();
     applyCardShadow(card);
-    card->setFixedSize(sc(BASE_RIGHT) - 36, sc(72));
-    card->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    card->setWordWrap(true);
+    card->setFixedSize(sc(BASE_RIGHT) - 36, sc(148));
     card->setCardStyle(QColor(10, 20, 48, 245));
-    card->setStyleSheet(QString("color: #aaccff; padding: %1; font-size: %2;").arg(spx(8), spx(12)));
 
     QString name = entry.content.isEmpty()
         ? QFileInfo(entry.filepath).fileName()
         : entry.content;
     if (name.length() > 50) name = name.left(47) + "...";
-    card->setText(QString("🎬  %1").arg(name));
     card->setProperty("pinName", name);
+    card->setProperty("itemId", entry.id);
+    card->setProperty("filepath", entry.filepath);
     DateRuler::setCardDate(card, entry.createdAt);  // Для шкалы дат
 
-    QString fp = entry.filepath;
+    // Кадр-превью без названия (оно есть у закрепов); ▶ — играет прямо
+    // в карточке (без звука), ⤢ — большой просмотр
+    const QString fp = entry.filepath;
+    QPointer<ClickableCard> cardPtr = card;
+    card->setToolTip(name);
+    Media::VideoSurface *surface = setupVideoCard(card, name, fp, QString(), 0,
+        [this, cardPtr, fp](Media::VideoSurface *s) { if (cardPtr) m_videoViewer->open(cardPtr, s, fp); });
+
+    // Клик по самой карточке (мимо кнопок) — вставить файл, как раньше
     connect(card, &ClickableCard::clicked, this, [this, fp]() {
         pasteFile(fp);
     });
@@ -1503,9 +1600,12 @@ void MainWindow::addVideoCard(const HistoryItem &entry, int insertAt)
     int vidId = entry.id;
     card->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(card, &QWidget::customContextMenuRequested, this,
-            [this, vidId, fp, card](const QPoint &pos) {
+            [this, vidId, fp, card, surface](const QPoint &pos) {
         RoundedMenu menu(this);
-        menu.addAction(tr("▶  Смотреть"), [fp]() {
+        menu.addAction(tr("▶  Смотреть"), [this, card, surface, fp]() {
+            m_videoViewer->open(card, surface, fp);
+        });
+        menu.addAction(tr("Открыть в плеере"), [fp]() {
             QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
         });
         menu.addAction(tr("📂  Показать в папке"), [fp]() {
@@ -1724,6 +1824,8 @@ void MainWindow::hideAnimated()
     // пропускает клики насквозь), а настоящий hide() — когда анимация доиграла.
     m_hidePending = true;
     removeInputHooks();  // Окно уходит — клавиши сразу снова идут в программу пользователя
+    Media::Playback::get().stop();
+    if (m_videoViewer) m_videoViewer->hideNow();
     if (m_imageViewer) m_imageViewer->hide();
     const int seq = ++m_hideSeq;
     auto hideNow = [this, seq]() {
@@ -2041,7 +2143,9 @@ void MainWindow::onHookKey(unsigned vk, unsigned scan, bool extended)
     if (!isOpen()) return;
     if (vk == VK_ESCAPE) {
         // Как Esc в окне: сначала закрываем просмотр картинки
-        if (m_imageViewer && m_imageViewer->isVisible() && !m_imageViewer->isClosing())
+        if (m_videoViewer && m_videoViewer->isVisible() && !m_videoViewer->isClosing())
+            m_videoViewer->closeAnimated();
+        else if (m_imageViewer && m_imageViewer->isVisible() && !m_imageViewer->isClosing())
             m_imageViewer->closeAnimated();
         else hideAnimated();
         return;
@@ -3080,41 +3184,17 @@ void MainWindow::loadPins(bool allFolders)
             card->setProperty("pinFolder", pin.folder);
             card->setEditMode(m_editMode);
 
-            // Строка с именем сверху
+            // Строка с именем сверху, ниже — кадр; ▶ — играет прямо в карточке
             QString displayName = pin.name.isEmpty()
                 ? QFileInfo(pin.filepath).fileName() : pin.name;
-            QLabel *nameLabel = new QLabel(QString("🎬  %1").arg(displayName), card);
-            nameLabel->setStyleSheet(
+            QPointer<ClickableCard> cardPtr = card;
+            const QString vfp = pin.filepath;
+            Media::VideoSurface *surface = setupVideoCard(card, displayName, vfp,
                 QString("color: #aaccff; font-size: %1; font-weight: bold;"
                         "background: transparent; padding: %2 %3 %4 %3;")
-                .arg(spx(12), spx(5), spx(8), spx(3))
-            );
-            nameLabel->setFixedWidth(card->width());
-            nameLabel->setFixedHeight(sc(24));
-            nameLabel->move(0, 0);
-            nameLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
-            nameLabel->show();
-
-            // Превью ниже строки с именем
-            QLabel *imgLabel = new QLabel(card);
-            const int imgTop = 26;
-            imgLabel->setFixedSize(card->width() - 4, card->height() - imgTop - 2);
-            imgLabel->move(2, imgTop);
-            imgLabel->setAlignment(Qt::AlignCenter);
-            imgLabel->setStyleSheet("background: transparent;");
-            imgLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
-
-            // Берём превью через Shell — та же миниатюра что и в проводнике
-            QPixmap thumb = shellThumbnail(pin.filepath, imgLabel->width(), imgLabel->height());
-            if (!thumb.isNull()) {
-                imgLabel->setPixmap(thumb.scaled(
-                    imgLabel->width(), imgLabel->height(),
-                    Qt::KeepAspectRatio, Qt::SmoothTransformation));
-            } else {
-                imgLabel->setText("🎬");
-                imgLabel->setStyleSheet(QString("color: #6688bb; font-size: %1; background: transparent;").arg(spx(32)));
-            }
-            imgLabel->show();
+                    .arg(spx(12), spx(5), spx(8), spx(3)), sc(24),
+                [this, cardPtr, vfp](Media::VideoSurface *sf) { if (cardPtr) m_videoViewer->open(cardPtr, sf, vfp); });
+            QLabel *nameLabel = card->findChild<QLabel *>("videoName");
 
             connect(card, &ClickableCard::clicked, this, [this, card, fp = pin.filepath, pid = pin.id]() {
                 if (m_editMode) {
@@ -3131,13 +3211,16 @@ void MainWindow::loadPins(bool allFolders)
             QString pinFolder = pin.folder;
             card->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(card, &QWidget::customContextMenuRequested, this,
-                    [this, pinId, pinFolder, card, nameLabel, fp = pin.filepath](const QPoint &pos) {
+                    [this, pinId, pinFolder, card, nameLabel, surface, fp = pin.filepath](const QPoint &pos) {
                 if (m_editMode && !m_selectedPinIds.isEmpty()) {
                     showPinBatchContextMenu(card->mapToGlobal(pos));
                     return;
                 }
                 RoundedMenu menu(this);
-                menu.addAction(tr("🔍  Просмотреть"), [fp]() {
+                menu.addAction(tr("▶  Смотреть"), [this, card, surface, fp]() {
+                    m_videoViewer->open(card, surface, fp);
+                });
+                menu.addAction(tr("Открыть в плеере"), [fp]() {
                     QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
                 });
                 menu.addSeparator();
@@ -3202,6 +3285,7 @@ void MainWindow::loadPins(bool allFolders)
             QString displayName = pin.name.isEmpty()
                 ? QFileInfo(pin.filepath).fileName() : pin.name;
             card->setText(QString("🎵  %1").arg(displayName));
+            Media::attachAudio(card, pin.filepath);  // ▶ слева — слушать прямо в карточке
             card->setProperty("pinName", pin.name);
             card->setProperty("pinTags", pin.tags);
             card->setProperty("pinId",   pin.id);
@@ -3229,7 +3313,11 @@ void MainWindow::loadPins(bool allFolders)
                     return;
                 }
                 RoundedMenu menu(this);
-                menu.addAction(tr("▶  Воспроизвести"), [fp]() {
+                menu.addAction(tr("▶  Воспроизвести"), [card, fp]() {
+                    auto &pb = Media::Playback::get();
+                    if (pb.isOwner(card)) pb.toggle(); else pb.start(fp, card, nullptr, false);
+                });
+                menu.addAction(tr("Открыть в плеере"), [fp]() {
                     QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
                 });
                 menu.addSeparator();
@@ -4204,6 +4292,8 @@ void MainWindow::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
     removeInputHooks();
+    Media::Playback::get().stop();  // Закрыли SmartClip — звук и видео останавливаются
+    if (m_videoViewer) m_videoViewer->hideNow();
     if (m_imageViewer) m_imageViewer->hide();  // Отдельное окно — прячем вместе с SmartClip
     // Окно спрятано без анимации ухода (вставка по клику на карточку) —
     // убираем пустую сцену. Прозрачное окно поверх экрана в полноэкранной
@@ -4220,7 +4310,9 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         // Сначала закрываем просмотр картинки, если он открыт. Раньше Esc прятал
         // всё окно, а просмотрщик оставался «открытым» и при следующем показе
         // SmartClip висел поверх всего.
-        if (m_imageViewer && m_imageViewer->isVisible() && !m_imageViewer->isClosing())
+        if (m_videoViewer && m_videoViewer->isVisible() && !m_videoViewer->isClosing())
+            m_videoViewer->closeAnimated();
+        else if (m_imageViewer && m_imageViewer->isVisible() && !m_imageViewer->isClosing())
             m_imageViewer->closeAnimated();
         else
             hideAnimated();

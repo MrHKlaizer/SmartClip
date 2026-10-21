@@ -1615,6 +1615,15 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     aboutRow->addStretch();
     aboutRow->addWidget(checkUpdBtn);
     aboutLayout->addLayout(aboutRow);
+    // Открытые библиотеки (лицензия LGPL требует об этом сказать)
+    auto *creditsLbl = new QLabel(
+        tr("Видео и аудио воспроизводятся с помощью <a style='color:#9cc8ff' href='https://ffmpeg.org'>FFmpeg</a> "
+           "(LGPL), интерфейс — <a style='color:#9cc8ff' href='https://www.qt.io'>Qt</a> (LGPL). "
+           "Подробнее — в файле THIRD_PARTY_NOTICES.txt в папке программы."), aboutGroup);
+    creditsLbl->setWordWrap(true);
+    creditsLbl->setOpenExternalLinks(true);
+    creditsLbl->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
+    aboutLayout->addWidget(creditsLbl);
 
     betaLayout->addWidget(betaHintLabel);
     betaLayout->addWidget(videoGroup);

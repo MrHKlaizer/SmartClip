@@ -1532,4 +1532,28 @@ Open SmartClip by double-clicking the tray icon and choose a different hotkey in
         <translation>The latest GitHub release has no installer file.</translation>
     </message>
 </context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Воспроизведение</source>
+        <translation>Playback</translation>
+    </message>
+    <message>
+        <source>Открыть в плеере</source>
+        <translation>Open in player</translation>
+    </message>
+    <message>
+        <source>SmartClip не может воспроизвести этот файл.
+Открыть в стандартном плеере?</source>
+        <translation>SmartClip can't play this file.
+Open it in the default player?</translation>
+    </message>
+</context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <source>Видео и аудио воспроизводятся с помощью &lt;a style='color:#9cc8ff' href='https://ffmpeg.org'&gt;FFmpeg&lt;/a&gt; (LGPL), интерфейс — &lt;a style='color:#9cc8ff' href='https://www.qt.io'&gt;Qt&lt;/a&gt; (LGPL). Подробнее — в файле THIRD_PARTY_NOTICES.txt в папке программы.</source>
+        <translation>Video and audio are played with &lt;a style='color:#9cc8ff' href='https://ffmpeg.org'&gt;FFmpeg&lt;/a&gt; (LGPL), the interface uses &lt;a style='color:#9cc8ff' href='https://www.qt.io'&gt;Qt&lt;/a&gt; (LGPL). Details are in THIRD_PARTY_NOTICES.txt in the program folder.</translation>
+    </message>
+</context>
 </TS>

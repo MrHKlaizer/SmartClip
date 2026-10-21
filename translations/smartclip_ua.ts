@@ -1532,4 +1532,28 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <translation>В останньому релізі на GitHub немає файлу інсталятора.</translation>
     </message>
 </context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Воспроизведение</source>
+        <translation>Відтворення</translation>
+    </message>
+    <message>
+        <source>Открыть в плеере</source>
+        <translation>Відкрити в плеєрі</translation>
+    </message>
+    <message>
+        <source>SmartClip не может воспроизвести этот файл.
+Открыть в стандартном плеере?</source>
+        <translation>SmartClip не може відтворити цей файл.
+Відкрити у стандартному плеєрі?</translation>
+    </message>
+</context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <source>Видео и аудио воспроизводятся с помощью &lt;a style='color:#9cc8ff' href='https://ffmpeg.org'&gt;FFmpeg&lt;/a&gt; (LGPL), интерфейс — &lt;a style='color:#9cc8ff' href='https://www.qt.io'&gt;Qt&lt;/a&gt; (LGPL). Подробнее — в файле THIRD_PARTY_NOTICES.txt в папке программы.</source>
+        <translation>Відео та аудіо відтворюються за допомогою &lt;a style='color:#9cc8ff' href='https://ffmpeg.org'&gt;FFmpeg&lt;/a&gt; (LGPL), інтерфейс — &lt;a style='color:#9cc8ff' href='https://www.qt.io'&gt;Qt&lt;/a&gt; (LGPL). Докладніше — у файлі THIRD_PARTY_NOTICES.txt у теці програми.</translation>
+    </message>
+</context>
 </TS>
