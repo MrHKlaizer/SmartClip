@@ -39,9 +39,11 @@
 #include "CardArc.h"           // Прокрутка «Дуга» (этап 4)
 #include "CardShadow.h"        // Быстрая тень карточек
 #include "ScrollTopButton.h"   // Кнопка «наверх» в колонках
+#include "DateRuler.h"         // Шкала дат при прокрутке
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
 #include "core/Database.h"      // SQLite CRUD
 #include "core/AppSettings.h"   // Синглтон настроек
+#include "core/Thumbs.h"        // Превью картинок в фоне
 
 #include <QScreen>              // Размер экрана
 #include <QKeyEvent>            // Клавиша Escape для скрытия окна
@@ -64,6 +66,9 @@
 #include <QMessageBox>
 #include <QDialog>
 #include <QTextEdit>
+#include <QIcon>
+#include <QTextBrowser>
+#include <QAbstractTextDocumentLayout>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -575,7 +580,7 @@ protected:
 
 // ─── ViewPill — «пилюля» активной вкладки (История / Закрепы) ─────────────────
 // Светящаяся рамка поверх активной кнопки. При переключении вкладки плавно
-// переезжает на другую кнопку с пружинкой (вид «Вкладки и разделы» в 🖌).
+// переезжает на другую кнопку с пружинкой (вид «Вкладки и разделы» в Настройки → Оформление).
 // Клики проходят сквозь неё к кнопкам.
 class ViewPill : public QWidget
 {
@@ -956,15 +961,6 @@ void MainWindow::setupLayout()
     applyBtnShadow(m_profilesBtn);
     connect(m_profilesBtn, &QPushButton::clicked, this, &MainWindow::showProfilesMenu);
 
-    // Кнопка 🖌 — оформление и анимации (квадратная, как шестерёнка)
-    m_designBtn = new SmartButton(QString(), m_topPanel);
-    m_designBtn->setIconGlyph(QChar(0xE771));  // Кисточка (Personalize)
-    m_designBtn->setFixedSize(BTN_H, BTN_H);
-    m_designBtn->setBtnStyle(QColor(20,20,32,245), QColor(255,255,255,160), 6);
-    m_designBtn->setToolTip(tr("Оформление и анимации"));
-    applyBtnShadow(m_designBtn);
-    connect(m_designBtn, &QPushButton::clicked, this, &MainWindow::showAppearanceSettings);
-
     m_sortBtn = new SmartButton(sortLabel(), m_topPanel);
     m_sortBtn->setFixedHeight(BTN_H);
     m_sortBtn->setFont(btnFont);
@@ -1015,7 +1011,6 @@ void MainWindow::setupLayout()
     m_pinsBtn->installEventFilter(this);
     topLayout->addStretch();
     topLayout->addWidget(m_editBtn);
-    topLayout->addWidget(m_designBtn);
     topLayout->addWidget(m_profilesBtn);
     topLayout->addWidget(m_sortBtn);
     topLayout->addWidget(m_clearBtn);
@@ -1091,7 +1086,7 @@ void MainWindow::setupLayout()
     m_rightLayout->setSpacing(12);
     rightScroll->setWidget(rightContent);
 
-    // Плавная прокрутка с инерцией и мягким краем (в «Классике» — обычная)
+    // Плавная прокрутка с инерцией и мягким краем (без анимаций Windows — обычная)
     m_leftScroller  = new SmoothScroller(m_leftScroll);
     m_rightScroller = new SmoothScroller(m_rightScroll);
 
@@ -1105,6 +1100,13 @@ void MainWindow::setupLayout()
                         [this]() { m_leftScroller->scrollTo(0); });
     new ScrollTopButton(m_rightScroll, m_rightLayout, 14 + sc(ARC_AMP) + (sc(BASE_RIGHT) - 36) / 2,
                         sc(38), [this]() { m_rightScroller->scrollTo(0); });
+
+    // Шкала дат сбоку колонки — проявляется, пока листаешь
+    // (зажать у линии шкалы и вести — быстрая перемотка по всей колонке)
+    m_leftRuler  = new DateRuler(m_leftScroll,  m_leftLayout,  true,  sc(64),
+                                 [this](int v) { m_leftScroller->jumpTo(v); });
+    m_rightRuler = new DateRuler(m_rightScroll, m_rightLayout, false, sc(64),
+                                 [this](int v) { m_rightScroller->jumpTo(v); });
 
     // Долистали почти до конца колонки — подгружаем следующую порцию истории.
     // rangeChanged — на случай, когда первая порция не заполнила колонку целиком.
@@ -1291,6 +1293,7 @@ void MainWindow::addTextCard(const HistoryItem &entry)
     card->setProperty("fullText",    entry.content);
     card->setProperty("displayText", displayWrapped);
     card->setProperty("itemId",      entry.id);
+    DateRuler::setCardDate(card, entry.createdAt);  // Для шкалы дат
 
     QString fullContent = entry.content;
     connect(card, &ClickableCard::clicked, this, [this, fullContent]() {
@@ -1323,6 +1326,7 @@ void MainWindow::addImageCard(const HistoryItem &entry)
 
     card->setProperty("filepath", entry.filepath);
     card->setProperty("itemId", entry.id);
+    DateRuler::setCardDate(card, entry.createdAt);  // Для шкалы дат
 
     QString fp = entry.filepath;
     connect(card, &ClickableCard::clicked, this, [this, fp]() {
@@ -1359,6 +1363,7 @@ void MainWindow::addVideoCard(const HistoryItem &entry)
     if (name.length() > 50) name = name.left(47) + "...";
     card->setText(QString("🎬  %1").arg(name));
     card->setProperty("pinName", name);
+    DateRuler::setCardDate(card, entry.createdAt);  // Для шкалы дат
 
     QString fp = entry.filepath;
     connect(card, &ClickableCard::clicked, this, [this, fp]() {
@@ -1401,32 +1406,27 @@ void MainWindow::addVideoCard(const HistoryItem &entry)
 // между каждой картинкой и не зависает.
 void MainWindow::loadNextImage(int gen)
 {
-    // Если loadHistory() вызвали снова — поколение сменилось, прерываемся.
-    if (gen != m_loadGeneration || m_pendingImages.isEmpty())
-        return;
-
-    auto [cardPtr, filepath] = m_pendingImages.takeFirst();
-
-    // QPointer<QLabel> автоматически равен nullptr если виджет был удалён.
-    // Это защита от краша: пользователь мог закрыть окно пока грузились картинки.
-    if (cardPtr) {
-        QPixmap pixmap(filepath);
-        if (!pixmap.isNull()) {
-            cardPtr->setPixmap(pixmap.scaled(
-                cardPtr->width() - 8, cardPtr->height() - 8,
-                Qt::KeepAspectRatio,
-                Qt::SmoothTransformation
-            ));
-            cardPtr->setStyleSheet(""); // убираем стиль плейсхолдера
-        } else {
-            cardPtr->setText(tr("Изображение"));
-            cardPtr->setStyleSheet(QString("color: rgba(255,255,255,80); font-size: %1;").arg(spx(12)));
-        }
-    }
-
-    // Следующая картинка — на следующей итерации event loop
-    if (!m_pendingImages.isEmpty()) {
-        QTimer::singleShot(0, this, [this, gen]() { loadNextImage(gen); });
+    // Отдаём все картинки из очереди фоновой загрузке превью (Thumbs.h):
+    // интерфейс не ждёт, одновременно грузятся две картинки.
+    while (gen == m_loadGeneration && !m_pendingImages.isEmpty()) {
+        auto [cardPtr, filepath] = m_pendingImages.takeFirst();
+        // QPointer автоматически равен nullptr, если карточку уже удалили
+        if (!cardPtr) continue;
+        const qreal dpr = cardPtr->devicePixelRatioF();
+        const QSize px = (QSizeF(cardPtr->width() - 8, cardPtr->height() - 8) * dpr).toSize();
+        QPointer<QLabel> card = cardPtr;
+        Thumbs::loadAsync(filepath, px, cardPtr.data(), [this, card, gen, dpr](const QImage &img) {
+            if (!card || gen != m_loadGeneration) return;  // Список уже перестроили
+            if (!img.isNull()) {
+                QPixmap pm = QPixmap::fromImage(img);
+                pm.setDevicePixelRatio(dpr);  // Чётко при масштабе Windows 125–200%
+                card->setPixmap(pm);
+                card->setStyleSheet("");      // Убираем стиль плейсхолдера
+            } else {
+                card->setText(tr("Изображение"));
+                card->setStyleSheet(QString("color: rgba(255,255,255,80); font-size: %1;").arg(spx(12)));
+            }
+        });
     }
 }
 
@@ -1458,7 +1458,7 @@ void MainWindow::showWindow()
     // В новом стиле окно прячем ДО show(): иначе оно на миг мелькало уже
     // собранным, и только потом начиналась анимация.
     // (Без анимаций — наоборот, обязательно полная видимость: после ухода
-    //  окно остаётся прозрачным, а «Классику» могли включить уже после этого.)
+    //  окно остаётся прозрачным, а анимации в Windows могли выключить уже после этого.)
     setWindowOpacity(Anim::enabled(Anim::Kind::WindowOpen) ? 0.0 : 1.0);
     // Без активации: фокус остаётся у программы пользователя (см. MainWindow.h)
     show();
@@ -1610,7 +1610,7 @@ void MainWindow::hideAnimated()
     // Настоящее окно в этот момент и так прозрачное.
     if (m_overlay && m_overlay->isPlaying() && !m_overlay->isReverse()) {
         if (!Anim::enabled(Anim::Kind::WindowClose)) {
-            // Закрытие — «Классика»: просто обрываем появление и прячем окно
+            // Анимации выключены в Windows: просто обрываем появление и прячем окно
             m_overlay->abort();
             m_hidePending = false;
             hide();
@@ -1802,7 +1802,12 @@ LRESULT CALLBACK keyboardHook(int code, WPARAM wp, LPARAM lp)
         const bool modifier = vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT
                            || vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL
                            || vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU
-                           || vk == VK_LWIN || vk == VK_RWIN || vk == VK_CAPITAL;
+                           || vk == VK_LWIN || vk == VK_RWIN || vk == VK_CAPITAL
+                           // Служебные клавиши — не печать: F1–F24, PrtSc, громкость,
+                           // медиа, кнопки браузера/почты, NumLock/ScrollLock, Pause
+                           || (vk >= VK_F1 && vk <= VK_F24) || vk == VK_SNAPSHOT
+                           || (vk >= VK_BROWSER_BACK && vk <= VK_LAUNCH_APP2)
+                           || vk == VK_NUMLOCK || vk == VK_SCROLL || vk == VK_PAUSE || vk == VK_SLEEP;
         // Сочетания с Ctrl/Alt/Win (горячие клавиши, Alt+Tab) не трогаем
         if (!(kb->flags & LLKHF_INJECTED) && !modifier && !weAreForeground()
             && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_LWIN) && !held(VK_RWIN)) {
@@ -2746,6 +2751,7 @@ void MainWindow::loadPins(bool allFolders)
             card->setProperty("pinName",     pin.name);
             card->setProperty("pinTags",     pin.tags);
             card->setProperty("pinId",       pin.id);
+            card->setProperty("pinFolder", pin.folder);
             card->setEditMode(m_editMode);
 
             // Читаем fullText из свойства — так вставится отредактированный текст
@@ -2794,6 +2800,7 @@ void MainWindow::loadPins(bool allFolders)
             card->setProperty("pinName", pin.name);
             card->setProperty("pinTags", pin.tags);
             card->setProperty("pinId",   pin.id);
+            card->setProperty("pinFolder", pin.folder);
             card->setEditMode(m_editMode);
 
             // ── Строка с именем сверху (как у текстовых) ──────────────────────
@@ -2819,16 +2826,24 @@ void MainWindow::loadPins(bool allFolders)
             imgLabel->setStyleSheet("background: transparent;");
             imgLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
-            QPixmap pixmap(pin.filepath);
-            if (!pixmap.isNull()) {
-                imgLabel->setPixmap(pixmap.scaled(
-                    imgLabel->width(), imgLabel->height(),
-                    Qt::KeepAspectRatio, Qt::SmoothTransformation
-                ));
-            } else {
-                // Раньше здесь по ошибке выводилась строка «Название для «%1»:»
-                imgLabel->setText(tr("Файл изображения не найден"));
-                imgLabel->setStyleSheet("color: #888; background: transparent;");
+            // Превью грузим в фоне (раньше все картинки закрепов декодировались
+            // разом при открытии вкладки — окно замирало)
+            {
+                const qreal dpr = imgLabel->devicePixelRatioF();
+                const QSize px = (QSizeF(imgLabel->size()) * dpr).toSize();
+                QPointer<QLabel> lbl = imgLabel;
+                Thumbs::loadAsync(pin.filepath, px, imgLabel, [this, lbl, dpr](const QImage &img) {
+                    if (!lbl) return;
+                    if (!img.isNull()) {
+                        QPixmap pm = QPixmap::fromImage(img);
+                        pm.setDevicePixelRatio(dpr);
+                        lbl->setPixmap(pm);
+                    } else {
+                        // Раньше здесь по ошибке выводилась строка «Название для «%1»:»
+                        lbl->setText(tr("Файл изображения не найден"));
+                        lbl->setStyleSheet("color: #888; background: transparent;");
+                    }
+                });
             }
             imgLabel->show();
 
@@ -2924,6 +2939,7 @@ void MainWindow::loadPins(bool allFolders)
             card->setProperty("pinName", pin.name);
             card->setProperty("pinTags", pin.tags);
             card->setProperty("pinId",   pin.id);
+            card->setProperty("pinFolder", pin.folder);
             card->setEditMode(m_editMode);
 
             // Строка с именем сверху
@@ -3051,6 +3067,7 @@ void MainWindow::loadPins(bool allFolders)
             card->setProperty("pinName", pin.name);
             card->setProperty("pinTags", pin.tags);
             card->setProperty("pinId",   pin.id);
+            card->setProperty("pinFolder", pin.folder);
             card->setEditMode(m_editMode);
 
             connect(card, &ClickableCard::clicked, this, [this, card, fp = pin.filepath, pid = pin.id]() {
@@ -3141,39 +3158,126 @@ void MainWindow::loadPins(bool allFolders)
 // onCardDragMoved — вызывается при каждом движении мыши во время перетаскивания.
 // Находит позицию вставки (перед первой карточкой центр которой ниже курсора)
 // и перемещает m_dragCard в нужное место через removeWidget + insertWidget.
+// ─── Перетаскивание закрепов ─────────────────────────────────────────────────
+// Как в современных системах: карточка «приподнимается» (полупрозрачная и чуть
+// меньше), свободно едет за мышью, а на месте, куда её вставят, раскрывается
+// пустое место — соседние карточки плавно расступаются. Отпустили — карточка
+// доезжает в это место. У края колонки список сам прокручивается.
+
+CardArc *MainWindow::arcFor(QVBoxLayout *layout) const
+{
+    return layout == m_leftLayout ? m_leftArc : layout == m_rightLayout ? m_rightArc : nullptr;
+}
+
+QScrollArea *MainWindow::scrollFor(QVBoxLayout *layout) const
+{
+    return layout == m_leftLayout ? m_leftScroll : layout == m_rightLayout ? m_rightScroll : nullptr;
+}
+
+// Плавно «поднять» (to = 1) или «опустить» (to = 0) карточку
+static void animateLift(QWidget *card, qreal to, int ms)
+{
+    auto *anim = new QVariantAnimation(card);
+    anim->setStartValue(card->property("lift").toReal());
+    anim->setEndValue(to);
+    anim->setDuration(Anim::enabled(Anim::Kind::Scroll) ? Anim::ms(Anim::Kind::Scroll, ms) : 0);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    QObject::connect(anim, &QVariantAnimation::valueChanged, card, [card](const QVariant &v) {
+        card->setProperty("lift", v.toReal());
+        // Пока карточку тащат, она вне колонки — вид задаём сами
+        if (auto *fx = dynamic_cast<CardShadowEffect *>(card->graphicsEffect()))
+            fx->setLook(1.0 - 0.05 * v.toReal(), 1.0 - 0.35 * v.toReal());
+    });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::beginCardDrag(const QPoint &globalPos)
+{
+    QWidget *content = m_dragLayout->parentWidget();
+    const int idx = m_dragLayout->indexOf(m_dragCard);
+    if (!content || idx < 0) return;
+
+    // Карточка выходит из колонки и едет за мышью; на её месте — пустое место
+    m_dragPlaceholder = new QWidget(content);
+    m_dragPlaceholder->setFixedSize(m_dragCard->size());
+    m_dragPlaceholder->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_dragGrab = m_dragCard->mapFromGlobal(globalPos);
+    if (CardArc *arc = arcFor(m_dragLayout)) arc->setReflowAnimated(true);
+    m_dragLayout->removeWidget(m_dragCard);
+    m_dragLayout->insertWidget(idx, m_dragPlaceholder);
+    m_dragCard->raise();
+    animateLift(m_dragCard, 1.0, 140);
+
+    // Автопрокрутка у края колонки, пока карточку держат
+    if (!m_dragScrollTimer) {
+        m_dragScrollTimer = new QTimer(this);
+        m_dragScrollTimer->setInterval(16);
+        connect(m_dragScrollTimer, &QTimer::timeout, this, [this]() {
+            if (!m_dragCard || !m_dragLayout) { m_dragScrollTimer->stop(); return; }
+            QScrollArea *area = scrollFor(m_dragLayout);
+            if (!area) return;
+            const QPoint c = area->viewport()->mapFromGlobal(QCursor::pos());
+            const int edge = 56, h = area->viewport()->height();
+            int step = 0;
+            if (c.y() < edge)          step = -qMax(2, (edge - c.y()) / 3);
+            else if (c.y() > h - edge) step =  qMax(2, (c.y() - (h - edge)) / 3);
+            if (!step) return;
+            QScrollBar *sb = area->verticalScrollBar();
+            const int before = sb->value();
+            sb->setValue(before + step);
+            if (sb->value() != before) onCardDragMoved(QCursor::pos());
+        });
+    }
+    m_dragScrollTimer->start();
+}
+
 void MainWindow::onCardDragMoved(const QPoint &globalPos)
 {
     if (!m_dragCard || !m_dragLayout) return;
+    if (!m_dragPlaceholder) beginCardDrag(globalPos);
+    if (!m_dragPlaceholder) return;
 
-    // Текущая позиция перетаскиваемой карточки в лейауте
-    int currentIdx = -1;
-    for (int i = 0; i < m_dragLayout->count(); ++i) {
-        if (m_dragLayout->itemAt(i)->widget() == m_dragCard) { currentIdx = i; break; }
-    }
-    if (currentIdx == -1) return;
+    // Карточка едет за мышью (по горизонтали — в пределах колонки)
+    QWidget *content = m_dragLayout->parentWidget();
+    QPoint p = content->mapFromGlobal(globalPos) - m_dragGrab;
+    p.setX(qBound(-m_dragCard->width() / 4, p.x(), content->width() - m_dragCard->width() * 3 / 4));
+    m_dragCard->move(p);
 
-    // Ищем позицию вставки (перед первой карточкой, верхний край которой ниже курсора)
-    int insertIdx = m_dragLayout->count(); // по умолчанию — в конец
+    // Куда вставить: перед первой карточкой, середина которой ниже середины перетаскиваемой
+    const int centerY = p.y() + m_dragCard->height() / 2;
+    const int from = m_dragLayout->indexOf(m_dragPlaceholder);
+    int insertIdx = 0;
     for (int i = 0; i < m_dragLayout->count(); ++i) {
         QWidget *w = m_dragLayout->itemAt(i)->widget();
-        if (!w || w == m_dragCard) continue;
-        if (globalPos.y() < w->mapToGlobal(QPoint(0, w->height() / 2)).y()) {
-            insertIdx = i;
-            break;
-        }
+        if (!w || w == m_dragPlaceholder || w->isHidden()) continue;
+        const QPoint base = w->property("arcBase").isValid() ? w->property("arcBase").toPoint() : w->pos();
+        if (centerY > base.y() + w->height() / 2) insertIdx = (i < from) ? i + 1 : i;
     }
-
-    // Не двигаем если карточка уже на нужном месте
-    if (insertIdx == currentIdx || insertIdx == currentIdx + 1) return;
-
-    m_dragLayout->removeWidget(m_dragCard);
-    int adjustedIdx = (insertIdx > currentIdx) ? insertIdx - 1 : insertIdx;
-    m_dragLayout->insertWidget(adjustedIdx, m_dragCard);
+    if (insertIdx != from) {
+        m_dragLayout->removeWidget(m_dragPlaceholder);
+        m_dragLayout->insertWidget(insertIdx, m_dragPlaceholder);
+    }
 }
 
-// onCardDragFinished — сохраняет новый порядок карточек в БД после отпускания.
+// onCardDragFinished — карточка встаёт на освободившееся место, порядок — в БД
 void MainWindow::onCardDragFinished()
 {
+    if (m_dragScrollTimer) m_dragScrollTimer->stop();
+    if (m_dragPlaceholder && m_dragCard && m_dragLayout) {
+        const int idx = m_dragLayout->indexOf(m_dragPlaceholder);
+        m_dragLayout->removeWidget(m_dragPlaceholder);
+        m_dragPlaceholder->deleteLater();
+        m_dragLayout->insertWidget(qMax(0, idx), m_dragCard);  // Доедет сама (плавная перестройка)
+        animateLift(m_dragCard, 0.0, 200);
+        // Когда всё доехало — выключаем плавную перестройку
+        if (CardArc *arc = arcFor(m_dragLayout)) {
+            QPointer<CardArc> guard(arc);
+            QTimer::singleShot(Anim::ms(Anim::Kind::Scroll, 450), this, [guard]() {
+                if (guard) guard->setReflowAnimated(false);
+            });
+        }
+    }
+    m_dragPlaceholder = nullptr;
     if (m_dragLayout) savePinsColumnOrder(m_dragLayout);
     m_dragCard   = nullptr;
     m_dragLayout = nullptr;
@@ -3186,6 +3290,9 @@ void MainWindow::savePinsColumnOrder(QVBoxLayout *layout)
         QWidget *w = layout->itemAt(i)->widget();
         if (!w) continue;
         int pid = w->property("pinId").toInt();
+        // На «Все» есть и недавно использованные закрепы из папок — их порядок
+        // в папке не трогаем (на «Все» они стоят по дате использования)
+        if (m_currentFolder.isEmpty() && !w->property("pinFolder").toString().isEmpty()) continue;
         if (pid > 0) orders.append({pid, i + 1});
     }
     if (!orders.isEmpty())
@@ -3726,175 +3833,6 @@ void MainWindow::showProfileManager()
     dialog.exec();
 }
 
-// ─── showAppearanceSettings ──────────────────────────────────────────────────
-// Окно «Оформление» (кнопка 🖌): стиль (новый 2.0 / классика) и скорость
-// анимаций. Сюда же позже добавятся виды прокрутки, эффекты карточек и темы.
-void MainWindow::showAppearanceSettings()
-{
-    AppDialog dlg(this);
-    dlg.setWindowTitle(tr("Оформление"));
-    dlg.setMinimumWidth(520);
-
-    auto *vl = new QVBoxLayout(dlg.body());
-    vl->setContentsMargins(4, 4, 4, 4);
-    vl->setSpacing(6);
-
-    const QString titleCss = "color:#e0e0f0;font-size:13px;font-weight:bold;background:transparent;";
-    const QString hintCss  = "color:rgba(255,255,255,110);font-size:11px;background:transparent;";
-    const QString comboCss =
-        "QComboBox{background:rgba(28,28,44,245);color:#f0f0f0;"
-        "border:1px solid rgba(255,255,255,55);border-radius:6px;padding:4px 10px;font-size:12px;}"
-        "QComboBox:disabled{color:rgba(240,240,240,90);}"
-        "QComboBox QAbstractItemView{background:rgba(22,22,36,252);color:#e0e0e0;"
-        "border:1px solid rgba(255,255,255,55);selection-background-color:rgba(255,255,255,18);"
-        "outline:none;padding:2px;}";
-    const QString sliderCss =
-        "QSlider::groove:horizontal{height:4px;background:rgba(255,255,255,30);border-radius:2px;}"
-        "QSlider::sub-page:horizontal{background:rgba(160,200,255,170);border-radius:2px;}"
-        "QSlider::sub-page:horizontal:disabled{background:rgba(160,200,255,50);}"
-        "QSlider::handle:horizontal{width:14px;height:14px;margin:-5px 0;border-radius:7px;"
-        "background:#e0e8ff;}"
-        "QSlider::handle:horizontal:disabled{background:rgba(224,232,255,70);}";
-
-    auto *intro = new QLabel(
-        tr("Для каждого вида анимации — свой стиль и своя скорость. "
-           "«Классика» — как было раньше, без анимации."), dlg.body());
-    intro->setWordWrap(true);
-    intro->setStyleSheet(hintCss);
-    vl->addWidget(intro);
-    vl->addSpacing(6);
-
-    // ── По строке на каждый вид анимации ─────────────────────────────────────
-    struct Row { QString key; QComboBox *style; QSlider *speed; };
-    QList<Row> rows;
-
-    auto *grid = new QGridLayout();
-    grid->setHorizontalSpacing(12);
-    grid->setVerticalSpacing(4);
-    grid->setColumnStretch(2, 1);
-    int r = 0;
-    for (const Anim::KindInfo &info : Anim::kinds()) {
-        const QString key = QString::fromLatin1(info.key);
-
-        auto *title = new QLabel(tr(info.title), dlg.body());
-        title->setStyleSheet(titleCss);
-        auto *hint = new QLabel(tr(info.hint), dlg.body());
-        hint->setStyleSheet(hintCss);
-
-        // Данные пункта: "on" / "off", у прокрутки — "arc" / "smooth" / "off"
-        auto *style = new QComboBox(dlg.body());
-        if (info.kind == Anim::Kind::Scroll) {
-            style->addItem(tr("Дуга"), QStringLiteral("arc"));
-            style->addItem(tr("Плавная"), QStringLiteral("smooth"));
-        } else {
-            style->addItem(tr("Новый"), QStringLiteral("on"));
-        }
-        style->addItem(tr("Классика"), QStringLiteral("off"));
-        const QString cur = !AppSettings::get().animOn(key) ? QStringLiteral("off")
-                          : info.kind == Anim::Kind::Scroll ? AppSettings::get().scrollStyle()
-                                                            : QStringLiteral("on");
-        style->setCurrentIndex(qMax(0, style->findData(cur)));
-        style->setStyleSheet(comboCss);
-        style->setFixedWidth(120);
-
-        auto *speed = new QSlider(Qt::Horizontal, dlg.body());
-        speed->setRange(50, 200);
-        speed->setSingleStep(10);
-        speed->setPageStep(25);
-        speed->setValue(AppSettings::get().animSpeed(key));
-        speed->setStyleSheet(sliderCss);
-        speed->setToolTip(tr("Скорость: левее — медленнее, правее — быстрее"));
-
-        auto *speedLbl = new QLabel(dlg.body());
-        speedLbl->setStyleSheet(hintCss);
-        speedLbl->setFixedWidth(42);
-        speedLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        auto showSpeed = [speedLbl](int v) { speedLbl->setText(QString("%1%").arg(v)); };
-        showSpeed(speed->value());
-        connect(speed, &QSlider::valueChanged, &dlg, showSpeed);
-
-        // Скорость имеет смысл только для нового стиля
-        auto sync = [style, speed, speedLbl]() {
-            const bool on = style->currentData().toString() != QLatin1String("off");
-            speed->setEnabled(on);
-            speedLbl->setEnabled(on);
-        };
-        sync();
-        connect(style, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg, sync);
-
-        grid->addWidget(title,    r,     0, 1, 4);
-        grid->addWidget(hint,     r + 1, 0, 1, 4);
-        grid->addWidget(style,    r + 2, 0);
-        grid->addWidget(speed,    r + 2, 1, 1, 2);
-        grid->addWidget(speedLbl, r + 2, 3);
-        grid->setRowMinimumHeight(r + 3, 10);  // Отступ до следующего вида
-        r += 4;
-
-        rows << Row{ key, style, speed };
-    }
-    vl->addLayout(grid);
-
-    // Анимации запрещены самой Windows — честно об этом говорим
-    if (!Anim::systemAllows()) {
-        auto *sysLbl = new QLabel(
-            tr("⚠ В Windows выключена анимация интерфейса, поэтому SmartClip тоже "
-               "работает без неё.\nВключить: Параметры → Специальные возможности → "
-               "Визуальные эффекты → Эффекты анимации."), dlg.body());
-        sysLbl->setWordWrap(true);
-        sysLbl->setStyleSheet("color:#ffcc66;font-size:11px;background:transparent;");
-        vl->addWidget(sysLbl);
-    }
-
-    auto *soonLbl = new QLabel(
-        tr("Скоро здесь: эффекты карточек и темы оформления."), dlg.body());
-    soonLbl->setWordWrap(true);
-    soonLbl->setStyleSheet(hintCss);
-    vl->addWidget(soonLbl);
-    vl->addStretch();
-
-    // ── Кнопки ───────────────────────────────────────────────────────────────
-    auto *btnRow    = new QHBoxLayout();
-    auto *resetBtn  = new QPushButton(tr("По умолчанию"), dlg.body());
-    auto *cancelBtn = new QPushButton(tr("Отмена"), dlg.body());
-    auto *saveBtn   = new QPushButton(tr("Сохранить"), dlg.body());
-    const QString btnCss =
-        "QPushButton{background:rgba(28,28,44,245);color:rgba(255,255,255,200);"
-        "border:1px solid rgba(255,255,255,55);border-radius:6px;padding:5px 18px;font-size:13px;}"
-        "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}";
-    resetBtn->setStyleSheet(btnCss);
-    cancelBtn->setStyleSheet(btnCss);
-    saveBtn->setStyleSheet(QString(btnCss).replace("rgba(255,255,255,200)", "rgba(160,200,255,240)"));
-    for (QPushButton *b : {resetBtn, cancelBtn, saveBtn}) b->setCursor(Qt::PointingHandCursor);
-    btnRow->addWidget(resetBtn);
-    btnRow->addStretch();
-    btnRow->addWidget(cancelBtn);
-    btnRow->addWidget(saveBtn);
-    vl->addLayout(btnRow);
-
-    // «По умолчанию» — везде новый стиль и скорость 100%
-    connect(resetBtn, &QPushButton::clicked, &dlg, [rows]() {
-        for (const Row &row : rows) {
-            row.style->setCurrentIndex(0);
-            row.speed->setValue(100);
-        }
-    });
-    connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
-    connect(saveBtn,   &QPushButton::clicked, &dlg, &QDialog::accept);
-
-    if (dlg.exec() != QDialog::Accepted) return;
-
-    for (const Row &row : rows) {
-        const QString v = row.style->currentData().toString();
-        AppSettings::get().setAnimOn(row.key, v != QLatin1String("off"));
-        if (v == QLatin1String("arc") || v == QLatin1String("smooth"))
-            AppSettings::get().setScrollStyle(v);
-        AppSettings::get().setAnimSpeed(row.key, row.speed->value());
-    }
-    // Дугу включили или выключили — колонки перестраиваются сразу
-    if (m_leftArc)  m_leftArc->refresh();
-    if (m_rightArc) m_rightArc->refresh();
-}
-
 void MainWindow::editPin(int id, const QString &content, QLabel *card)
 {
     AppDialog dialog(this);
@@ -3996,6 +3934,13 @@ void MainWindow::showSettings()
         dlg.setPendingUpdate(m_pendingUpdateVersion, m_pendingUpdateUrl, m_pendingReleaseNotes);
 
     dlg.exec();
+
+    // Оформление могло поменяться: дуга/выезд карточек, шкала дат и тёмный фон — сразу
+    if (m_leftArc)  m_leftArc->refresh();
+    if (m_rightArc) m_rightArc->refresh();
+    if (m_leftRuler)  m_leftRuler->refresh();
+    if (m_rightRuler) m_rightRuler->refresh();
+    update();
 }
 
 // ─── nativeEvent ──────────────────────────────────────────────────────────────
@@ -4191,7 +4136,13 @@ void MainWindow::onUpdateAvailable(const QString &version, const QString &downlo
     // выскочило бы поверх игры/полноэкранного видео. main.cpp показывает
     // уведомление в трее, а диалог откроется при клике по нему или когда
     // пользователь сам откроет SmartClip (см. showWindow).
-    m_updatePromptShown = false;
+    // Мелкое обновление (2.0.1) само не предлагаем: точка на шестерёнке и
+    // плашка вверху настроек — посмотреть, когда удобно.
+    m_updatePromptShown = !UpdateChecker::isMajorUpdate(version);
+    if (m_settingsBtn) {
+        m_settingsBtn->setBadge(true);
+        m_settingsBtn->setToolTip(tr("Настройки — доступно обновление %1").arg(version));
+    }
 }
 
 void MainWindow::showPendingUpdate()
@@ -4215,78 +4166,113 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
     // Показываем окно чтобы диалог не спрятался за треем
     showWindow();
 
-    // ── Диалог "доступно обновление" ──────────────────────────────────────────
+    // ── Окно «Доступно обновление» ────────────────────────────────────────────
+    const bool major = UpdateChecker::isMajorUpdate(version);
     AppDialog dlg(this);
     dlg.setWindowTitle(tr("Обновление SmartClip"));
     // Случайный клик мимо не должен обрывать скачивание обновления
     dlg.setProperty("keepOnDeactivate", true);
-    dlg.setMinimumWidth(420);
+    dlg.setMinimumWidth(520);
 
     // Кладём всё прямо в dlg.body() — AppDialog уже создал его внутри
     QWidget *bodyW = dlg.body();
     auto *layout = new QVBoxLayout(bodyW);
-    layout->setContentsMargins(24, 8, 24, 16);
-    layout->setSpacing(14);
+    layout->setContentsMargins(22, 6, 22, 16);
+    layout->setSpacing(12);
 
-    auto *icon = new QLabel("🚀", bodyW);
-    icon->setStyleSheet("font-size: 32px;");
+    // Шапка: значок программы, версия и вид обновления
+    auto *head = new QHBoxLayout();
+    head->setSpacing(14);
+    // Значок программы (в .ico есть размеры до 256 px — чёткий на любом масштабе)
+    auto *icon = new QLabel(bodyW);
+    icon->setPixmap(QIcon(":/icons/smartclip.ico").pixmap(QSize(56, 56), devicePixelRatioF()));
+    icon->setFixedSize(56, 56);
     icon->setAlignment(Qt::AlignCenter);
+    auto *headText = new QVBoxLayout();
+    headText->setSpacing(4);
+    auto *title = new QLabel(tr("SmartClip %1").arg(version), bodyW);
+    title->setStyleSheet("color:#fff; font-size:18px; font-weight:600;");
+    auto *chips = new QHBoxLayout();
+    chips->setSpacing(8);
+    auto *kind = new QLabel(major ? tr("Большое обновление") : tr("Небольшое обновление"), bodyW);
+    kind->setStyleSheet(major
+        ? "color:#0e1a2c; background:rgba(120,190,255,235); border-radius:9px; padding:2px 9px; font-size:11px; font-weight:600;"
+        : "color:#cfe3ff; background:rgba(120,190,255,40); border-radius:9px; padding:2px 9px; font-size:11px;");
+    auto *current = new QLabel(tr("у вас сейчас %1").arg(QLatin1String(APP_VERSION)), bodyW);
+    current->setStyleSheet("color:rgba(255,255,255,120); font-size:11px;");
+    chips->addWidget(kind);
+    chips->addWidget(current);
+    chips->addStretch();
+    headText->addWidget(title);
+    headText->addLayout(chips);
+    head->addWidget(icon);
+    head->addLayout(headText, 1);
+    layout->addLayout(head);
 
-    auto *title = new QLabel(
-        tr("Доступна новая версия SmartClip!"), bodyW);
-    title->setStyleSheet("color:#fff; font-size:15px; font-weight:bold;");
-    title->setAlignment(Qt::AlignCenter);
-
-    auto *sub = new QLabel(
-        QString(tr("Версия %1 готова к установке.")).arg(version), bodyW);
-    sub->setStyleSheet("color:rgba(255,255,255,160); font-size:12px;");
-    sub->setAlignment(Qt::AlignCenter);
-
-    // Блок "Что нового" (показывается только если есть releaseNotes)
-    if (!releaseNotes.isEmpty()) {
-        auto *notesHdr = new QLabel(tr("Что нового:"), bodyW);
-        notesHdr->setStyleSheet("color:rgba(255,255,255,180);font-size:11px;font-weight:bold;");
-
-        auto *notesLbl = new QLabel(releaseNotes, bodyW);
-        notesLbl->setWordWrap(true);
-        notesLbl->setStyleSheet(
-            "color:rgba(255,255,255,130);font-size:11px;"
-            "background:rgba(255,255,255,8);border-radius:6px;padding:8px;");
-        notesLbl->setMaximumHeight(120);
-
-        layout->addWidget(notesHdr);
-        layout->addWidget(notesLbl);
+    // «Что нового» — на языке интерфейса (в описании релиза языки разделены метками)
+    const QString notes = UpdateChecker::localizedNotes(releaseNotes, AppSettings::get().language());
+    auto *notesHdr = new QLabel(tr("Что нового"), bodyW);
+    notesHdr->setStyleSheet("color:rgba(255,255,255,200); font-size:12px; font-weight:600;");
+    layout->addWidget(notesHdr);
+    if (!notes.isEmpty()) {
+        auto *notesView = new QTextBrowser(bodyW);
+        notesView->setOpenExternalLinks(true);
+        notesView->setMarkdown(notes);  // Описание на GitHub — в Markdown: списки, жирный и т.п.
+        notesView->setFrameShape(QFrame::NoFrame);
+        notesView->setStyleSheet(
+            "QTextBrowser{background:rgba(255,255,255,7); color:rgba(235,238,250,220);"
+            "border:1px solid rgba(255,255,255,22); border-radius:10px; padding:10px; font-size:12px;}");
+        notesView->document()->setDocumentMargin(4);
+        // Высота — по тексту: короткое описание без пустого места, длинное — с прокруткой
+        notesView->ensurePolished();  // Сначала шрифт из стиля — иначе высота считается крупным шрифтом
+        notesView->document()->setDefaultFont(notesView->font());
+        // Высота — по тексту: короткое описание без пустого места, длинное —
+        // с прокруткой. Размер известен, когда текст свёрстан по ширине окна.
+        notesView->setFixedHeight(120);
+        connect(notesView->document()->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged,
+                notesView, [notesView](const QSizeF &sz) {
+            notesView->setFixedHeight(qBound(70, int(sz.height()) + 24, 300));
+        });
+        layout->addWidget(notesView);
+    } else {
+        // Описание не пришло (запасной путь проверки обновлений) — ссылка на GitHub
+        auto *link = new QLabel(QString("<a style='color:#9cc8ff' href='https://github.com/%1/releases/latest'>%2</a>")
+                                    .arg(QLatin1String(GITHUB_REPO), tr("Посмотреть, что нового, на GitHub")), bodyW);
+        link->setOpenExternalLinks(true);
+        link->setStyleSheet("font-size:12px;");
+        layout->addWidget(link);
     }
 
     // Прогресс-бар (скрыт до начала загрузки)
     auto *progress = new QProgressBar(bodyW);
     progress->setRange(0, 100);
     progress->setValue(0);
-    progress->setTextVisible(true);
+    progress->setTextVisible(false);
+    progress->setFixedHeight(6);
     progress->setStyleSheet(
-        "QProgressBar{background:rgba(255,255,255,20);border-radius:5px;height:14px;}"
-        "QProgressBar::chunk{background:#ffdd88;border-radius:5px;}");
+        "QProgressBar{background:rgba(255,255,255,20);border:none;border-radius:3px;}"
+        "QProgressBar::chunk{background:rgba(120,190,255,235);border-radius:3px;}");
     progress->hide();
 
     auto *statusLbl = new QLabel("", bodyW);
-    statusLbl->setStyleSheet("color:rgba(255,255,255,120); font-size:11px;");
+    statusLbl->setStyleSheet("color:rgba(255,255,255,140); font-size:11px;");
     statusLbl->setAlignment(Qt::AlignCenter);
+    statusLbl->setWordWrap(true);
     statusLbl->hide();
 
     auto *btnRow    = new QHBoxLayout();
-    auto *updateBtn = new SmartButton(tr("⬇  Скачать и установить"), bodyW);
+    auto *updateBtn = new SmartButton(tr("Скачать и установить"), bodyW);
     auto *laterBtn  = new SmartButton(tr("Позже"), bodyW);
-    updateBtn->setBtnStyle(QColor(48,33,6,245), QColor(0xFF,0xDD,0x88));
-    updateBtn->setFixedHeight(34);
-    laterBtn->setBtnStyle(QColor(30,30,50,200), QColor(180,180,200));
-    laterBtn->setFixedHeight(34);
+    updateBtn->setBtnStyle(QColor(28, 52, 86, 245), QColor(200, 228, 255));
+    updateBtn->setFixedHeight(36);
+    updateBtn->setMinimumWidth(190);
+    laterBtn->setBtnStyle(QColor(30, 30, 50, 200), QColor(180, 180, 200));
+    laterBtn->setFixedHeight(36);
+    btnRow->addStretch();
     btnRow->addWidget(laterBtn);
     btnRow->addWidget(updateBtn);
 
-    layout->addWidget(icon);
-    layout->addWidget(title);
-    layout->addWidget(sub);
-    layout->addSpacing(4);
+    layout->addSpacing(2);
     layout->addWidget(progress);
     layout->addWidget(statusLbl);
     layout->addLayout(btnRow);
@@ -4333,6 +4319,9 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
         QTimer::singleShot(300, qApp, []() { QCoreApplication::quit(); });
     };
 
+    // Сколько раз подряд связь обрывалась при скачивании (один раз повторяем сами)
+    auto dropped = std::make_shared<int>(0);
+
     connect(updateBtn, &QPushButton::clicked, &dlg, [=]() {
         updateBtn->setEnabled(false);
         laterBtn->setEnabled(false);
@@ -4375,9 +4364,21 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
             nam->deleteLater();
 
             if (reply->error() != QNetworkReply::NoError) {
-                fail(tr("Ошибка: ") + reply->errorString());
+                const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                const bool network = (status == 0);  // Ответа сервера нет — оборвалась связь
+                // На мобильном интернете связь часто моргает — первый обрыв повторяем сами
+                if (network && ++*dropped < 2) {
+                    statusLbl->setText(tr("Связь прервалась, пробую ещё раз..."));
+                    QTimer::singleShot(3000, dlgPtr, [updateBtn]() { emit updateBtn->clicked(); });
+                    return;
+                }
+                *dropped = 0;
+                statusLbl->setToolTip(reply->errorString());  // Подробности — при наведении
+                fail(network ? tr("Связь прервалась при скачивании. Проверьте интернет и нажмите «Повторить».")
+                             : tr("Не удалось скачать обновление (ошибка %1). Попробуйте позже.").arg(status));
                 return;
             }
+            *dropped = 0;
             const QByteArray data = reply->readAll();
             if (data.size() < 1024) {
                 fail(tr("Сервер вернул пустой файл. Попробуйте позже."));

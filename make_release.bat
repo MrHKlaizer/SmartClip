@@ -84,13 +84,13 @@ echo  ════════════════════════�
 echo   Готово!  %RESULT%
 echo.
 echo   Дальше: GitHub - Releases - Draft a new release
-echo     Tag:   %TAG%   - именно из трёх чисел, иначе старые версии не увидят обновление
+echo     Tag:   %TAG%
 echo     Название релиза: SmartClip %VER%
+echo     Описание: по шаблону docs\RELEASE_NOTES_TEMPLATE.md (ru/en/ua/de)
 echo     Файл:  SmartClip_Installer_v%VER%.exe  (только его, без zip)
 echo     НЕ ставь галочку "Set as a pre-release" - иначе друзьям
 echo     обновление не придёт.
 echo  ════════════════════════════════════════════════════════════
-if not defined SMARTCLIP_NO_EXPLORER explorer /select,"%RESULT%"
 endlocal
 pause
 exit /b 0

@@ -697,6 +697,62 @@ Turn on: Settings → Accessibility → Visual effects → Animation effects.</t
         <source>Наверх</source>
         <translation>Back to top</translation>
     </message>
+    <message>
+        <source>Скорость каждой анимации настраивается отдельно: левее — медленнее, правее — быстрее.</source>
+        <translation>Each animation has its own speed: left is slower, right is faster.</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: темы оформления.</source>
+        <translation>Coming soon: themes.</translation>
+    </message>
+    <message>
+        <source>«Дуга» — крайние карточки уходят за край по дуге, «Плавная» — без дуги</source>
+        <translation>“Arc” — edge cards curve away past the edge, “Smooth” — no arc</translation>
+    </message>
+    <message>
+        <source>Связь прервалась, пробую ещё раз...</source>
+        <translation>Connection lost, retrying...</translation>
+    </message>
+    <message>
+        <source>Связь прервалась при скачивании. Проверьте интернет и нажмите «Повторить».</source>
+        <translation>The connection dropped during download. Check your internet and press “Retry”.</translation>
+    </message>
+    <message>
+        <source>Не удалось скачать обновление (ошибка %1). Попробуйте позже.</source>
+        <translation>Could not download the update (error %1). Please try again later.</translation>
+    </message>
+    <message>
+        <source>SmartClip %1</source>
+        <translation>SmartClip %1</translation>
+    </message>
+    <message>
+        <source>Большое обновление</source>
+        <translation>Major update</translation>
+    </message>
+    <message>
+        <source>Небольшое обновление</source>
+        <translation>Minor update</translation>
+    </message>
+    <message>
+        <source>у вас сейчас %1</source>
+        <translation>you have %1</translation>
+    </message>
+    <message>
+        <source>Что нового</source>
+        <translation>What's new</translation>
+    </message>
+    <message>
+        <source>Посмотреть, что нового, на GitHub</source>
+        <translation>See what's new on GitHub</translation>
+    </message>
+    <message>
+        <source>Скачать и установить</source>
+        <translation>Download and install</translation>
+    </message>
+    <message>
+        <source>Настройки — доступно обновление %1</source>
+        <translation>Settings — update %1 available</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1126,6 +1182,58 @@ When the limit is exceeded, the oldest entries of that kind are removed.</transl
         <source>Не удалось включить: Windows не дала разрешение.</source>
         <translation>Could not enable: Windows did not grant permission.</translation>
     </message>
+    <message>
+        <source>Оформление</source>
+        <translation>Appearance</translation>
+    </message>
+    <message>
+        <source>Анимации</source>
+        <translation>Animations</translation>
+    </message>
+    <message>
+        <source>Карточки</source>
+        <translation>Cards</translation>
+    </message>
+    <message>
+        <source>Карточка выезжает и увеличивается при наведении</source>
+        <translation>Card slides out and grows on hover</translation>
+    </message>
+    <message>
+        <source>Карточка под мышью плавно выдвигается к центру экрана и чуть увеличивается, раздвигая соседние.</source>
+        <translation>The card under the mouse slides toward the screen center and grows a little, pushing its neighbours apart.</translation>
+    </message>
+    <message>
+        <source>Что нового?</source>
+        <translation>What's new?</translation>
+    </message>
+    <message>
+        <source>Доступно большое обновление — SmartClip %1</source>
+        <translation>Major update available — SmartClip %1</translation>
+    </message>
+    <message>
+        <source>Доступно обновление %1 — исправления и улучшения</source>
+        <translation>Update %1 available — fixes and improvements</translation>
+    </message>
+    <message>
+        <source>Шкала дат при прокрутке:</source>
+        <translation>Date scale while scrolling:</translation>
+    </message>
+    <message>
+        <source>У края экрана</source>
+        <translation>At the screen edge</translation>
+    </message>
+    <message>
+        <source>Со стороны центра</source>
+        <translation>Toward the center</translation>
+    </message>
+    <message>
+        <source>Выключена</source>
+        <translation>Off</translation>
+    </message>
+    <message>
+        <source>Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки.</source>
+        <translation>While you scroll the history, a scale beside the column shows which day the cards are from.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1367,6 +1475,25 @@ Open SmartClip by double-clicking the tray icon and choose a different hotkey in
     <message>
         <source>Доступна новая версия %1. Нажмите, чтобы установить.</source>
         <translation>A new version %1 is available. Click to install.</translation>
+    </message>
+</context>
+<context>
+    <name>UpdateChecker</name>
+    <message>
+        <source>На GitHub пока нет опубликованной версии SmartClip.</source>
+        <translation>No published SmartClip version on GitHub yet.</translation>
+    </message>
+    <message>
+        <source>GitHub ответил ошибкой %1. Попробуйте позже.</source>
+        <translation>GitHub returned error %1. Please try again later.</translation>
+    </message>
+    <message>
+        <source>Нет связи с GitHub. Проверьте интернет и попробуйте ещё раз.</source>
+        <translation>Cannot reach GitHub. Check your internet connection and try again.</translation>
+    </message>
+    <message>
+        <source>В последнем релизе на GitHub нет файла установщика.</source>
+        <translation>The latest GitHub release has no installer file.</translation>
     </message>
 </context>
 </TS>

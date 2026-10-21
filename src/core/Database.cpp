@@ -15,6 +15,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 #include "Database.h"
+#include "Thumbs.h"        // Превью картинок: папка и удаление вместе с оригиналом
 #include "AppSettings.h"   // maxHistoryRecords(), autocleanDays() и т.д.
 
 // Qt-модули для работы с SQL:
@@ -43,6 +44,7 @@ bool Database::init()
     m_imagesPath = dataPath + "/images";
     if (!dir.exists(m_imagesPath))
         dir.mkpath(m_imagesPath);
+    Thumbs::setRoot(m_imagesPath + "/thumbs");  // Уменьшенные превью для карточек
 
     // Полный путь к файлу базы данных
     QString dbPath = dataPath + "/smartclip.db";
@@ -273,6 +275,7 @@ void Database::removeFileIfUnused(const QString &path)
     if (q.value(0).toInt() > 0) return;  // Файл ещё используется
 
     QFile::remove(path);
+    Thumbs::removeFor(path);  // И его превью
 }
 
 // ─── Закрытие соединения ──────────────────────────────────────────────────────
@@ -666,11 +669,15 @@ QList<PinItem> Database::getPins(const QString &folder)
         // • Пины без папки (folder = '') — всегда показываем
         // • Пины с last_used из любой папки — «недавно использованные»
         // CASE WHEN ... THEN ... ELSE ... END — SQL аналог тернарного оператора
-        // Сортировка: недавно использованные вверху по убыванию даты, затем по id DESC
+        // Сортировка: сверху — недавно использованные из папок (по дате), ниже —
+        // закрепы без папки в ручном порядке (перетаскивание), новые — вверху.
+        // Раньше и закрепы без папки сортировались по дате использования, и
+        // перетаскивание на «Все» не сохранялось.
         query.prepare(
             "SELECT id, folder, name, type, content, filepath, tags, last_used FROM pins "
             "WHERE folder = '' OR (folder != '' AND last_used IS NOT NULL) "
-            "ORDER BY CASE WHEN last_used IS NOT NULL THEN last_used ELSE '' END DESC, id DESC"
+            "ORDER BY CASE WHEN folder != '' THEN 0 ELSE 1 END, "
+            "CASE WHEN folder != '' THEN last_used ELSE '' END DESC, sort_order ASC, id DESC"
         );
     } else {
         // Конкретная папка:

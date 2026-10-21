@@ -14,7 +14,7 @@
 #include <QEasingCurve>
 #include <QtMath>
 #include <windows.h>
-#include "Anim.h"         // Настройки анимаций (окно 🖌)
+#include "Anim.h"         // Настройки анимаций (Настройки → Оформление)
 
 // ─── Конструктор ─────────────────────────────────────────────────────────────
 // Просмотрщик — ОТДЕЛЬНОЕ прозрачное окно поверх SmartClip, а не часть его
@@ -258,7 +258,7 @@ void ImageViewer::wheelEvent(QWheelEvent *event)
     m_zoomAnchor = event->position();
 
     if (!Anim::enabled(Anim::Kind::Viewer)) {
-        applyZoom(m_scaleTarget, m_zoomAnchor);  // «Классика» — сразу
+        applyZoom(m_scaleTarget, m_zoomAnchor);  // Анимации выключены в Windows — сразу
         update();
         return;
     }

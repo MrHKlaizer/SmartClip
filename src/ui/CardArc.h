@@ -14,8 +14,9 @@
 // ║  где карточку видно. Масштаб и прозрачность рисует тень-эффект карточки    ║
 // ║  (CardShadowEffect).                                                         ║
 // ║                                                                              ║
-// ║  Включается в окне 🖌: Прокрутка → «Дуга». «Плавная» — без этих эффектов,  ║
-// ║  «Классика» — обычная прокрутка Qt.                                         ║
+// ║  Настройки → Оформление: прокрутка «Дуга» / «Плавная» (без ухода по дуге), ║
+// ║  выезд карточки под мышью — отдельной галочкой.                             ║
+// ║  Анимации выключены в Windows — обычная прокрутка без эффектов.            ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 #pragma once
@@ -73,13 +74,29 @@ public:
         connect(&m_timer, &QTimer::timeout, this, [this]() { tick(); });
     }
 
-    // Пересчитать (например, после смены стиля прокрутки в окне 🖌)
-    void refresh() { if (!enabled()) setHovered(nullptr); apply(); }
+    // Пересчитать (например, после смены оформления в настройках)
+    void refresh() { if (!hoverOn()) setHovered(nullptr); apply(); }
 
-    static bool enabled()
+    // Плавная перестройка: карточки не прыгают на новые места, а доезжают до
+    // них (перетаскивание закрепа — соседние аккуратно расступаются)
+    void setReflowAnimated(bool on)
+    {
+        m_reflow = on;
+        if (on) startTimer();
+        else    { m_targets.clear(); apply(); }  // Выключили — сразу на места
+    }
+
+    // Уход крайних карточек по дуге — прокрутка «Дуга»
+    static bool arcOn()
     {
         return Anim::enabled(Anim::Kind::Scroll) && Anim::scrollStyle() == QLatin1String("arc");
     }
+    // Выезд карточки под мышью — своя галочка (Настройки → Оформление)
+    static bool hoverOn()
+    {
+        return Anim::enabled(Anim::Kind::Scroll) && AppSettings::get().cardHover();
+    }
+    static bool enabled() { return arcOn() || hoverOn(); }
 
 protected:
     bool eventFilter(QObject *obj, QEvent *e) override
@@ -94,7 +111,7 @@ protected:
             // Карточка: мышь зашла — выдвигаем; вышла — проверяем, не осталась ли
             // она над увеличенной частью карточки (иначе карточка дрожала бы)
             auto *w = static_cast<QWidget *>(obj);
-            if (t == QEvent::Enter && enabled()) setHovered(w);
+            if (t == QEvent::Enter && hoverOn()) setHovered(w);
             else if (t == QEvent::Leave) checkHover();
         } else if (obj == content && t == QEvent::MouseMove) {
             checkHover();
@@ -120,7 +137,7 @@ private:
             if (!w->property("arcHooked").toBool() && fxOf(w)) {
                 w->setProperty("arcHooked", true);
                 w->installEventFilter(this);
-                connect(w, &QObject::destroyed, this, [this, w]() { m_hover.remove(w); });
+                connect(w, &QObject::destroyed, this, [this, w]() { m_hover.remove(w); m_targets.remove(w); });
             }
         }
     }
@@ -169,6 +186,24 @@ private:
             ++it;
         }
         apply();
+
+        // Перестройка: каждая карточка доезжает до своего нового места
+        if (m_reflow) {
+            const qreal kr = 1.0 - qExp(-dt / (Anim::ms(Anim::Kind::Scroll, 60) / 1000.0));
+            for (auto it = m_targets.cbegin(); it != m_targets.cend(); ++it) {
+                QWidget *w = it.key();
+                const QPointF cur = w->pos(), target = it.value();
+                if (cur == target) continue;
+                QPointF next = cur + (target - cur) * kr;
+                if (qAbs(next.x() - target.x()) < 1 && qAbs(next.y() - target.y()) < 1) next = target;
+                w->move(next.toPoint());
+                moving = true;
+            }
+            if (!Anim::enabled(Anim::Kind::Scroll)) {  // Анимации выключены в Windows — сразу
+                for (auto it = m_targets.cbegin(); it != m_targets.cend(); ++it) it.key()->move(it.value());
+            }
+            moving = true;  // Пока идёт перетаскивание — следим постоянно
+        }
         if (!moving) m_timer.stop();
     }
 
@@ -177,6 +212,7 @@ private:
         QWidget *content = m_area->widget();
         if (!content) return;
         const bool on = enabled();
+        const bool arc = arcOn();
         const qreal vh = m_area->viewport()->height();
         if (vh <= 0) return;
         const qreal zone = qMin(vh * 0.22, 260.0);  // Где у края начинается уход по дуге
@@ -200,9 +236,12 @@ private:
             const QPoint base = baseV.toPoint();
             CardShadowEffect *fx = fxOf(w);
 
+            // «Приподнятая» карточка (её тащат или только что отпустили):
+            // полупрозрачная и чуть меньше (lift: 0 — обычная, 1 — поднята)
+            const qreal lift = w->property("lift").toReal();
             if (!on) {
-                if (w->pos() != base) w->move(base);
-                if (fx) fx->setLook(1.0, 1.0);
+                place(w, base);
+                if (fx) fx->setLook(1.0 - 0.05 * lift, 1.0 - 0.35 * lift);
                 continue;
             }
 
@@ -212,7 +251,9 @@ private:
             // Уход по дуге у верхнего/нижнего края (0 — карточка стоит ровно)
             qreal e = 0;
             const qreal top = content->y() + y, hh = w->height();
-            if (m_byCrossing) {
+            if (!arc) {
+                // «Плавная» прокрутка — крайние карточки стоят ровно
+            } else if (m_byCrossing) {
                 // Какая доля карточки уже ушла за линию у края. Пока карточка
                 // видна целиком — стоит ровно; высокая уходит так же плавно,
                 // как низкая, а не прыгает вбок целым блоком
@@ -234,15 +275,25 @@ private:
 
             const qreal dx = -m_toCenter * m_edge * e + m_toCenter * m_slide * h;
             const QPoint pos(qRound(base.x() + dx), qRound(y));
-            if (w->pos() != pos) w->move(pos);
-            if (fx) fx->setLook((1.0 + GROW * h) * (1.0 - 0.12 * qMin(e, 1.0)),
-                                qMax(0.25, 1.0 - 0.6 * qMin(e, 1.0)));
+            place(w, pos);
+            if (fx) fx->setLook((1.0 + GROW * h) * (1.0 - 0.12 * qMin(e, 1.0)) * (1.0 - 0.05 * lift),
+                                qMax(0.25, 1.0 - 0.6 * qMin(e, 1.0)) * (1.0 - 0.35 * lift));
 
             // Увеличенная карточка раздвигает те, что ниже
             push += GROW * h * w->height();
             Q_UNUSED(zone)
         }
     }
+
+    // Поставить карточку на место: сразу или (при перестройке) через tick()
+    void place(QWidget *w, const QPoint &pos)
+    {
+        if (m_reflow) m_targets.insert(w, pos);
+        else if (w->pos() != pos) w->move(pos);
+    }
+
+    bool              m_reflow = false;  // Плавная перестройка включена
+    QHash<QWidget *, QPoint> m_targets;   // Куда доезжает каждая карточка
 
     QScrollArea      *m_area;
     ArcColumnLayout  *m_layout;

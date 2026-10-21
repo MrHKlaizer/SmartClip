@@ -13,6 +13,9 @@ add_executable(Installer WIN32
     Payload.h
     installer.rc
 )
+# Иконка вшита через .rc — пересобирать установщик, когда меняется сама иконка
+set_source_files_properties(installer.rc PROPERTIES
+    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../assets/icons/smartclip.ico)
 
 target_link_libraries(Installer PRIVATE
     comctl32      # TaskDialog, InitCommonControls, прогресс-бар

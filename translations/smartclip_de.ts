@@ -697,6 +697,62 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
         <source>Наверх</source>
         <translation>Nach oben</translation>
     </message>
+    <message>
+        <source>Скорость каждой анимации настраивается отдельно: левее — медленнее, правее — быстрее.</source>
+        <translation>Jede Animation hat ihre eigene Geschwindigkeit: links langsamer, rechts schneller.</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: темы оформления.</source>
+        <translation>Demnächst: Designs.</translation>
+    </message>
+    <message>
+        <source>«Дуга» — крайние карточки уходят за край по дуге, «Плавная» — без дуги</source>
+        <translation>„Bogen“ — Randkarten gleiten im Bogen über den Rand, „Weich“ — ohne Bogen</translation>
+    </message>
+    <message>
+        <source>Связь прервалась, пробую ещё раз...</source>
+        <translation>Verbindung unterbrochen, neuer Versuch...</translation>
+    </message>
+    <message>
+        <source>Связь прервалась при скачивании. Проверьте интернет и нажмите «Повторить».</source>
+        <translation>Die Verbindung ist beim Herunterladen abgebrochen. Internet prüfen und „Wiederholen“ drücken.</translation>
+    </message>
+    <message>
+        <source>Не удалось скачать обновление (ошибка %1). Попробуйте позже.</source>
+        <translation>Update konnte nicht heruntergeladen werden (Fehler %1). Bitte später erneut versuchen.</translation>
+    </message>
+    <message>
+        <source>SmartClip %1</source>
+        <translation>SmartClip %1</translation>
+    </message>
+    <message>
+        <source>Большое обновление</source>
+        <translation>Großes Update</translation>
+    </message>
+    <message>
+        <source>Небольшое обновление</source>
+        <translation>Kleines Update</translation>
+    </message>
+    <message>
+        <source>у вас сейчас %1</source>
+        <translation>installiert: %1</translation>
+    </message>
+    <message>
+        <source>Что нового</source>
+        <translation>Neuigkeiten</translation>
+    </message>
+    <message>
+        <source>Посмотреть, что нового, на GitHub</source>
+        <translation>Neuigkeiten auf GitHub ansehen</translation>
+    </message>
+    <message>
+        <source>Скачать и установить</source>
+        <translation>Herunterladen und installieren</translation>
+    </message>
+    <message>
+        <source>Настройки — доступно обновление %1</source>
+        <translation>Einstellungen — Update %1 verfügbar</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1126,6 +1182,58 @@ Bei Überschreitung werden die ältesten Einträge dieser Art gelöscht.</transl
         <source>Не удалось включить: Windows не дала разрешение.</source>
         <translation>Aktivierung fehlgeschlagen: Windows hat die Erlaubnis nicht erteilt.</translation>
     </message>
+    <message>
+        <source>Оформление</source>
+        <translation>Darstellung</translation>
+    </message>
+    <message>
+        <source>Анимации</source>
+        <translation>Animationen</translation>
+    </message>
+    <message>
+        <source>Карточки</source>
+        <translation>Karten</translation>
+    </message>
+    <message>
+        <source>Карточка выезжает и увеличивается при наведении</source>
+        <translation>Karte fährt beim Überfahren heraus und wird größer</translation>
+    </message>
+    <message>
+        <source>Карточка под мышью плавно выдвигается к центру экрана и чуть увеличивается, раздвигая соседние.</source>
+        <translation>Die Karte unter der Maus gleitet zur Bildschirmmitte und wird etwas größer, die Nachbarn rücken auseinander.</translation>
+    </message>
+    <message>
+        <source>Что нового?</source>
+        <translation>Was ist neu?</translation>
+    </message>
+    <message>
+        <source>Доступно большое обновление — SmartClip %1</source>
+        <translation>Großes Update verfügbar — SmartClip %1</translation>
+    </message>
+    <message>
+        <source>Доступно обновление %1 — исправления и улучшения</source>
+        <translation>Update %1 verfügbar — Fehlerbehebungen und Verbesserungen</translation>
+    </message>
+    <message>
+        <source>Шкала дат при прокрутке:</source>
+        <translation>Datumsskala beim Scrollen:</translation>
+    </message>
+    <message>
+        <source>У края экрана</source>
+        <translation>Am Bildschirmrand</translation>
+    </message>
+    <message>
+        <source>Со стороны центра</source>
+        <translation>Zur Mitte hin</translation>
+    </message>
+    <message>
+        <source>Выключена</source>
+        <translation>Aus</translation>
+    </message>
+    <message>
+        <source>Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки.</source>
+        <translation>Beim Scrollen im Verlauf zeigt eine Skala neben der Spalte, von welchem Tag die Karten stammen.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1367,6 +1475,25 @@ Jetzt neu starten?</translation>
     <message>
         <source>Доступна новая версия %1. Нажмите, чтобы установить.</source>
         <translation>Neue Version %1 verfügbar. Zum Installieren klicken.</translation>
+    </message>
+</context>
+<context>
+    <name>UpdateChecker</name>
+    <message>
+        <source>На GitHub пока нет опубликованной версии SmartClip.</source>
+        <translation>Auf GitHub gibt es noch keine veröffentlichte SmartClip-Version.</translation>
+    </message>
+    <message>
+        <source>GitHub ответил ошибкой %1. Попробуйте позже.</source>
+        <translation>GitHub hat mit Fehler %1 geantwortet. Bitte später erneut versuchen.</translation>
+    </message>
+    <message>
+        <source>Нет связи с GitHub. Проверьте интернет и попробуйте ещё раз.</source>
+        <translation>GitHub ist nicht erreichbar. Bitte Internetverbindung prüfen und erneut versuchen.</translation>
+    </message>
+    <message>
+        <source>В последнем релизе на GitHub нет файла установщика.</source>
+        <translation>Das neueste GitHub-Release enthält keine Installationsdatei.</translation>
     </message>
 </context>
 </TS>

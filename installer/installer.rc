@@ -2,3 +2,6 @@
 
 // UAC: требуем права администратора
 1 RT_MANIFEST "installer.manifest"
+
+// Иконка установщика (и деинсталлятора) — та же, что у SmartClip
+IDI_ICON1 ICON "../assets/icons/smartclip.ico"

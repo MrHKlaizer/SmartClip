@@ -210,7 +210,6 @@ private:
     // ─── Профили быстрой вставки ─────────────────────────────────────────────
     void showProfilesMenu();    // Выпадающее меню со списком профилей
     void showProfileManager();  // Диалог создания/редактирования/удаления профилей
-    void showAppearanceSettings(); // Окно «Оформление» (кнопка 🖌): стиль и скорость анимаций
     void closeAllOnDeactivate();   // Клик мимо при открытом окне/меню — закрыть всё
     QList<Anim::Piece> buildOpenPieces(); // Куски окна для анимации сборки/ухода
 
@@ -248,6 +247,8 @@ private:
     class SmoothScroller *m_rightScroller = nullptr; // ...и правой
     class CardArc        *m_leftArc  = nullptr;      // Прокрутка «Дуга» левой колонки
     class CardArc        *m_rightArc = nullptr;      // ...и правой
+    class DateRuler      *m_leftRuler  = nullptr;    // Шкала дат левой колонки
+    class DateRuler      *m_rightRuler = nullptr;    // ...и правой
     bool         m_hidePending = false;  // Уход начался, окно спрячется через пару кадров
     int          m_hideSeq     = 0;      // Счётчик: отменяет устаревшее отложенное скрытие
     bool         m_historyDirty = true;  // true = история устарела, нужно перезагрузить при показе
@@ -296,6 +297,14 @@ private:
     void removeInputHooks();
     void finishPaste();        // Спрятаться и вставить (Ctrl+V) в окно, где работал пользователь
 
+    // Перетаскивание закрепов (карточка едет за мышью, соседи расступаются)
+    void beginCardDrag(const QPoint &globalPos);
+    class CardArc *arcFor(QVBoxLayout *layout) const;
+    class QScrollArea *scrollFor(QVBoxLayout *layout) const;
+    QPointer<QWidget> m_dragPlaceholder;        // Пустое место, куда встанет карточка
+    QPoint            m_dragGrab;               // За какую точку карточку взяли
+    class QTimer     *m_dragScrollTimer = nullptr; // Автопрокрутка у края колонки
+
     // ─── Виджеты интерфейса ───────────────────────────────────────────────────
     QVBoxLayout *m_leftLayout;           // Лейаут левой колонки (карточки)
     QVBoxLayout *m_rightLayout;          // Лейаут правой колонки
@@ -311,7 +320,6 @@ private:
     SmartButton *m_pinsBtn     = nullptr; // Кнопка «Закрепы»
     SmartButton *m_editBtn     = nullptr; // Кнопка мультивыбора (только в режиме Закрепов)
     SmartButton *m_profilesBtn = nullptr; // Кнопка «Профили»
-    SmartButton *m_designBtn   = nullptr; // Кнопка 🖌 — оформление и анимации
     QWidget     *m_viewPill    = nullptr; // «Пилюля» активной вкладки История/Закрепы
     SmartButton *m_sortBtn     = nullptr; // Кнопка сортировки
     SmartButton *m_clearBtn    = nullptr; // Кнопка очистки истории

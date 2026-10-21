@@ -11,7 +11,7 @@
 // ║  Перетяжку показываем, сдвигая содержимое колонки (полоса прокрутки сама   ║
 // ║  за границы выйти не может).                                                 ║
 // ║                                                                              ║
-// ║  «Классика» в окне 🖌 — обычная прокрутка Qt, этот класс не вмешивается.    ║
+// ║  Анимации выключены в Windows — обычная прокрутка Qt, класс не вмешивается. ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 #pragma once
@@ -55,7 +55,7 @@ public:
             content->move(content->x(), -sb->value());
     }
 
-    // Плавно доехать до позиции (кнопка «наверх»). В «Классике» — сразу.
+    // Плавно доехать до позиции (кнопка «наверх»). Без анимаций — сразу.
     void scrollTo(qreal target)
     {
         QScrollBar *sb = m_area->verticalScrollBar();
@@ -76,7 +76,7 @@ protected:
         if (e->type() != QEvent::Wheel || obj != m_area->viewport())
             return false;
         if (!Anim::enabled(Anim::Kind::Scroll))
-            return false;  // «Классика» — обычная прокрутка Qt
+            return false;  // Анимации выключены в Windows — обычная прокрутка Qt
 
         auto *we = static_cast<QWheelEvent *>(e);
         QScrollBar *sb = m_area->verticalScrollBar();
@@ -135,7 +135,7 @@ private:
         m_lastTick = now;
 
         // Экспоненциальное догоняние цели. tau — «время реакции»: меньше =
-        // резвее. Регулируется ползунком скорости прокрутки в окне 🖌.
+        // резвее. Регулируется ползунком скорости прокрутки (Настройки → Оформление).
         const qreal tau = Anim::ms(Anim::Kind::Scroll, 110) / 1000.0;
         const qreal k = 1.0 - qExp(-dt / tau);
         const qreal prev = m_pos;

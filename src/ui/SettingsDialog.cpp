@@ -47,6 +47,8 @@
 #include <QLineEdit>            // Однострочное текстовое поле
 #include <QListWidget>          // Список элементов
 #include <QScrollArea>
+#include <QIcon>
+#include <QSlider>
 #include <QScreen>          // Прокручиваемая область
 #include <QAbstractButton>      // Базовый класс для SdCloseBtn
 #include <QMouseEvent>          // Событие мыши (для перетаскивания диалога)
@@ -680,7 +682,9 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     setAttribute(Qt::WA_TranslucentBackground);
     setWindowTitle(tr("Настройки SmartClip"));
     m_anim = new Anim::DialogAnimator(this);  // Появление/уход с анимацией
-    setMinimumSize(780, 620);  // Шире: слева меню разделов
+    // Разделы прокручиваются — окну хватает и маленького экрана
+    // (ноутбук 1366×768 при масштабе 125% — около 600 px по высоте)
+    setMinimumSize(700, 460);
 
     // ── Глобальный QSS-стиль для всего диалога ───────────────────────────────
     // QSS (Qt Style Sheet) — это CSS для Qt-виджетов.
@@ -887,28 +891,164 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     scaleLayout->addWidget(scaleCombo);
     scaleLayout->addWidget(scaleHint);
 
-    // ── Внешний вид ───────────────────────────────────────────────────────────
-    // solidPanels — тёмный непрозрачный фон за колонками.
-    auto *uiGroup  = new QGroupBox(tr("Внешний вид"), sysTab);
+    // Добавляем группы на вкладку и растягиваем (addStretch → свободное место снизу)
+    sysLayout->addWidget(hkGroup);
+    sysLayout->addWidget(startGroup);
+    sysLayout->addWidget(langGroup);
+    sysLayout->addWidget(scaleGroup);
+    sysLayout->addStretch();
+
+    tabs->addTab(sysTab, tr("Система"), QChar(0xE770));
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка 2: Оформление — анимации, карточки, затемнение
+    //  (раньше — отдельное окно по кнопке 🖌)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Названия анимаций и часть подписей уже переведены в контексте MainWindow
+    auto mw = [](const char *s) { return QCoreApplication::translate("MainWindow", s); };
+    const QString hintCss = "color: rgba(255,255,255,100); font-size: 11px;";
+    auto *lookTab    = new QWidget();
+    auto *lookLayout = new QVBoxLayout(lookTab);
+    lookLayout->setContentsMargins(14, 14, 14, 14);
+    lookLayout->setSpacing(12);
+
+    // ── Анимации: у каждой своя скорость, у прокрутки — ещё и вид ────────────
+    auto *animGroup  = new QGroupBox(tr("Анимации"), lookTab);
+    auto *animLayout = new QVBoxLayout(animGroup);
+    animLayout->setSpacing(4);
+    auto *animIntro = new QLabel(mw("Скорость каждой анимации настраивается отдельно: "
+                                    "левее — медленнее, правее — быстрее."), animGroup);
+    animIntro->setWordWrap(true);
+    animIntro->setStyleSheet(hintCss);
+    animLayout->addWidget(animIntro);
+
+    struct AnimRow { QString key; QComboBox *style; QSlider *speed; };  // style — только у прокрутки
+    QList<AnimRow> animRows;
+    const QString sliderCss =
+        "QSlider::groove:horizontal{height:4px;background:rgba(255,255,255,30);border-radius:2px;}"
+        "QSlider::sub-page:horizontal{background:rgba(160,200,255,170);border-radius:2px;}"
+        "QSlider::handle:horizontal{width:14px;height:14px;margin:-5px 0;border-radius:7px;"
+        "background:#e0e8ff;}";
+    for (const Anim::KindInfo &info : Anim::kinds()) {
+        const QString key = QString::fromLatin1(info.key);
+        auto *title = new QLabel(mw(info.title), animGroup);
+        title->setStyleSheet("color:#e0e0f0;font-size:13px;font-weight:600;");
+        auto *hint = new QLabel(mw(info.hint), animGroup);
+        hint->setWordWrap(true);
+        hint->setStyleSheet(hintCss);
+
+        QComboBox *style = nullptr;
+        if (info.kind == Anim::Kind::Scroll) {
+            style = new QComboBox(animGroup);
+            style->addItem(mw("Дуга"), QStringLiteral("arc"));
+            style->addItem(mw("Плавная"), QStringLiteral("smooth"));
+            style->setCurrentIndex(qMax(0, style->findData(AppSettings::get().scrollStyle())));
+            style->setFixedWidth(130);
+        }
+        auto *speed = new QSlider(Qt::Horizontal, animGroup);
+        speed->setRange(50, 200);
+        speed->setSingleStep(10);
+        speed->setPageStep(25);
+        speed->setValue(AppSettings::get().animSpeed(key));
+        speed->setStyleSheet(sliderCss);
+        speed->setToolTip(mw("Скорость: левее — медленнее, правее — быстрее"));
+        auto *speedLbl = new QLabel(animGroup);
+        speedLbl->setStyleSheet(hintCss);
+        speedLbl->setFixedWidth(42);
+        speedLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        auto showSpeed = [speedLbl](int v) { speedLbl->setText(QString("%1%").arg(v)); };
+        showSpeed(speed->value());
+        connect(speed, &QSlider::valueChanged, this, showSpeed);
+
+        auto *row = new QHBoxLayout();
+        row->setSpacing(12);
+        if (style) row->addWidget(style);
+        row->addWidget(speed, 1);
+        row->addWidget(speedLbl);
+        animLayout->addSpacing(8);
+        animLayout->addWidget(title);
+        animLayout->addWidget(hint);
+        animLayout->addLayout(row);
+        animRows << AnimRow{ key, style, speed };
+    }
+    // Анимации запрещены самой Windows — честно об этом говорим
+    if (!Anim::systemAllows()) {
+        auto *sysLbl = new QLabel(
+            mw("⚠ В Windows выключена анимация интерфейса, поэтому SmartClip тоже "
+               "работает без неё.\nВключить: Параметры → Специальные возможности → "
+               "Визуальные эффекты → Эффекты анимации."), animGroup);
+        sysLbl->setWordWrap(true);
+        sysLbl->setStyleSheet("color:#ffcc66;font-size:11px;");
+        animLayout->addWidget(sysLbl);
+    }
+    // «По умолчанию» — прокрутка «Дуга» и везде скорость 100%
+    auto *animResetBtn = new QPushButton(mw("По умолчанию"), animGroup);
+    animResetBtn->setCursor(Qt::PointingHandCursor);
+    connect(animResetBtn, &QPushButton::clicked, this, [animRows]() {
+        for (const AnimRow &r : animRows) {
+            if (r.style) r.style->setCurrentIndex(0);
+            r.speed->setValue(100);
+        }
+    });
+    auto *resetRow = new QHBoxLayout();
+    resetRow->addStretch();
+    resetRow->addWidget(animResetBtn);
+    animLayout->addSpacing(8);
+    animLayout->addLayout(resetRow);
+
+    // ── Карточки ──────────────────────────────────────────────────────────────
+    auto *cardGroup  = new QGroupBox(tr("Карточки"), lookTab);
+    auto *cardLayout = new QVBoxLayout(cardGroup);
+    auto *hoverCheck = new SdCheckBox(tr("Карточка выезжает и увеличивается при наведении"), cardGroup);
+    hoverCheck->setChecked(AppSettings::get().cardHover());
+    auto *hoverHint = new QLabel(
+        tr("Карточка под мышью плавно выдвигается к центру экрана и чуть увеличивается, "
+           "раздвигая соседние."), cardGroup);
+    hoverHint->setWordWrap(true);
+    hoverHint->setStyleSheet(hintCss);
+    cardLayout->addWidget(hoverCheck);
+    cardLayout->addWidget(hoverHint);
+
+    // Шкала дат сбоку колонки при прокрутке
+    auto *rulerRow = new QHBoxLayout();
+    auto *rulerLbl = new QLabel(tr("Шкала дат при прокрутке:"), cardGroup);
+    auto *rulerCombo = new QComboBox(cardGroup);
+    rulerCombo->addItem(tr("У края экрана"), QStringLiteral("outer"));
+    rulerCombo->addItem(tr("Со стороны центра"), QStringLiteral("inner"));
+    rulerCombo->addItem(tr("Выключена"), QStringLiteral("off"));
+    rulerCombo->setCurrentIndex(qMax(0, rulerCombo->findData(AppSettings::get().dateRuler())));
+    rulerRow->addWidget(rulerLbl);
+    rulerRow->addWidget(rulerCombo);
+    rulerRow->addStretch();
+    auto *rulerHint = new QLabel(
+        tr("Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки."), cardGroup);
+    rulerHint->setWordWrap(true);
+    rulerHint->setStyleSheet(hintCss);
+    cardLayout->addSpacing(8);
+    cardLayout->addLayout(rulerRow);
+    cardLayout->addWidget(rulerHint);
+
+    // ── Затемнение (solidPanels — тёмный фон за колонками) ──────────────────
+    auto *uiGroup  = new QGroupBox(tr("Внешний вид"), lookTab);
     auto *uiLayout = new QVBoxLayout(uiGroup);
     auto *blurCheck = new SdCheckBox(tr("Тёмный фон за колонками"), uiGroup);
     blurCheck->setChecked(AppSettings::get().solidPanels());
     auto *blurHint = new QLabel(
         tr("Добавляет тёмную полупрозрачную подложку за левой, правой колонками и панелями.\nДля тех, кто предпочитает непрозрачный интерфейс."), uiGroup);
     blurHint->setWordWrap(true);
-    blurHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
+    blurHint->setStyleSheet(hintCss);
     uiLayout->addWidget(blurCheck);
     uiLayout->addWidget(blurHint);
 
-    // Добавляем группы на вкладку и растягиваем (addStretch → свободное место снизу)
-    sysLayout->addWidget(hkGroup);
-    sysLayout->addWidget(startGroup);
-    sysLayout->addWidget(langGroup);
-    sysLayout->addWidget(scaleGroup);
-    sysLayout->addWidget(uiGroup);
-    sysLayout->addStretch();
+    auto *soonLbl = new QLabel(mw("Скоро здесь: темы оформления."), lookTab);
+    soonLbl->setStyleSheet(hintCss);
 
-    tabs->addTab(sysTab, tr("Система"), QChar(0xE770));
+    lookLayout->addWidget(animGroup);
+    lookLayout->addWidget(cardGroup);
+    lookLayout->addWidget(uiGroup);
+    lookLayout->addWidget(soonLbl);
+    lookLayout->addStretch();
+    tabs->addTab(lookTab, tr("Оформление"), QChar(0xE771));  // Кисточка
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Вкладка 2: История
@@ -1393,33 +1533,35 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     // ── Плашка обновления (скрыта до setPendingUpdate) ────────────────────────
     // Показывается когда UpdateChecker нашёл новую версию.
     // m_updateBanner — хранится в h-файле чтобы setPendingUpdate() мог к ней обратиться.
-    m_updateBanner = new QWidget(betaTab);
+    m_updateBanner = new QWidget(this);
+    m_updateBanner->setObjectName("updateBanner");
     m_updateBanner->setStyleSheet(
-        "background:rgba(255,200,50,18);border:1px solid rgba(255,200,50,80);"
-        "border-radius:8px;");
+        "#updateBanner{background:rgba(120,190,255,22);border:1px solid rgba(120,190,255,90);"
+        "border-radius:10px;}");
     m_updateBanner->hide();  // Скрыта до получения информации об обновлении
 
     auto *bannerRow  = new QHBoxLayout(m_updateBanner);
     bannerRow->setContentsMargins(14, 10, 14, 10);
     bannerRow->setSpacing(10);
 
-    auto *bannerIcon = new QLabel("🆙", m_updateBanner);
-    bannerIcon->setStyleSheet("background:transparent;font-size:18px;");
+    auto *bannerIcon = new QLabel(QString(QChar(0xE896)), m_updateBanner);  // Стрелка «скачать»
+    bannerIcon->setFont(QFont(SmartButton::iconFontFamily()));
+    bannerIcon->setStyleSheet("background:transparent; color:#cfe6ff; font-size:16px;");
 
     // bannerText имеет objectName — по нему найдём этот QLabel в setPendingUpdate()
     // через findChild<QLabel*>("bannerText")
     auto *bannerText = new QLabel(m_updateBanner);
     bannerText->setObjectName("bannerText");
     bannerText->setStyleSheet(
-        "background:transparent;color:rgba(255,220,100,220);font-size:12px;");
+        "background:transparent;color:rgba(220,235,255,235);font-size:12px;");
     bannerText->setWordWrap(true);
 
-    auto *bannerBtn = new QPushButton(tr("Обновить"), m_updateBanner);
-    bannerBtn->setFixedWidth(90);
+    auto *bannerBtn = new QPushButton(tr("Что нового?"), m_updateBanner);
+    bannerBtn->setCursor(Qt::PointingHandCursor);
     bannerBtn->setStyleSheet(
-        "QPushButton{background:rgba(255,200,50,200);color:#1a1200;"
-        "border:none;border-radius:5px;padding:5px 10px;font-weight:bold;font-size:12px;}"
-        "QPushButton:hover{background:rgba(255,220,80,230);}");
+        "QPushButton{background:rgba(120,190,255,220);color:#0e1a2c;"
+        "border:none;border-radius:6px;padding:6px 14px;font-weight:600;font-size:12px;}"
+        "QPushButton:hover{background:rgba(150,205,255,240);}");
 
     bannerRow->addWidget(bannerIcon);
     bannerRow->addWidget(bannerText, 1);
@@ -1443,7 +1585,6 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     aboutRow->addStretch();
     aboutRow->addWidget(checkUpdBtn);
     aboutLayout->addLayout(aboutRow);
-    aboutLayout->addWidget(m_updateBanner);
 
     betaLayout->addWidget(betaHintLabel);
     betaLayout->addWidget(videoGroup);
@@ -1522,6 +1663,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     btnBox->addWidget(cancelBtn);
     btnBox->addWidget(saveBtn);
 
+    // Плашка «Доступно обновление» — вверху окна, видна из любого раздела
+    bodyLayout->addWidget(m_updateBanner);
     bodyLayout->addWidget(tabs, 1);
     bodyLayout->addLayout(btnBox);
 
@@ -1562,8 +1705,14 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             }
         }
 
-        // Внешний вид
+        // Оформление
         AppSettings::get().setSolidPanels(blurCheck->isChecked());
+        AppSettings::get().setCardHover(hoverCheck->isChecked());
+        AppSettings::get().setDateRuler(rulerCombo->currentData().toString());
+        for (const AnimRow &r : animRows) {
+            if (r.style) AppSettings::get().setScrollStyle(r.style->currentData().toString());
+            AppSettings::get().setAnimSpeed(r.key, r.speed->value());
+        }
 
         // История
         AppSettings::get().setMaxTexts(maxTextsSpin->value());
@@ -1642,7 +1791,9 @@ void SettingsDialog::setPendingUpdate(const QString &version, const QString &url
     // findChild — ищем QLabel с objectName == "bannerText" среди дочерних виджетов
     auto *lbl = m_updateBanner->findChild<QLabel*>("bannerText");
     if (lbl)
-        lbl->setText(tr("Доступна новая версия %1 — нажми «Обновить» чтобы установить.").arg(version));
+        lbl->setText(UpdateChecker::isMajorUpdate(version)
+            ? tr("Доступно большое обновление — SmartClip %1").arg(version)
+            : tr("Доступно обновление %1 — исправления и улучшения").arg(version));
 
     m_updateBanner->show();  // Показываем ранее скрытую плашку
 }

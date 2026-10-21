@@ -697,6 +697,62 @@
         <source>Наверх</source>
         <translation>Нагору</translation>
     </message>
+    <message>
+        <source>Скорость каждой анимации настраивается отдельно: левее — медленнее, правее — быстрее.</source>
+        <translation>Швидкість кожної анімації налаштовується окремо: лівіше — повільніше, правіше — швидше.</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: темы оформления.</source>
+        <translation>Незабаром тут: теми оформлення.</translation>
+    </message>
+    <message>
+        <source>«Дуга» — крайние карточки уходят за край по дуге, «Плавная» — без дуги</source>
+        <translation>«Дуга» — крайні картки йдуть за край по дузі, «Плавна» — без дуги</translation>
+    </message>
+    <message>
+        <source>Связь прервалась, пробую ещё раз...</source>
+        <translation>Зв’язок перервався, пробую ще раз...</translation>
+    </message>
+    <message>
+        <source>Связь прервалась при скачивании. Проверьте интернет и нажмите «Повторить».</source>
+        <translation>Зв’язок перервався під час завантаження. Перевірте інтернет і натисніть «Повторити».</translation>
+    </message>
+    <message>
+        <source>Не удалось скачать обновление (ошибка %1). Попробуйте позже.</source>
+        <translation>Не вдалося завантажити оновлення (помилка %1). Спробуйте пізніше.</translation>
+    </message>
+    <message>
+        <source>SmartClip %1</source>
+        <translation>SmartClip %1</translation>
+    </message>
+    <message>
+        <source>Большое обновление</source>
+        <translation>Велике оновлення</translation>
+    </message>
+    <message>
+        <source>Небольшое обновление</source>
+        <translation>Невелике оновлення</translation>
+    </message>
+    <message>
+        <source>у вас сейчас %1</source>
+        <translation>у вас зараз %1</translation>
+    </message>
+    <message>
+        <source>Что нового</source>
+        <translation>Що нового</translation>
+    </message>
+    <message>
+        <source>Посмотреть, что нового, на GitHub</source>
+        <translation>Подивитися, що нового, на GitHub</translation>
+    </message>
+    <message>
+        <source>Скачать и установить</source>
+        <translation>Завантажити та встановити</translation>
+    </message>
+    <message>
+        <source>Настройки — доступно обновление %1</source>
+        <translation>Налаштування — доступне оновлення %1</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1126,6 +1182,58 @@
         <source>Не удалось включить: Windows не дала разрешение.</source>
         <translation>Не вдалося увімкнути: Windows не надала дозвіл.</translation>
     </message>
+    <message>
+        <source>Оформление</source>
+        <translation>Оформлення</translation>
+    </message>
+    <message>
+        <source>Анимации</source>
+        <translation>Анімації</translation>
+    </message>
+    <message>
+        <source>Карточки</source>
+        <translation>Картки</translation>
+    </message>
+    <message>
+        <source>Карточка выезжает и увеличивается при наведении</source>
+        <translation>Картка висувається та збільшується при наведенні</translation>
+    </message>
+    <message>
+        <source>Карточка под мышью плавно выдвигается к центру экрана и чуть увеличивается, раздвигая соседние.</source>
+        <translation>Картка під мишею плавно висувається до центру екрана й трохи збільшується, розсуваючи сусідні.</translation>
+    </message>
+    <message>
+        <source>Что нового?</source>
+        <translation>Що нового?</translation>
+    </message>
+    <message>
+        <source>Доступно большое обновление — SmartClip %1</source>
+        <translation>Доступне велике оновлення — SmartClip %1</translation>
+    </message>
+    <message>
+        <source>Доступно обновление %1 — исправления и улучшения</source>
+        <translation>Доступне оновлення %1 — виправлення та покращення</translation>
+    </message>
+    <message>
+        <source>Шкала дат при прокрутке:</source>
+        <translation>Шкала дат під час прокрутки:</translation>
+    </message>
+    <message>
+        <source>У края экрана</source>
+        <translation>Біля краю екрана</translation>
+    </message>
+    <message>
+        <source>Со стороны центра</source>
+        <translation>З боку центру</translation>
+    </message>
+    <message>
+        <source>Выключена</source>
+        <translation>Вимкнена</translation>
+    </message>
+    <message>
+        <source>Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки.</source>
+        <translation>Поки гортаєш історію, збоку колонки видно, до якого дня належать картки.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1367,6 +1475,25 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
     <message>
         <source>Доступна новая версия %1. Нажмите, чтобы установить.</source>
         <translation>Доступна нова версія %1. Натисніть, щоб встановити.</translation>
+    </message>
+</context>
+<context>
+    <name>UpdateChecker</name>
+    <message>
+        <source>На GitHub пока нет опубликованной версии SmartClip.</source>
+        <translation>На GitHub поки немає опублікованої версії SmartClip.</translation>
+    </message>
+    <message>
+        <source>GitHub ответил ошибкой %1. Попробуйте позже.</source>
+        <translation>GitHub відповів помилкою %1. Спробуйте пізніше.</translation>
+    </message>
+    <message>
+        <source>Нет связи с GitHub. Проверьте интернет и попробуйте ещё раз.</source>
+        <translation>Немає зв’язку з GitHub. Перевірте інтернет і спробуйте ще раз.</translation>
+    </message>
+    <message>
+        <source>В последнем релизе на GitHub нет файла установщика.</source>
+        <translation>В останньому релізі на GitHub немає файлу інсталятора.</translation>
     </message>
 </context>
 </TS>

@@ -10,13 +10,10 @@ project(SmartClip VERSION 2.0 LANGUAGES CXX)
 add_compile_definitions(SMARTCLIP_VERSION="${PROJECT_VERSION}")
 file(WRITE "${CMAKE_BINARY_DIR}/version.txt" "${PROJECT_VERSION}")
 
-# Тег для GitHub — ВСЕГДА из трёх чисел (v2.0.0, а не v2.0): старые версии
-# SmartClip (1.0.2–1.0.4) понимают только формат X.Y.Z и иначе не увидят обновление.
-if("${PROJECT_VERSION_PATCH}" STREQUAL "")
-    set(SMARTCLIP_TAG "v${PROJECT_VERSION}.0")
-else()
-    set(SMARTCLIP_TAG "v${PROJECT_VERSION}")
-endif()
+# Тег для GitHub — как номер версии: v2.0, v2.0.1. Начиная с 2.0 SmartClip
+# понимает и короткие номера (2.0 = 2.0.0). Версии 1.0.x поддерживать не нужно:
+# 2.0 — отправная точка, её ставят заново.
+set(SMARTCLIP_TAG "v${PROJECT_VERSION}")
 file(WRITE "${CMAKE_BINARY_DIR}/tag.txt" "${SMARTCLIP_TAG}")
 
 # Стандарт C++17 — обязательно, используем современные фичи
@@ -60,6 +57,7 @@ set(SOURCES
     src/core/BugReporter.h
     src/core/BugReporter.cpp
     src/core/Backup.h
+    src/core/Thumbs.h
     src/core/AdminMode.h
     src/core/Backup.cpp
     src/core/AdminMode.cpp
@@ -74,6 +72,7 @@ set(SOURCES
     src/ui/CardArc.h
     src/ui/CardShadow.h
     src/ui/ScrollTopButton.h
+    src/ui/DateRuler.h
     src/ui/NavTabs.h
     src/ui/HotkeyEdit.h
     src/ui/ImageViewer.h
@@ -85,6 +84,9 @@ set(SOURCES
 # Windows resource файл — иконка .exe в Проводнике
 if(WIN32)
     list(APPEND SOURCES assets/app.rc)
+    # Иконка вшита через .rc — пересобирать exe, когда меняется сама иконка
+    set_source_files_properties(assets/app.rc PROPERTIES
+        OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/smartclip.ico)
 endif()
 
 # Создаём исполняемый файл
@@ -117,12 +119,20 @@ target_link_libraries(SmartClip PRIVATE
 # ── Установщик ───────────────────────────────────────────────────────────────
 add_subdirectory(installer)
 
-# Копируем .qm файлы рядом с .exe после сборки
-add_custom_command(TARGET SmartClip POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:SmartClip>/translations"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${QM_FILES}
-        "$<TARGET_FILE_DIR:SmartClip>/translations/"
-    COMMENT "Копирование переводов в папку сборки"
-)
+# Копируем .qm файлы в папку translations рядом с .exe.
+# Отдельным правилом на каждый файл, а не шагом «после сборки SmartClip»:
+# тот срабатывал, только когда пересобирался сам exe, и если менялись одни
+# переводы — в translations (и в установщик) попадали старые .qm.
+set(QM_DEPLOYED)
+foreach(qm ${QM_FILES})
+    get_filename_component(qmName ${qm} NAME)
+    set(qmOut "${CMAKE_CURRENT_BINARY_DIR}/translations/${qmName}")
+    add_custom_command(OUTPUT ${qmOut}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/translations"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${qm} ${qmOut}
+        DEPENDS ${qm}
+        COMMENT "Копирование перевода ${qmName}")
+    list(APPEND QM_DEPLOYED ${qmOut})
+endforeach()
+add_custom_target(SmartClipTranslationsDeploy ALL DEPENDS ${QM_DEPLOYED})
+add_dependencies(SmartClip SmartClipTranslationsDeploy)

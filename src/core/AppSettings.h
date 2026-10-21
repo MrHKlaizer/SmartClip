@@ -177,20 +177,25 @@ public:
     void setSolidPanels(bool b)
         { m_s.setValue("ui/solidPanels", b); m_s.sync(); }
 
-    // ─── Оформление и анимации (кнопка 🖌 в главном окне) ────────────────────
+    // ─── Оформление и анимации (Настройки → Оформление) ──────────────────────
 
     // Настройки ОТДЕЛЬНО для каждого вида анимации (kind — "menu", "dialog",
     // "open", "close"; список видов — в src/ui/Anim.h).
     //
-    // Включён ли «новый» стиль для этого вида (false = «Классика», как раньше).
-    // Если для вида ещё ничего не сохранено — берём старую общую настройку
-    // (ui/animations из первых сборок 2.0), а по умолчанию — новый стиль.
-    bool animOn(const QString &kind) const
-        { return m_s.value("anim/" + kind + "/on", m_s.value("ui/animations", true)).toBool(); }
-    void setAnimOn(const QString &kind, bool b)
-        { m_s.setValue("anim/" + kind + "/on", b); m_s.sync(); }
+    // Шкала дат сбоку колонки при прокрутке (DateRuler.h):
+    // "outer" — у края экрана, "inner" — со стороны центра, "off" — выключена
+    QString dateRuler() const
+        { return m_s.value("ui/dateRuler", "outer").toString(); }
+    void setDateRuler(const QString &s)
+        { m_s.setValue("ui/dateRuler", s); m_s.sync(); }
 
-    // Стиль прокрутки колонок (когда прокрутка не «Классика»):
+    // Карточка выезжает и увеличивается при наведении мыши (CardArc.h)
+    bool cardHover() const
+        { return m_s.value("ui/cardHover", true).toBool(); }
+    void setCardHover(bool b)
+        { m_s.setValue("ui/cardHover", b); m_s.sync(); }
+
+    // Стиль прокрутки колонок:
     // "arc" — дуга-барабан, "smooth" — просто плавная. По умолчанию — дуга.
     QString scrollStyle() const
         { return m_s.value("anim/scroll/style", "arc").toString(); }

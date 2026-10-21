@@ -362,9 +362,11 @@ int main(int argc, char *argv[])
     QObject::connect(updater, &UpdateChecker::updateAvailable,
                      &window, &MainWindow::onUpdateAvailable);
     // Вместо окна поверх всего (могло выскочить посреди игры) — уведомление в трее.
-    // Клик по нему открывает установку обновления.
+    // Клик по нему открывает установку обновления. Только о БОЛЬШОМ обновлении
+    // (2.0 → 3.0); мелкие правки (2.0.1) ждут в настройках — без уведомлений.
     QObject::connect(updater, &UpdateChecker::updateAvailable,
                      [&tray, &updateBalloonShown](const QString &version) {
+        if (!UpdateChecker::isMajorUpdate(version)) return;
         updateBalloonShown = true;
         tray.showMessage("SmartClip",
             QObject::tr("Доступна новая версия %1. Нажмите, чтобы установить.").arg(version),

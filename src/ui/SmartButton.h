@@ -146,7 +146,21 @@ protected:
         } else {
             p.drawText(rect(), Qt::AlignCenter | Qt::TextShowMnemonic, text());
         }
+
+        // Точка в правом верхнем углу — «есть что посмотреть» (обновление)
+        if (m_badge) {
+            const qreal d = qMax(7.0, height() / 4.5);
+            const QRectF dot(width() - d - 3, 3, d, d);
+            p.setPen(QPen(QColor(20, 20, 32), 1.5));
+            p.setBrush(QColor(120, 190, 255));
+            p.drawEllipse(dot);
+        }
     }
+
+public:
+    void setBadge(bool on) { if (m_badge != on) { m_badge = on; update(); } }
+
+protected:
 
     // При наведении/уходе курсора — перерисовываем для hover-эффекта рамки
     void enterEvent(QEnterEvent *e) override { update(); QPushButton::enterEvent(e); }
@@ -164,4 +178,5 @@ private:
     bool   m_active = false; // Текущее состояние: false = обычное, true = активное
     QChar  m_glyph;          // Значок вместо текста (пусто = обычный текст)
     int    m_glyphPx = 14;   // Размер значка в пикселях
+    bool   m_badge = false;  // Точка-значок в углу (например, есть обновление)
 };

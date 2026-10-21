@@ -22,6 +22,8 @@
 #include <QObject>
 // QNetworkAccessManager — менеджер сетевых запросов Qt (аналог fetch() в JavaScript)
 #include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QJsonObject>
 
 // ─── Класс UpdateChecker ──────────────────────────────────────────────────────
 // Наследуется от QObject — это даёт доступ к системе сигналов Qt.
@@ -39,6 +41,17 @@ public:
     // silent = true  → не сообщать если обновлений нет (тихий режим при старте)
     // silent = false → сообщать о любом результате (при ручной проверке кнопкой)
     void check(bool silent = true);
+
+    // Большое ли обновление: поменялось первое или второе число версии
+    // (2.0 → 2.1, 2.0 → 3.0). О таком сообщаем сразу (уведомление в трее и
+    // окно). Мелкие правки (2.0 → 2.0.1) — только плашка в настройках.
+    static bool isMajorUpdate(const QString &newVersion);
+
+    // Описание релиза на языке интерфейса. В описании на GitHub языки
+    // разделены метками <!-- lang: ru -->, <!-- lang: en -->, <!-- lang: ua -->,
+    // <!-- lang: de --> (на странице GitHub метки не видны). Нет нужного
+    // языка — английский, потом русский; меток нет — весь текст.
+    static QString localizedNotes(const QString &body, const QString &lang);
 
 // ─── Сигналы — «оповещения» которые UpdateChecker отправляет подписчикам ─────
 // Сигналы не имеют тела — Qt генерирует код для них автоматически.
@@ -67,6 +80,13 @@ private:
 
     // Флаг тихого режима: сохраняем при вызове check() и используем в коллбэке
     bool m_silent = true;
+    bool m_retried = false;  // Уже повторяли запрос после сбоя сети
+
+    QNetworkRequest makeRequest(const QUrl &url) const;  // User-Agent + таймаут
+    void checkApi();                                     // GitHub API (основной путь)
+    void checkWeb();                                     // Страница релизов (запасной путь)
+    void handleRelease(const QJsonObject &obj);          // Разобрать релиз и сравнить версии
+    void fail(const QString &message);                   // Сообщить об ошибке (если не тихий режим)
 
     // Вспомогательный метод: конвертирует строку версии в целое число для сравнения.
     // Пример: "1.2.3" → 1*1000000 + 2*1000 + 3 = 1002003
