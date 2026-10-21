@@ -753,6 +753,14 @@
         <source>Настройки — доступно обновление %1</source>
         <translation>Налаштування — доступне оновлення %1</translation>
     </message>
+    <message>
+        <source>▶  Смотреть</source>
+        <translation>▶  Дивитися</translation>
+    </message>
+    <message>
+        <source>📂  Показать в папке</source>
+        <translation>📂  Показати в папці</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1233,6 +1241,34 @@
     <message>
         <source>Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки.</source>
         <translation>Поки гортаєш історію, збоку колонки видно, до якого дня належать картки.</translation>
+    </message>
+    <message>
+        <source>+ Папка</source>
+        <translation>+ Папка</translation>
+    </message>
+    <message>
+        <source>Автозахват записей и аудио</source>
+        <translation>Автозахоплення записів і аудіо</translation>
+    </message>
+    <message>
+        <source>Добавить папку, за которой следить</source>
+        <translation>Додати папку, за якою стежити</translation>
+    </message>
+    <message>
+        <source>Добавить стандартные папки: клипы Xbox Game Bar, «Записи экрана», «Звукозаписи»</source>
+        <translation>Додати стандартні папки: кліпи Xbox Game Bar, «Записи екрана», «Звукозаписи»</translation>
+    </message>
+    <message>
+        <source>Папка с записями</source>
+        <translation>Папка із записами</translation>
+    </message>
+    <message>
+        <source>Следит за папками: новое видео (Xbox Game Bar, «Ножницы») появится в колонке картинок, аудио (Звукозапись и т.п.) — в колонке текстов. Клик по карточке — вставить файл в Telegram, Discord и т.д. Папок может быть несколько — у каждого они свои.</source>
+        <translation>Стежить за папками: нове відео (Xbox Game Bar, «Ножиці») з’явиться в колонці картинок, аудіо (Звукозапис тощо) — у колонці текстів. Клік по картці — вставити файл у Telegram, Discord тощо. Папок може бути кілька — у кожного вони свої.</translation>
+    </message>
+    <message>
+        <source>Стандартные</source>
+        <translation>Стандартні</translation>
     </message>
 </context>
 <context>

@@ -344,13 +344,12 @@ int main(int argc, char *argv[])
     // включён при запуске, и при включении в настройках видео не появлялись.
     QObject::connect(&videoWatcher, &VideoWatcher::newVideoAdded,
                      &window, &MainWindow::markHistoryDirty);
-    if (cfg.videoMonitorEnabled() && !cfg.videoMonitorPath().isEmpty())
-        videoWatcher.start(cfg.videoMonitorPath());
-    // При изменении настроек — обновляем VideoWatcher (включить/выключить/сменить папку)
+    if (cfg.videoMonitorEnabled())
+        videoWatcher.start(VideoWatcher::configuredFolders());
+    // При изменении настроек — обновляем VideoWatcher (включить/выключить/сменить папки)
     QObject::connect(&window, &MainWindow::settingsChanged, [&]() {
-        auto &s = AppSettings::get();
-        if (s.videoMonitorEnabled())
-            videoWatcher.setFolder(s.videoMonitorPath());
+        if (AppSettings::get().videoMonitorEnabled())
+            videoWatcher.setFolders(VideoWatcher::configuredFolders());
         else
             videoWatcher.stop();
     });

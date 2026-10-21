@@ -21,7 +21,6 @@
 #include <QLayout>
 #include <QPainter>
 #include <QPainterPath>
-#include <QLinearGradient>
 #include <QDateTime>
 #include <QTimer>
 #include <QVariantAnimation>
@@ -137,21 +136,16 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
         p.setOpacity(m_opacity);
 
-        // Край шкалы, обращённый к карточкам, — прозрачный; к своему краю — тёмный
+        // Без подложки: только засечки и даты в своих «таблетках» —
+        // карточки под шкалой ничем не затемняются
         const bool atLeft = (x() == 0);
         const int W = width(), H = height();
-        QLinearGradient g(atLeft ? 0 : W, 0, atLeft ? W : 0, 0);
-        // Плотная подложка под засечками и датами, дальше — тает к карточкам
-        g.setColorAt(0.0, QColor(12, 12, 20, 240));
-        g.setColorAt(0.70, QColor(12, 12, 20, 230));
-        g.setColorAt(1.0, QColor(12, 12, 20, 0));
-        p.fillRect(rect(), g);
 
         // Засечки у «своего» края, подписи — рядом с засечками
         const int edgeX = atLeft ? 2 : W - 2;
         const int dir   = atLeft ? 1 : -1;
         QFont f = font();
-        f.setPixelSize(11);
+        f.setPixelSize(10);
         f.setBold(false);
         p.setFont(f);
 
@@ -174,17 +168,20 @@ protected:
             if (cy < -20 || cy > H + 20) continue;
 
             // Новый день — длинная засечка и дата; остальные карточки — короткая
-            const int len = newDay ? 14 : 7;
+            const int len = newDay ? 10 : 5;
             p.setPen(QPen(QColor(255, 255, 255, newDay ? 150 : 70), 1.2));
             p.drawLine(edgeX, cy, edgeX + dir * len, cy);
             if (newDay && cy - lastLabelY >= 18) {
                 // Дата — в тёмной «таблетке»: читается поверх края карточек
                 const QString t = label(d);
-                const int tw = QFontMetrics(f).horizontalAdvance(t) + 10;
-                const QRectF pill(atLeft ? edgeX + 16 : W - 16 - tw - 2, cy - 8, tw, 16);
-                QPainterPath lp; lp.addRoundedRect(pill, 6, 6);
-                p.fillPath(lp, QColor(12, 12, 20, 235));
-                p.setPen(QColor(255, 255, 255, 170));
+                const int tw = QFontMetrics(f).horizontalAdvance(t) + 8;
+                const QRectF pill(atLeft ? edgeX + 12 : W - 12 - tw - 2, cy - 7, tw, 14);
+                // Непрозрачная «таблетка» с рамкой — читается поверх любой карточки
+                QPainterPath lp; lp.addRoundedRect(pill, 5, 5);
+                p.fillPath(lp, QColor(28, 31, 46));
+                p.setPen(QPen(QColor(255, 255, 255, 45), 1.0));
+                p.drawPath(lp);
+                p.setPen(QColor(235, 238, 248));
                 p.drawText(pill, Qt::AlignCenter, t);
                 lastLabelY = cy;
             }
@@ -194,16 +191,16 @@ protected:
         if (centerDate.isValid()) {
             const int cy = H / 2;
             p.setPen(QPen(QColor(120, 190, 255, 235), 2.0));
-            p.drawLine(edgeX, cy, edgeX + dir * (W - 6), cy);
+            p.drawLine(edgeX, cy, edgeX + dir * 12, cy);  // Короткая — не перечёркивает карточку
             QFont fb = f;
             fb.setBold(true);
             p.setFont(fb);
             const QString t = label(centerDate);
-            const int tw = QFontMetrics(fb).horizontalAdvance(t) + 12;
-            const QRectF pill(atLeft ? edgeX + 16 : W - 16 - tw - 2, cy - 18, tw, 15);
+            const int tw = QFontMetrics(fb).horizontalAdvance(t) + 10;
+            const QRectF pill(atLeft ? edgeX + 12 : W - 12 - tw - 2, cy - 7, tw, 14);
             QPainterPath pp; pp.addRoundedRect(pill, 7, 7);
-            p.fillPath(pp, QColor(20, 40, 70, 235));
-            p.setPen(QColor(170, 215, 255));
+            p.fillPath(pp, QColor(36, 74, 122));   // Непрозрачная — поверх карточки
+            p.setPen(QColor(225, 240, 255));
             p.drawText(pill, Qt::AlignCenter, t);
 
             // Быстрая перемотка: у курсора — крупная дата
@@ -213,7 +210,7 @@ protected:
                 fs.setBold(true);
                 p.setFont(fs);
                 const int bw = QFontMetrics(fs).horizontalAdvance(t) + 18;
-                const QRectF bubble(atLeft ? edgeX + 20 : W - 20 - bw - 2, m_scrubY - 13, bw, 26);
+                const QRectF bubble(atLeft ? edgeX + 14 : W - 14 - bw - 2, m_scrubY - 13, bw, 26);
                 QPainterPath bp; bp.addRoundedRect(bubble, 13, 13);
                 p.fillPath(bp, QColor(120, 190, 255, 245));
                 p.setPen(QColor(10, 22, 40));
@@ -252,7 +249,7 @@ private:
         const bool atLeft = (side() == Inner) ? !m_leftColumn : m_leftColumn;
         setGeometry(atLeft ? 0 : vp->width() - width(), 0, width(), vp->height());
         // Полоса для перемотки — у линии шкалы (там, где засечки)
-        const int gw = 26;
+        const int gw = 22;
         m_grip->setGeometry(atLeft ? 0 : vp->width() - gw, 0, gw, vp->height());
     }
 

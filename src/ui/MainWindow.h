@@ -125,7 +125,7 @@ protected:
     // Нужен для реализации «исчезания при потере фокуса» и кастомного хиттестинга.
     bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
 
-    // Скрытие окна — прячем также blur-окна через dcompBlurHide().
+    // Скрытие окна — снимаем хуки ввода и прячем просмотр картинок.
     void hideEvent(QHideEvent *event) override;
 
     // Нажатие клавиши — Escape закрывает окно.
@@ -184,9 +184,12 @@ private:
     void appendTexts();                      // Следующие TEXT_PAGE текстов
     void appendMedia();                      // Следующие MEDIA_PAGE картинок/видео
     void maybeLoadMore(class QScrollArea *area); // Долистали почти до конца — подгрузить
-    void addTextCard(const HistoryItem &entry);
-    void addImageCard(const HistoryItem &entry);
-    void addVideoCard(const HistoryItem &entry);
+    // insertAt — место в колонке (-1 — в конец)
+    void addTextCard(const HistoryItem &entry, int insertAt = -1);
+    void addImageCard(const HistoryItem &entry, int insertAt = -1);
+    void addVideoCard(const HistoryItem &entry, int insertAt = -1);
+    void addAudioCard(const HistoryItem &entry, int insertAt = -1);  // Аудио — в колонке текстов
+    void refreshHistory();                   // После копирования: только новые карточки сверху
     void restoreHistoryPos();                // Вернуть Историю туда, где остановились
     void loadPins(bool allFolders = false); // Загрузить закрепы (всей папки или всех сразу)
     void loadFolderBar();                   // Перестроить полосу папок (вкладки папок в режиме Pins)
@@ -259,11 +262,16 @@ private:
     int          m_mediaOffset = 0;
     bool         m_textsDone   = false;
     bool         m_mediaDone   = false;
-    bool         m_searching   = false;     // Идёт поиск — тексты берём из m_searchResults
+    bool         m_searching   = false;     // Идёт поиск — тексты берём по m_searchIds
     // Где остановились в Истории перед переходом в Закрепы
     struct HistoryPos { int left = 0, right = 0, texts = 0, media = 0; bool valid = false; };
     HistoryPos   m_histPos;
-    QList<HistoryItem> m_searchResults;     // Все совпадения поиска (показываются порциями)
+    QList<int>   m_searchIds;               // id всех совпадений поиска (показываются порциями)
+    QList<QPair<int, QString>> m_searchIndex; // Для поиска: id и начало текста (из базы, один раз)
+    bool         m_searchIndexValid = false;  // Индекс актуален (история не менялась)
+    bool         m_historyLoaded = false;   // История уже загружена — можно обновлять быстро
+    int          m_topTextId  = 0;          // Самая свежая загруженная запись: тексты
+    int          m_topMediaId = 0;          // ...и картинки/видео
     class QTimer *m_searchTimer = nullptr; // Задержка поиска по истории (не искать на каждую букву)
     ImageViewer *m_imageViewer  = nullptr; // Полноэкранный просмотрщик (создаётся при первом использовании)
 
@@ -299,6 +307,7 @@ private:
 
     // Перетаскивание закрепов (карточка едет за мышью, соседи расступаются)
     void beginCardDrag(const QPoint &globalPos);
+    void stopCardDrag();   // Прервать перетаскивание (список перестраивают)
     class CardArc *arcFor(QVBoxLayout *layout) const;
     class QScrollArea *scrollFor(QVBoxLayout *layout) const;
     QPointer<QWidget> m_dragPlaceholder;        // Пустое место, куда встанет карточка

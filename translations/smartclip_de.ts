@@ -753,6 +753,14 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
         <source>Настройки — доступно обновление %1</source>
         <translation>Einstellungen — Update %1 verfügbar</translation>
     </message>
+    <message>
+        <source>▶  Смотреть</source>
+        <translation>▶  Ansehen</translation>
+    </message>
+    <message>
+        <source>📂  Показать в папке</source>
+        <translation>📂  Im Ordner anzeigen</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1233,6 +1241,34 @@ Bei Überschreitung werden die ältesten Einträge dieser Art gelöscht.</transl
     <message>
         <source>Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки.</source>
         <translation>Beim Scrollen im Verlauf zeigt eine Skala neben der Spalte, von welchem Tag die Karten stammen.</translation>
+    </message>
+    <message>
+        <source>+ Папка</source>
+        <translation>+ Ordner</translation>
+    </message>
+    <message>
+        <source>Автозахват записей и аудио</source>
+        <translation>Aufnahmen und Audio automatisch erfassen</translation>
+    </message>
+    <message>
+        <source>Добавить папку, за которой следить</source>
+        <translation>Zu überwachenden Ordner hinzufügen</translation>
+    </message>
+    <message>
+        <source>Добавить стандартные папки: клипы Xbox Game Bar, «Записи экрана», «Звукозаписи»</source>
+        <translation>Standardordner hinzufügen: Xbox-Game-Bar-Clips, „Bildschirmaufnahmen“, „Tonaufnahmen“</translation>
+    </message>
+    <message>
+        <source>Папка с записями</source>
+        <translation>Aufnahmeordner</translation>
+    </message>
+    <message>
+        <source>Следит за папками: новое видео (Xbox Game Bar, «Ножницы») появится в колонке картинок, аудио (Звукозапись и т.п.) — в колонке текстов. Клик по карточке — вставить файл в Telegram, Discord и т.д. Папок может быть несколько — у каждого они свои.</source>
+        <translation>Überwacht Ordner: neue Videos (Xbox Game Bar, Snipping Tool) erscheinen in der Bilderspalte, Audio (Audiorekorder usw.) in der Textspalte. Klick auf eine Karte fügt die Datei in Telegram, Discord usw. ein. Es können mehrere Ordner sein — jeder hat seine eigenen.</translation>
+    </message>
+    <message>
+        <source>Стандартные</source>
+        <translation>Standard</translation>
     </message>
 </context>
 <context>

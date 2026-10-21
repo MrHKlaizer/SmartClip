@@ -142,13 +142,42 @@ void UpdateChecker::checkWeb()
                 a[QStringLiteral("browser_download_url")] = QStringLiteral("https://github.com") + path;
                 list.append(a);
             }
-            // Собираем ответ в том же виде, что и у API (описания релиза тут нет)
-            QJsonObject obj;
-            obj[QStringLiteral("tag_name")] = tag;
-            obj[QStringLiteral("assets")] = list;
-            handleRelease(obj);
+            // Описание — со страницы релиза (там оно уже в HTML)
+            QNetworkReply *page = m_nam->get(makeRequest(
+                QUrl(QStringLiteral("https://github.com/" GITHUB_REPO "/releases/tag/") + tag)));
+            connect(page, &QNetworkReply::finished, this, [this, page, tag, list]() {
+                page->deleteLater();
+                QJsonObject obj;
+                obj[QStringLiteral("tag_name")] = tag;
+                obj[QStringLiteral("assets")] = list;
+                if (page->error() == QNetworkReply::NoError) {
+                    const QString html = releaseBodyHtml(QString::fromUtf8(page->readAll()));
+                    if (!html.isEmpty()) obj[QStringLiteral("body")] = QString::fromLatin1(HTML_NOTES_PREFIX) + html;
+                }
+                handleRelease(obj);  // Без описания — тоже не страшно: в окне будет ссылка
+            });
         });
     });
+}
+
+// Текст описания со страницы релиза: содержимое блока class="markdown-body"
+QString UpdateChecker::releaseBodyHtml(const QString &page)
+{
+    const int cls = page.indexOf(QStringLiteral("class=\"markdown-body"));
+    if (cls < 0) return {};
+    const int start = page.indexOf('>', cls);
+    if (start < 0) return {};
+    // Конец блока — по парным <div ...> / </div>
+    int depth = 1, i = start + 1;
+    static const QRegularExpression tagRe(QStringLiteral("<(/?)div\\b"), QRegularExpression::CaseInsensitiveOption);
+    while (depth > 0) {
+        const auto m = tagRe.match(page, i);
+        if (!m.hasMatch()) return {};
+        depth += m.captured(1).isEmpty() ? 1 : -1;
+        i = m.capturedEnd();
+        if (depth == 0) return page.mid(start + 1, m.capturedStart() - start - 1).trimmed();
+    }
+    return {};
 }
 
 void UpdateChecker::fail(const QString &message)
@@ -227,8 +256,12 @@ bool UpdateChecker::isMajorUpdate(const QString &newVersion)
 // ─── Описание на нужном языке ────────────────────────────────────────────────
 QString UpdateChecker::localizedNotes(const QString &body, const QString &lang)
 {
+    // Метки: <!-- lang: ru --> (комментарий) или <a name="lang-ru"></a> (якорь —
+    // он, в отличие от комментария, остаётся и на странице релиза, где GitHub
+    // превращает его в <a name="user-content-lang-ru">)
     static const QRegularExpression marker(
-        QStringLiteral(R"(<!--\s*lang\s*:\s*([A-Za-z-]+)\s*-->)"));
+        QStringLiteral(R"re(<!--\s*lang\s*:\s*([A-Za-z-]+)\s*-->|<a\s+name="(?:user-content-)?lang-([A-Za-z-]+)"[^>]*>\s*</a>)re"),
+        QRegularExpression::CaseInsensitiveOption);
     QMap<QString, QString> parts;  // язык → текст
     QString first;
     auto it = marker.globalMatch(body);
@@ -239,7 +272,7 @@ QString UpdateChecker::localizedNotes(const QString &body, const QString &lang)
         if (prev.hasMatch()) {
             const int from = prev.capturedEnd();
             const int to = more ? cur.capturedStart() : body.size();
-            QString code = prev.captured(1).toLower();
+            QString code = (prev.captured(1).isEmpty() ? prev.captured(2) : prev.captured(1)).toLower();
             if (code == QLatin1String("uk")) code = QStringLiteral("ua");  // ISO-код украинского
             const QString text = body.mid(from, to - from).trimmed();
             parts.insert(code, text);

@@ -1,4 +1,4 @@
-<!-- lang: ru -->
+<a name="lang-ru"></a>
 ### Что нового в SmartClip 2.0
 - **Новый дизайн и плавные анимации**: окно, меню, диалоги и вкладки появляются и уходят плавно.
 - **Раздел «Оформление» в настройках**: скорость каждой анимации, вид прокрутки, тёмный фон за колонками.
@@ -21,7 +21,7 @@
 - Окно настроек помещается на небольших экранах.
 - Множество мелких исправлений.
 
-<!-- lang: en -->
+<a name="lang-en"></a>
 ### What's new in SmartClip 2.0
 - **New design and smooth animations** for the window, menus, dialogs and tabs.
 - **New "Appearance" section in Settings**: speed of every animation, scrolling style, dark background behind columns.
@@ -44,7 +44,7 @@
 - The Settings window fits on small screens.
 - Many smaller fixes.
 
-<!-- lang: ua -->
+<a name="lang-ua"></a>
 ### Що нового в SmartClip 2.0
 - **Новий дизайн і плавні анімації**: вікно, меню, діалоги та вкладки з’являються і зникають плавно.
 - **Розділ «Оформлення» в налаштуваннях**: швидкість кожної анімації, вид прокрутки, темний фон за колонками.
@@ -67,7 +67,7 @@
 - Вікно налаштувань вміщується на невеликих екранах.
 - Багато дрібних виправлень.
 
-<!-- lang: de -->
+<a name="lang-de"></a>
 ### Neu in SmartClip 2.0
 - **Neues Design und flüssige Animationen** für Fenster, Menüs, Dialoge und Tabs.
 - **Neuer Bereich „Darstellung“ in den Einstellungen**: Geschwindigkeit jeder Animation, Scroll-Stil, dunkler Hintergrund hinter den Spalten.

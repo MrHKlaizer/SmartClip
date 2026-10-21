@@ -30,7 +30,8 @@
 #include "core/BugReporter.h"       // Отправка обратной связи в Telegram
 #include "core/Version.h"           // APP_VERSION — строка вида "1.0.2"
 #include "core/UpdateChecker.h"     // Проверка обновлений через GitHub API
-#include "core/AdminMode.h"         // Работа в окнах администратора
+#include "core/AdminMode.h"
+#include "core/VideoWatcher.h"     // Папки автозахвата         // Работа в окнах администратора
 
 // Qt-виджеты и инфраструктура:
 #include <QPainter>             // Рисование (paintEvent)
@@ -1069,7 +1070,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     limitLayout->setSpacing(8);
     // Раздельные лимиты: тексты и картинки (видео — вместе с картинками).
     // Справа от поля — сколько занято сейчас.
-    const int usedTexts  = db->countHistory("text");
+    const int usedTexts  = db->countHistory("text") + db->countHistory("audio");
     const int usedImages = db->countHistory("image") + db->countHistory("video");
     auto makeLimitRow = [&](int value, int used) {
         auto *spin = new QSpinBox(limitGroup);
@@ -1425,45 +1426,74 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     // ── Автозахват записей экрана ─────────────────────────────────────────────
     // VideoWatcher следит за папкой и добавляет новые видео в историю.
-    auto *videoGroup  = new QGroupBox(tr("Автозахват записей экрана"), betaTab);
+    auto *videoGroup  = new QGroupBox(tr("Автозахват записей и аудио"), betaTab);
     auto *videoLayout = new QVBoxLayout(videoGroup);
     videoLayout->setSpacing(8);
     auto *videoCheck = new SdCheckBox(
         tr("Автоматически добавлять новые записи в историю"), videoGroup);
     videoCheck->setChecked(AppSettings::get().videoMonitorEnabled());
     auto *videoHint = new QLabel(
-        tr("Следит за папкой видеозаписей. Новое видео (Xbox Game Bar,\n"
-           "Snipping Tool) появится в истории SmartClip автоматически.\n"
-           "Клик по карточке — вставить файл в Telegram, Discord и т.д."),
+        tr("Следит за папками: новое видео (Xbox Game Bar, «Ножницы») появится в колонке картинок, "
+           "аудио (Звукозапись и т.п.) — в колонке текстов. Клик по карточке — вставить файл "
+           "в Telegram, Discord и т.д. Папок может быть несколько — у каждого они свои."),
         videoGroup);
     videoHint->setWordWrap(true);
     videoHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
-    auto *videoPathRow  = new QHBoxLayout();
-    auto *videoPathEdit = new QLineEdit(videoGroup);
-    videoPathEdit->setText(AppSettings::get().videoMonitorPath());
-    // Значок папки из системного шрифта (эмодзи «📁» здесь не отображался)
-    auto *videoBrowseBtn = new QPushButton(QString(QChar(0xE8B7)), videoGroup);
-    videoBrowseBtn->setStyleSheet(QString("QPushButton{font-family:'%1';font-size:14px;padding:0;min-height:26px;}")
-                              .arg(SmartButton::iconFontFamily()));
-    videoBrowseBtn->setFixedWidth(32);
-    videoBrowseBtn->setToolTip(tr("Выбрать папку"));
-    videoPathRow->addWidget(videoPathEdit);
-    videoPathRow->addWidget(videoBrowseBtn);
-    connect(videoBrowseBtn, &QPushButton::clicked, [=]() {
-        QString dir = QFileDialog::getExistingDirectory(
-            this, tr("Папка с видеозаписями"), videoPathEdit->text());
-        if (!dir.isEmpty()) videoPathEdit->setText(dir);
+
+    // Папки: список, «+ Папка», «Стандартные», «Удалить»
+    auto *videoList = new QListWidget(videoGroup);
+    videoList->setFixedHeight(96);
+    for (const QString &f : VideoWatcher::configuredFolders())
+        videoList->addItem(QDir::toNativeSeparators(f));
+    auto *videoBtnRow  = new QHBoxLayout();
+    auto *videoAddBtn  = new QPushButton(tr("+ Папка"), videoGroup);
+    auto *videoStdBtn  = new QPushButton(tr("Стандартные"), videoGroup);
+    auto *videoDelBtn  = new QPushButton(tr("✕ Удалить"), videoGroup);
+    videoAddBtn->setStyleSheet(
+        "QPushButton{background:rgba(20,25,55,220);color:#aaaadd;"
+        "border:1px solid rgba(80,80,160,80);border-radius:5px;padding:4px 12px;font-size:11px;}"
+        "QPushButton:hover{background:rgba(28,32,80,240);color:#fff;}");
+    videoStdBtn->setStyleSheet(videoAddBtn->styleSheet());
+    videoDelBtn->setStyleSheet(
+        "QPushButton{background:rgba(55,18,18,220);color:#ddaaaa;"
+        "border:1px solid rgba(160,60,60,80);border-radius:5px;padding:4px 12px;font-size:11px;}"
+        "QPushButton:hover{background:rgba(90,25,25,240);color:#fff;}");
+    for (QPushButton *btn : {videoAddBtn, videoStdBtn, videoDelBtn}) btn->setCursor(Qt::PointingHandCursor);
+    videoAddBtn->setToolTip(tr("Добавить папку, за которой следить"));
+    videoStdBtn->setToolTip(tr("Добавить стандартные папки: клипы Xbox Game Bar, «Записи экрана», «Звукозаписи»"));
+    videoBtnRow->addWidget(videoAddBtn);
+    videoBtnRow->addWidget(videoStdBtn);
+    videoBtnRow->addStretch();
+    videoBtnRow->addWidget(videoDelBtn);
+    auto listHas = [videoList](const QString &path) {
+        const QString n = QDir::cleanPath(QDir::fromNativeSeparators(path));
+        for (int i = 0; i < videoList->count(); ++i)
+            if (QDir::cleanPath(QDir::fromNativeSeparators(videoList->item(i)->text()))
+                    .compare(n, Qt::CaseInsensitive) == 0) return true;
+        return false;
+    };
+    connect(videoAddBtn, &QPushButton::clicked, this, [=]() {
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Папка с записями"));
+        if (!dir.isEmpty() && !listHas(dir)) videoList->addItem(QDir::toNativeSeparators(dir));
     });
-    // Блокируем поле пути если функция выключена
+    connect(videoStdBtn, &QPushButton::clicked, this, [=]() {
+        for (const QString &f : VideoWatcher::defaultFolders())
+            if (!listHas(f)) videoList->addItem(QDir::toNativeSeparators(f));
+    });
+    connect(videoDelBtn, &QPushButton::clicked, this, [videoList]() {
+        delete videoList->takeItem(videoList->currentRow());
+    });
+    // Блокируем список, если автозахват выключен
     auto toggleVideo = [=](bool on) {
-        videoPathEdit->setEnabled(on);
-        videoBrowseBtn->setEnabled(on);
+        for (QWidget *wgt : std::initializer_list<QWidget *>{videoList, videoAddBtn, videoStdBtn, videoDelBtn})
+            wgt->setEnabled(on);
     };
     toggleVideo(videoCheck->isChecked());
     connect(videoCheck, &QCheckBox::toggled, toggleVideo);
     videoLayout->addWidget(videoCheck);
     videoLayout->addWidget(videoHint);
-    videoLayout->addLayout(videoPathRow);
+    videoLayout->addWidget(videoList);
+    videoLayout->addLayout(videoBtnRow);
 
     // ── Кнопка «Сообщить об ошибке» ──────────────────────────────────────────
     auto *feedbackBtn = new QPushButton(
@@ -1742,7 +1772,10 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
         // Бета: видеомонитор
         AppSettings::get().setVideoMonitorEnabled(videoCheck->isChecked());
-        AppSettings::get().setVideoMonitorPath(videoPathEdit->text().trimmed());
+        QStringList folders;
+        for (int i = 0; i < videoList->count(); ++i)
+            folders << QDir::fromNativeSeparators(videoList->item(i)->text());
+        AppSettings::get().setMediaFolders(folders);
 
         // Отправляем сигналы об изменениях
         if (hotkeyChanged) emit mainHotkeyChanged(newHotkey);

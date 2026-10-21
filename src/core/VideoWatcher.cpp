@@ -1,29 +1,34 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  VideoWatcher.cpp — Реализация наблюдателя за папкой видеозаписей          ║
+// ║  VideoWatcher.cpp — Автозахват записей экрана и аудио                      ║
 // ║                                                                              ║
-// ║  Этот файл реализует логику описанную в VideoWatcher.h:                    ║
-// ║  следим за папкой, находим новые видеофайлы, добавляем в базу данных.      ║
+// ║  Следит за выбранными папками: новые видео (Xbox Game Bar, «Ножницы») и    ║
+// ║  аудио (Звукозапись и т.п.) появляются в истории сами. Видео — в колонке   ║
+// ║  картинок, аудио — в колонке текстов. Клик по карточке — вставить файл.     ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 #include "VideoWatcher.h"  // Описание класса
-#include "Database.h"      // addHistory() — для добавления видео в историю
+#include "Database.h"      // addHistory() — для добавления записей в историю
+#include "AppSettings.h"   // Выбранные папки
 
-// Qt-утилиты для работы с файловой системой:
-#include <QDir>       // Работа с папками: проверка существования, список файлов
-#include <QFileInfo>  // Информация о файле: имя, расширение, размер, путь
-#include <QTimer>     // Однократный таймер (задержка 2с перед сканированием)
-#include <QDebug>     // qDebug() для отладочного вывода в консоль разработчика
+#include <QDir>            // Работа с папками: проверка существования, список файлов
+#include <QFileInfo>       // Информация о файле: имя, расширение, размер, путь
+#include <QTimer>          // Однократный таймер (задержка 2с перед сканированием)
+#include <QStandardPaths>  // Папки «Видео» и «Документы» (в том числе перенесённые в OneDrive)
+#include <QDebug>          // qDebug() для отладочного вывода в консоль разработчика
+#include <windows.h>
 
-// ─── Список поддерживаемых расширений ────────────────────────────────────────
-// static — одна копия для всего класса (не для каждого объекта отдельно).
-// Файлы с этими расширениями считаются видео и добавляются в историю.
+// SHGetKnownFolderPath (shell32) — папка «Клипы» Xbox Game Bar. Объявлена здесь
+// сама: <shlobj.h> объявляет свой FolderItem, и он конфликтует с нашим (Database.h).
+extern "C" __declspec(dllimport) HRESULT __stdcall
+SHGetKnownFolderPath(const GUID &rfid, DWORD dwFlags, HANDLE hToken, PWSTR *ppszPath);
+
 const QStringList VideoWatcher::VIDEO_EXTENSIONS = {
-    ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".webm"
+    ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".webm", ".m4v"
+};
+const QStringList VideoWatcher::AUDIO_EXTENSIONS = {
+    ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".wma", ".opus"
 };
 
-// ─── Конструктор ─────────────────────────────────────────────────────────────
-// Инициализирует поля и подключает сигнал файловой системы к нашему слоту.
-// m_watcher — объект слежения за папкой (создаётся автоматически, не указатель).
 VideoWatcher::VideoWatcher(Database *db, QObject *parent)
     : QObject(parent)  // Передаём родителя в базовый класс Qt
     , m_db(db)         // Запоминаем базу данных
@@ -34,100 +39,109 @@ VideoWatcher::VideoWatcher(Database *db, QObject *parent)
             this, &VideoWatcher::onDirectoryChanged);
 }
 
-// ─── Начать слежение ─────────────────────────────────────────────────────────
-// Запоминает уже существующие файлы (чтобы не добавлять их как «новые»)
-// и начинает следить за папкой через QFileSystemWatcher.
-void VideoWatcher::start(const QString &folderPath)
+// ─── Стандартные папки ────────────────────────────────────────────────────────
+// Записи Xbox Game Bar («Клипы» — Windows знает, куда пользователь её перенёс),
+// «Записи экрана» от «Ножниц» и «Звукозаписи» от приложения «Звукозапись».
+QStringList VideoWatcher::defaultFolders()
 {
-    m_folderPath = folderPath;
+    QStringList result;
+    // FOLDERID_Captures — папка клипов Xbox Game Bar
+    static const GUID kCaptures = { 0xEDC0FE71, 0x98D8, 0x4F4A, { 0xB9, 0x20, 0xC8, 0xDC, 0x13, 0x3C, 0xB1, 0x65 } };
+    PWSTR path = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(kCaptures, 0, nullptr, &path)) && path)
+        result << QDir::fromNativeSeparators(QString::fromWCharArray(path));
+    if (path) CoTaskMemFree(path);
 
-    QDir dir(folderPath);
-    if (!dir.exists()) {
-        // Папка не существует — возможно Xbox Game Bar ещё не запускался
-        qDebug() << "VideoWatcher: папка не существует:" << folderPath;
-        return;
-    }
-
-    // Проходим по всем файлам в папке.
-    // QDir::Files — только файлы (не папки).
-    for (const QFileInfo &fi : dir.entryInfoList(QDir::Files)) {
-        QString ext = "." + fi.suffix().toLower();  // ".mp4", ".mkv" и т.д.
-        if (VIDEO_EXTENSIONS.contains(ext))
-            // Добавляем в «известные» — эти файлы мы НЕ будем добавлять в историю
-            m_knownFiles.insert(fi.absoluteFilePath());
-    }
-
-    // Подписываемся на уведомления от файловой системы — теперь при изменении
-    // папки QFileSystemWatcher испустит сигнал directoryChanged.
-    m_watcher.addPath(folderPath);
-    qDebug() << "VideoWatcher запущен:" << folderPath
-             << "| уже известно файлов:" << m_knownFiles.size();
+    const QString videos = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    const QString docs   = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (result.isEmpty()) result << videos + "/Captures";
+    for (const QString &p : { videos + "/Screen Recordings", docs + "/Sound Recordings" })
+        if (QDir(p).exists()) result << p;
+    result.removeDuplicates();
+    return result;
 }
 
-// ─── Остановить слежение ─────────────────────────────────────────────────────
+// Папки, которые выбрал пользователь. Ещё не выбирал — стандартные
+// (а если в старой версии он указывал свою папку — она).
+QStringList VideoWatcher::configuredFolders()
+{
+    auto &s = AppSettings::get();
+    if (s.hasMediaFolders()) return s.mediaFolders();
+    const QString old = s.legacyVideoPath();
+    const QString oldDefault = QDir::homePath() + "/Videos/Captures";
+    if (!old.isEmpty() && QDir::cleanPath(old) != QDir::cleanPath(oldDefault))
+        return { old };
+    return defaultFolders();
+}
+
+bool VideoWatcher::isMediaFile(const QString &path, bool *isAudio)
+{
+    const QString ext = "." + QFileInfo(path).suffix().toLower();
+    const bool audio = AUDIO_EXTENSIONS.contains(ext);
+    if (isAudio) *isAudio = audio;
+    return audio || VIDEO_EXTENSIONS.contains(ext);
+}
+
+void VideoWatcher::start(const QStringList &folders)
+{
+    for (const QString &folder : folders) {
+        QDir dir(folder);
+        if (!dir.exists()) {
+            // Папки ещё нет — например, Xbox Game Bar ещё ни разу не записывал
+            qDebug() << "VideoWatcher: папка не существует:" << folder;
+            continue;
+        }
+        // Уже лежащие файлы запоминаем — в историю их НЕ добавляем
+        for (const QFileInfo &fi : dir.entryInfoList(QDir::Files))
+            if (isMediaFile(fi.fileName()))
+                m_knownFiles.insert(fi.absoluteFilePath());
+        m_watcher.addPath(folder);
+        m_folders << folder;
+    }
+    qDebug() << "VideoWatcher запущен:" << m_folders << "| уже известно файлов:" << m_knownFiles.size();
+}
+
 void VideoWatcher::stop()
 {
-    if (!m_folderPath.isEmpty()) {
-        m_watcher.removePath(m_folderPath);  // Отписываемся от уведомлений
-        m_folderPath.clear();                // Сбрасываем путь
-        m_knownFiles.clear();               // Очищаем список известных файлов
-        qDebug() << "VideoWatcher остановлен";
-    }
+    if (!m_folders.isEmpty()) m_watcher.removePaths(m_folders);  // Отписываемся от уведомлений
+    m_folders.clear();
+    m_knownFiles.clear();
 }
 
-// ─── Изменить наблюдаемую папку ───────────────────────────────────────────────
-// Просто останавливаем и запускаем заново с новым путём.
-// Вызывается когда пользователь меняет папку в настройках.
-void VideoWatcher::setFolder(const QString &folderPath)
+void VideoWatcher::setFolders(const QStringList &folders)
 {
     stop();
-    start(folderPath);
+    start(folders);
 }
 
-// ─── Слот: папка изменилась ───────────────────────────────────────────────────
-// Qt вызывает этот метод когда файловая система сообщает об изменении в папке.
-// path — путь к папке (не используем — у нас всегда одна папка m_folderPath).
 void VideoWatcher::onDirectoryChanged(const QString &path)
 {
-    Q_UNUSED(path)  // Подавляем предупреждение компилятора о неиспользуемом параметре
-
-    // Задержка 2 секунды перед сканированием.
-    // Xbox Game Bar сначала создаёт файл размером ~0 байт, потом дописывает его.
-    // Без задержки мы можем поймать незаконченную запись.
-    // QTimer::singleShot — запустить один раз через 2000мс, потом автоматически удалить.
-    QTimer::singleShot(2000, this, &VideoWatcher::scanFolder);
+    // Задержка 2 секунды перед сканированием: Xbox Game Bar сначала создаёт
+    // файл размером ~0 байт, потом дописывает его — без задержки поймали бы
+    // незаконченную запись.
+    QTimer::singleShot(2000, this, [this, path]() { scanFolder(path); });
 }
 
-// ─── Сканирование папки ───────────────────────────────────────────────────────
-// Проходит по всем файлам в папке и добавляет новые видео в базу данных.
-void VideoWatcher::scanFolder()
+void VideoWatcher::scanFolder(const QString &folder)
 {
-    QDir dir(m_folderPath);
+    QDir dir(folder);
     if (!dir.exists()) return;
 
-    bool added = false;  // Флаг: было ли добавлено хоть одно новое видео
-
-    // QDir::Files     — только файлы
-    // QDir::Time      — сортировка от новых к старым (новые первыми)
+    bool added = false;  // Было ли добавлено хоть что-то новое
     for (const QFileInfo &fi : dir.entryInfoList(QDir::Files, QDir::Time)) {
-        QString ext      = "." + fi.suffix().toLower();
-        QString filepath = fi.absoluteFilePath();
+        const QString filepath = fi.absoluteFilePath();
+        bool audio = false;
+        if (!isMediaFile(filepath, &audio))  continue; // Не видео и не аудио
+        if (m_knownFiles.contains(filepath)) continue; // Уже знаем
+        if (fi.size() < 10000)               continue; // < 10 КБ — файл ещё пишется
 
-        // Фильтрация:
-        if (!VIDEO_EXTENSIONS.contains(ext))  continue; // Не видео — пропускаем
-        if (m_knownFiles.contains(filepath))  continue; // Уже знаем — пропускаем
-        if (fi.size() < 10000)                continue; // < 10 КБ — файл ещё пишется
-
-        // Файл новый и достаточно большой — добавляем в историю SmartClip
         m_knownFiles.insert(filepath);
-        // addHistory(тип, название, путь, источник)
-        // "ScreenCapture" — категория в базе данных
-        m_db->addHistory("video", fi.fileName(), filepath, "ScreenCapture");
-        qDebug() << "VideoWatcher: новое видео добавлено:" << fi.fileName();
+        // Видео — в колонку картинок, аудио — в колонку текстов
+        m_db->addHistory(audio ? "audio" : "video", fi.fileName(), filepath,
+                         audio ? "AudioCapture" : "ScreenCapture");
+        qDebug() << "VideoWatcher: новый файл добавлен:" << fi.fileName();
         added = true;
     }
-
-    // Если хоть одно видео добавлено — сигналим MainWindow обновить список карточек
     if (added)
         emit newVideoAdded();
 }

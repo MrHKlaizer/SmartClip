@@ -5,6 +5,9 @@
 #include "Backup.h"
 #include "Database.h"
 #include "AppSettings.h"
+
+// Виды анимаций, у которых есть своя скорость (см. Anim::kinds() в ui/Anim.h)
+static const char *const kAnimKinds[] = { "menu", "dialog", "open", "close", "scroll", "tabs", "viewer" };
 #include "Version.h"
 
 #include <QCryptographicHash>
@@ -138,6 +141,16 @@ QJsonObject exportAll(Database *db)
     cfg["pinsNoName"]      = s.pinsNoName();
     cfg["pinsNoFolder"]    = s.pinsNoFolder();
     cfg["recentPinsLimit"] = s.recentPinsLimit();
+    // Оформление (2.0.1): виды и скорости анимаций, карточки, шкала, тёмный фон
+    QJsonObject look;
+    look["scrollStyle"] = s.scrollStyle();
+    look["cardHover"]   = s.cardHover();
+    look["dateRuler"]   = s.dateRuler();
+    look["solidPanels"] = s.solidPanels();
+    QJsonObject speeds;
+    for (const char *k : kAnimKinds) speeds[k] = s.animSpeed(k);
+    look["animSpeed"] = speeds;
+    cfg["appearance"] = look;
     root["settings"] = cfg;
 
     return root;
@@ -292,6 +305,16 @@ ImportResult importFromFile(Database *db, const QString &path)
         if (cfg.contains("pinsNoName"))      s.setPinsNoName(cfg["pinsNoName"].toBool());
         if (cfg.contains("pinsNoFolder"))    s.setPinsNoFolder(cfg["pinsNoFolder"].toBool());
         if (cfg.contains("recentPinsLimit")) s.setRecentPinsLimit(cfg["recentPinsLimit"].toInt());
+        if (cfg.contains("appearance")) {
+            const QJsonObject look = cfg["appearance"].toObject();
+            if (look.contains("scrollStyle")) s.setScrollStyle(look["scrollStyle"].toString());
+            if (look.contains("cardHover"))   s.setCardHover(look["cardHover"].toBool());
+            if (look.contains("dateRuler"))   s.setDateRuler(look["dateRuler"].toString());
+            if (look.contains("solidPanels")) s.setSolidPanels(look["solidPanels"].toBool());
+            const QJsonObject speeds = look["animSpeed"].toObject();
+            for (const char *k : kAnimKinds)
+                if (speeds.contains(k)) s.setAnimSpeed(k, speeds[k].toInt());
+        }
         if (cfg.contains("excludedApps")) {
             QStringList excl;
             for (const QJsonValue &a : cfg["excludedApps"].toArray())

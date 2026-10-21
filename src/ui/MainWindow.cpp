@@ -1103,9 +1103,9 @@ void MainWindow::setupLayout()
 
     // Шкала дат сбоку колонки — проявляется, пока листаешь
     // (зажать у линии шкалы и вести — быстрая перемотка по всей колонке)
-    m_leftRuler  = new DateRuler(m_leftScroll,  m_leftLayout,  true,  sc(64),
+    m_leftRuler  = new DateRuler(m_leftScroll,  m_leftLayout,  true,  sc(60),
                                  [this](int v) { m_leftScroller->jumpTo(v); });
-    m_rightRuler = new DateRuler(m_rightScroll, m_rightLayout, false, sc(64),
+    m_rightRuler = new DateRuler(m_rightScroll, m_rightLayout, false, sc(60),
                                  [this](int v) { m_rightScroller->jumpTo(v); });
 
     // Долистали почти до конца колонки — подгружаем следующую порцию истории.
@@ -1201,27 +1201,92 @@ void MainWindow::loadHistory(bool textsOnly)
     clearLayout(m_leftLayout);
     m_textOffset = 0;
     m_textsDone  = false;
+    if (!textsOnly) m_searchIndexValid = false;  // Полная перезагрузка — индекс поиска заново
 
     // Поиск — по ВСЕЙ истории. Совпадения находим один раз, а показываем
-    // порциями (как и без поиска). Огромные тексты (логи на мегабайты)
-    // проверяем только по первым 20 000 символам, чтобы поиск не подвешивал окно.
+    // порциями (как и без поиска). Начала текстов (до 20 000 символов — огромные
+    // логи целиком не нужны) берём из базы один раз и держим в памяти, пока
+    // история не изменилась: на каждую букву поиск не ходит в базу.
     const QString query = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
-    m_searchResults.clear();
+    m_searchIds.clear();
     m_searching = !query.isEmpty();
     if (m_searching) {
-        const int all = qMax(AppSettings::get().maxTexts(), 40);
-        for (const HistoryItem &h : m_db->getHistoryPage({"text"}, all, 0,
-                                                         m_sortOrder == SortOrder::DateAsc)) {
-            // Точное вхождение ищем по 20 000 символам (быстро), а нечёткий
-            // поиск (Левенштейн по каждому слову — дорого) только по первым 2 000
-            const QString head = h.content.left(20000);
-            if (head.contains(query, Qt::CaseInsensitive) || fuzzyMatch(head.left(2000), query))
-                m_searchResults.append(h);
+        if (!m_searchIndexValid) {
+            m_searchIndex = m_db->getTextHeads(qMax(AppSettings::get().maxTexts(), 40),
+                                               m_sortOrder == SortOrder::DateAsc, 20000);
+            m_searchIndexValid = true;
         }
+        // Точное вхождение — по 20 000 символам (быстро). Нечёткий поиск
+        // (Левенштейн по каждому слову — дорого) — по первым 2 000 и только
+        // для запроса от 3 букв: на одну-две буквы он находит почти всё подряд
+        const bool fuzzy = query.size() >= 3;
+        for (const auto &h : m_searchIndex)
+            if (h.second.contains(query, Qt::CaseInsensitive)
+                || (fuzzy && fuzzyMatch(h.second.left(2000), query)))
+                m_searchIds.append(h.first);
     }
 
     appendTexts();
     if (!textsOnly) appendMedia();
+    if (!textsOnly) m_historyLoaded = true;
+}
+
+// ─── Быстрое обновление после копирования ─────────────────────────────────────
+// Раньше после каждого копирования окно при открытии перестраивало всю
+// историю. Теперь добавляем сверху только новые карточки и убираем те, что
+// исчезли из базы (вытеснены лимитом или подняты наверх «Без повторов»).
+void MainWindow::refreshHistory()
+{
+    const QString query = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
+    if (!m_historyLoaded || !query.isEmpty() || m_sortOrder != SortOrder::DateDesc) {
+        loadHistory();
+        return;
+    }
+    m_searchIndexValid = false;
+
+    // Новые записи — сверху, в том же порядке (новые первыми)
+    const QList<HistoryItem> texts = m_db->getHistoryNewer({"text", "audio"}, m_topTextId);
+    for (int i = 0; i < texts.size(); ++i) {
+        if (texts[i].type == "audio") addAudioCard(texts[i], i);
+        else                          addTextCard(texts[i], i);
+    }
+    m_textOffset += texts.size();
+    if (!texts.isEmpty()) m_topTextId = texts.first().id;
+
+    const QList<HistoryItem> media = m_db->getHistoryNewer({"image", "video"}, m_topMediaId);
+    const bool loaderIdle = m_pendingImages.isEmpty();
+    for (int i = 0; i < media.size(); ++i) {
+        if (media[i].type == "video") addVideoCard(media[i], i);
+        else                          addImageCard(media[i], i);
+    }
+    m_mediaOffset += media.size();
+    if (!media.isEmpty()) m_topMediaId = media.first().id;
+    if (loaderIdle && !m_pendingImages.isEmpty()) {
+        const int gen = m_loadGeneration;
+        QTimer::singleShot(0, this, [this, gen]() { loadNextImage(gen); });
+    }
+
+    // Карточки записей, которых в базе уже нет, — убираем
+    QList<int> ids;
+    for (QVBoxLayout *lay : {m_leftLayout, m_rightLayout})
+        for (int i = 0; i < lay->count(); ++i)
+            if (QWidget *w = lay->itemAt(i)->widget())
+                if (w->property("itemId").isValid()) ids << w->property("itemId").toInt();
+    const QSet<int> alive = m_db->existingHistoryIds(ids);
+    for (QVBoxLayout *lay : {m_leftLayout, m_rightLayout}) {
+        for (int i = lay->count() - 1; i >= 0; --i) {
+            QWidget *w = lay->itemAt(i)->widget();
+            if (!w || !w->property("itemId").isValid() || alive.contains(w->property("itemId").toInt())) continue;
+            lay->removeWidget(w);
+            w->deleteLater();
+            int &off = (lay == m_leftLayout) ? m_textOffset : m_mediaOffset;
+            if (off > 0) --off;
+        }
+    }
+
+    // Появилось новое — показываем колонку с начала, где оно и стоит
+    if (!texts.isEmpty())  m_leftScroller->jumpTo(0);
+    if (!media.isEmpty())  m_rightScroller->jumpTo(0);
 }
 
 // ─── Подгрузка при прокрутке ──────────────────────────────────────────────────
@@ -1232,16 +1297,24 @@ void MainWindow::appendTexts()
 {
     if (m_textsDone) return;
     QList<HistoryItem> page;
+    int requested = TEXT_PAGE;
     if (m_searching) {
-        page = m_searchResults.mid(m_textOffset, TEXT_PAGE);
+        const QList<int> ids = m_searchIds.mid(m_textOffset, TEXT_PAGE);
+        requested = ids.size() < TEXT_PAGE ? -1 : TEXT_PAGE;  // Совпадений больше нет
+        page = m_db->getHistoryByIds(ids);
+        m_textOffset += ids.size();
     } else {
-        page = m_db->getHistoryPage({"text"}, TEXT_PAGE, m_textOffset,
+        // Колонка текстов: тексты и аудио (аудио ищется только без поиска)
+        page = m_db->getHistoryPage({"text", "audio"}, TEXT_PAGE, m_textOffset,
                                     m_sortOrder == SortOrder::DateAsc);
+        if (m_textOffset == 0) m_topTextId = page.isEmpty() ? 0 : page.first().id;
+        m_textOffset += page.size();
     }
-    m_textOffset += page.size();
-    if (page.size() < TEXT_PAGE) m_textsDone = true;
-    for (const HistoryItem &entry : page)
-        addTextCard(entry);
+    if (requested < 0 || page.size() < TEXT_PAGE) m_textsDone = true;
+    for (const HistoryItem &entry : page) {
+        if (entry.type == "audio") addAudioCard(entry);
+        else                       addTextCard(entry);
+    }
 }
 
 void MainWindow::appendMedia()
@@ -1249,6 +1322,7 @@ void MainWindow::appendMedia()
     if (m_mediaDone) return;
     const QList<HistoryItem> page = m_db->getHistoryPage({"image", "video"}, MEDIA_PAGE, m_mediaOffset,
                                                          m_sortOrder == SortOrder::DateAsc);
+    if (m_mediaOffset == 0) m_topMediaId = page.isEmpty() ? 0 : page.first().id;
     m_mediaOffset += page.size();
     if (page.size() < MEDIA_PAGE) m_mediaDone = true;
 
@@ -1275,7 +1349,7 @@ void MainWindow::maybeLoadMore(QScrollArea *area)
     else if (area == m_rightScroll) appendMedia();
 }
 
-void MainWindow::addTextCard(const HistoryItem &entry)
+void MainWindow::addTextCard(const HistoryItem &entry, int insertAt)
 {
     ClickableCard *card = new ClickableCard();
     applyCardShadow(card);
@@ -1308,12 +1382,68 @@ void MainWindow::addTextCard(const HistoryItem &entry)
         showTextContextMenu(textId, fullContent, card, card->mapToGlobal(pos));
     });
 
-    m_leftLayout->addWidget(card);
+    m_leftLayout->insertWidget(insertAt, card);  // -1 — в конец
     // Подсветка поиска для подгруженных карточек
     if (m_searching) applyHighlight(card, m_searchEdit->text());
 }
 
-void MainWindow::addImageCard(const HistoryItem &entry)
+// Аудио из папок автозахвата — в колонке текстов. Клик — вставить файл
+// (как скопированный в Проводнике); послушать — из меню, в плеере Windows.
+void MainWindow::addAudioCard(const HistoryItem &entry, int insertAt)
+{
+    ClickableCard *card = new ClickableCard();
+    applyCardShadow(card);
+    card->setWordWrap(true);
+    card->setMaximumWidth(sc(BASE_LEFT) - 36);
+    card->setCardStyle(QColor(32, 14, 55, 245));
+    card->setStyleSheet(QString("color: #ddaaff; padding: %1; font-size: %2;").arg(spx(8), spx(12)));
+
+    QString name = entry.content.isEmpty() ? QFileInfo(entry.filepath).fileName() : entry.content;
+    if (name.length() > 60) name = name.left(57) + "...";
+    card->setText(QString("🎵  %1").arg(name));
+    card->setProperty("pinName", name);
+    card->setProperty("itemId", entry.id);
+    card->setProperty("filepath", entry.filepath);
+    DateRuler::setCardDate(card, entry.createdAt);  // Для шкалы дат
+
+    const QString fp = entry.filepath;
+    connect(card, &ClickableCard::clicked, this, [this, fp]() { pasteFile(fp); });
+
+    const int audioId = entry.id;
+    card->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(card, &QWidget::customContextMenuRequested, this,
+            [this, audioId, fp, card](const QPoint &pos) {
+        RoundedMenu menu(this);
+        menu.addAction(tr("▶  Воспроизвести"), [fp]() {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
+        });
+        menu.addAction(tr("📂  Показать в папке"), [fp]() {
+            QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(fp)});
+        });
+        menu.addSeparator();
+        menu.addAction(tr("📌  Закрепить"), [this, fp]() {
+            bool ok = false;
+            QString name = QInputDialog::getText(
+                this, tr("Закрепить аудио"), tr("Название:"),
+                QLineEdit::Normal, QFileInfo(fp).baseName(), &ok);
+            if (!ok || name.trimmed().isEmpty()) return;
+            QString folder = "";
+            if (!AppSettings::get().pinsNoFolder()) {
+                bool cancelled = false;
+                folder = askFolder(cancelled);
+                if (cancelled) return;
+            }
+            m_db->addPin(folder, name.trimmed(), "audio", "", fp);
+        });
+        menu.addSeparator();
+        menu.addAction(tr("🗑  Удалить"), [this, audioId, card]() { deleteCard(audioId, card); });
+        menu.exec(card->mapToGlobal(pos));
+    });
+
+    m_leftLayout->insertWidget(insertAt, card);  // -1 — в конец
+}
+
+void MainWindow::addImageCard(const HistoryItem &entry, int insertAt)
 {
     ClickableCard *card = new ClickableCard();
     applyCardShadow(card);
@@ -1341,13 +1471,13 @@ void MainWindow::addImageCard(const HistoryItem &entry)
         showImageContextMenu(imgId, fp, card, card->mapToGlobal(pos));
     });
 
-    m_rightLayout->addWidget(card);
+    m_rightLayout->insertWidget(insertAt, card);  // -1 — в конец
 
     // Добавляем в очередь ленивой загрузки
     m_pendingImages.append({QPointer<QLabel>(card), fp});
 }
 
-void MainWindow::addVideoCard(const HistoryItem &entry)
+void MainWindow::addVideoCard(const HistoryItem &entry, int insertAt)
 {
     ClickableCard *card = new ClickableCard();
     applyCardShadow(card);
@@ -1375,6 +1505,13 @@ void MainWindow::addVideoCard(const HistoryItem &entry)
     connect(card, &QWidget::customContextMenuRequested, this,
             [this, vidId, fp, card](const QPoint &pos) {
         RoundedMenu menu(this);
+        menu.addAction(tr("▶  Смотреть"), [fp]() {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
+        });
+        menu.addAction(tr("📂  Показать в папке"), [fp]() {
+            QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(fp)});
+        });
+        menu.addSeparator();
         menu.addAction(tr("📌  Закрепить"), [this, fp]() {
             bool ok = false;
             QString name = QInputDialog::getText(
@@ -1396,7 +1533,7 @@ void MainWindow::addVideoCard(const HistoryItem &entry)
         menu.exec(card->mapToGlobal(pos));
     });
 
-    m_rightLayout->addWidget(card);
+    m_rightLayout->insertWidget(insertAt, card);  // -1 — в конец
 }
 
 // ─── loadNextImage ────────────────────────────────────────────────────────────
@@ -1475,7 +1612,7 @@ void MainWindow::showWindow()
 
     // Обновляем данные если нужно
     if (m_viewMode == ViewMode::History && m_historyDirty) {
-        loadHistory();
+        refreshHistory();
         m_historyDirty = false;
     } else if (m_viewMode == ViewMode::Pins) {
         loadPins(); // закрепов обычно мало — всегда перегружаем
@@ -1656,6 +1793,7 @@ bool MainWindow::isOpen() const
 void MainWindow::markHistoryDirty()
 {
     m_historyDirty = true;
+    m_searchIndexValid = false;
 }
 
 void MainWindow::filterHistory(const QString &query)
@@ -2159,6 +2297,7 @@ void MainWindow::deleteCard(int id, QLabel *card)
 {
     // Удаляем из БД
     m_db->deleteHistory(id);
+    m_searchIndexValid = false;
 
     // Удаляем виджет из лейаута и памяти.
     // deleteLater() — безопасно, даже если на карточке есть pending события.
@@ -2697,8 +2836,7 @@ void MainWindow::showPinBatchContextMenu(const QPoint &globalPos)
 void MainWindow::loadPins(bool allFolders)
 {
     // Карточки сейчас будут удалены — перетаскивание (если шло) прерываем
-    m_dragCard   = nullptr;
-    m_dragLayout = nullptr;
+    stopCardDrag();
 
     // Отменяем незавершённую ленивую загрузку картинок из прошлого вызова
     ++m_loadGeneration;
@@ -3189,6 +3327,18 @@ static void animateLift(QWidget *card, qreal to, int ms)
             fx->setLook(1.0 - 0.05 * v.toReal(), 1.0 - 0.35 * v.toReal());
     });
     anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+// Прервать перетаскивание без сохранения (список перестраивают целиком).
+// Раньше в этом случае продолжал крутиться таймер плавной перестройки.
+void MainWindow::stopCardDrag()
+{
+    if (m_dragScrollTimer) m_dragScrollTimer->stop();
+    if (m_leftArc)  m_leftArc->setReflowAnimated(false);
+    if (m_rightArc) m_rightArc->setReflowAnimated(false);
+    m_dragPlaceholder = nullptr;  // Удалится вместе с колонкой
+    m_dragCard   = nullptr;
+    m_dragLayout = nullptr;
 }
 
 void MainWindow::beginCardDrag(const QPoint &globalPos)
@@ -4079,8 +4229,8 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 }
 
 // ─── paintEvent ───────────────────────────────────────────────────────────────
-// Рисует панели окна когда включён режим solidPanels (без Acrylic blur).
-// По умолчанию Acrylic blur применяется через DCompBlur — он рисует сам.
+// Рисует тёмную подложку за панелями, когда включён «Тёмный фон за колонками»
+// (solidPanels). Без него окно прозрачное — видны только карточки и кнопки.
 // Когда solidPanels = true — рисуем тёмный полупрозрачный прямоугольник
 // для каждой панели (верх, полоса папок, левая/правая колонка, низ).
 void MainWindow::paintEvent(QPaintEvent *event)
@@ -4217,7 +4367,10 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
     if (!notes.isEmpty()) {
         auto *notesView = new QTextBrowser(bodyW);
         notesView->setOpenExternalLinks(true);
-        notesView->setMarkdown(notes);  // Описание на GitHub — в Markdown: списки, жирный и т.п.
+        // Описание на GitHub — в Markdown (списки, жирный и т.п.); взятое со
+        // страницы релиза (запасной путь) — уже в HTML
+        if (UpdateChecker::notesAreHtml(releaseNotes)) notesView->setHtml(notes);
+        else                                           notesView->setMarkdown(notes);
         notesView->setFrameShape(QFrame::NoFrame);
         notesView->setStyleSheet(
             "QTextBrowser{background:rgba(255,255,255,7); color:rgba(235,238,250,220);"

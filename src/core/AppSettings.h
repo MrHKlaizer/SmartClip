@@ -228,20 +228,20 @@ public:
 
     // ─── Бета-функции (раздел [beta]) ─────────────────────────────────────────
 
-    // Включён ли мониторинг папки видеозаписей Xbox Game Bar.
+    // Включён ли автозахват записей экрана и аудио из папок (VideoWatcher).
     bool videoMonitorEnabled() const
         { return m_s.value("beta/videoMonitor", false).toBool(); }
     void setVideoMonitorEnabled(bool b)
         { m_s.setValue("beta/videoMonitor", b); m_s.sync(); }
 
-    // Путь к папке с видеозаписями.
-    // По умолчанию: %USERPROFILE%/Videos/Captures (стандартный путь Xbox Game Bar).
-    QString videoMonitorPath() const {
-        QString def = QDir::homePath() + "/Videos/Captures";
-        return m_s.value("beta/videoPath", def).toString();
-    }
-    void setVideoMonitorPath(const QString &p)
-        { m_s.setValue("beta/videoPath", p); m_s.sync(); }
+    // Папки автозахвата (видео и аудио), которые выбрал пользователь.
+    // Ещё не выбирал — VideoWatcher::configuredFolders() возьмёт стандартные.
+    bool hasMediaFolders() const { return m_s.contains("beta/mediaFolders"); }
+    QStringList mediaFolders() const { return m_s.value("beta/mediaFolders").toStringList(); }
+    void setMediaFolders(const QStringList &l)
+        { m_s.setValue("beta/mediaFolders", l); m_s.sync(); }
+    // Одна папка из версий до 2.0.1 (для перехода на список)
+    QString legacyVideoPath() const { return m_s.value("beta/videoPath").toString(); }
 
     // ─── Резервные копии (раздел [backup]) ───────────────────────────────────
 

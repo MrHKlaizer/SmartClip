@@ -358,7 +358,7 @@ void Database::autocleanByDays(int days)
 // превысил лимит (раньше лимит был общим, и тексты вытесняли картинки).
 void Database::trimHistory()
 {
-    trimType("type = 'text'", AppSettings::get().maxTexts());
+    trimType("type IN ('text', 'audio')", AppSettings::get().maxTexts());  // Аудио — в колонке текстов
     trimType("type IN ('image', 'video')", AppSettings::get().maxImages());
 }
 
@@ -412,6 +412,92 @@ void Database::migrateHistoryLimits()
     if (!cfg.has("history/maxTexts"))  cfg.setMaxTexts(texts);
     if (!cfg.has("history/maxImages")) cfg.setMaxImages(images);
     qDebug() << "Лимиты истории: тексты" << cfg.maxTexts() << ", картинки" << cfg.maxImages();
+}
+
+// ─── Быстрое обновление окна и поиск ─────────────────────────────────────────
+static HistoryItem historyFromQuery(const QSqlQuery &q)
+{
+    HistoryItem item;
+    item.id        = q.value("id").toInt();
+    item.type      = q.value("type").toString();
+    item.content   = q.value("content").toString();
+    item.filepath  = q.value("filepath").toString();
+    item.createdAt = q.value("created_at").toString();
+    item.appName   = q.value("app_name").toString();
+    return item;
+}
+
+static QString quotedTypes(const QStringList &types)
+{
+    QStringList quoted;
+    for (const QString &t : types) {
+        QString esc = t; esc.replace("'", "''");
+        quoted << "'" + esc + "'";
+    }
+    return quoted.join(',');
+}
+
+static QString idList(const QList<int> &ids)
+{
+    QStringList parts;
+    for (int id : ids) parts << QString::number(id);  // Только числа — безопасно
+    return parts.join(',');
+}
+
+QList<HistoryItem> Database::getHistoryNewer(const QStringList &types, int afterId)
+{
+    QList<HistoryItem> items;
+    QSqlQuery q;
+    q.prepare(QString("SELECT id, type, content, filepath, created_at, app_name FROM history "
+                      "WHERE type IN (%1) AND id > :after ORDER BY id DESC").arg(quotedTypes(types)));
+    q.bindValue(":after", afterId);
+    if (!q.exec()) { qDebug() << "Ошибка getHistoryNewer:" << q.lastError().text(); return items; }
+    while (q.next()) items.append(historyFromQuery(q));
+    return items;
+}
+
+QSet<int> Database::existingHistoryIds(const QList<int> &ids)
+{
+    QSet<int> found;
+    if (ids.isEmpty()) return found;
+    QSqlQuery q;
+    if (!q.exec(QString("SELECT id FROM history WHERE id IN (%1)").arg(idList(ids)))) {
+        qDebug() << "Ошибка existingHistoryIds:" << q.lastError().text();
+        for (int id : ids) found.insert(id);  // Не уверены — считаем, что все на месте
+        return found;
+    }
+    while (q.next()) found.insert(q.value(0).toInt());
+    return found;
+}
+
+QList<QPair<int, QString>> Database::getTextHeads(int limit, bool asc, int maxChars)
+{
+    QList<QPair<int, QString>> items;
+    QSqlQuery q;
+    q.prepare(QString("SELECT id, substr(content, 1, :chars) FROM history WHERE type = 'text' "
+                      "ORDER BY id %1 LIMIT :limit").arg(asc ? "ASC" : "DESC"));
+    q.bindValue(":chars", maxChars);
+    q.bindValue(":limit", limit);
+    if (!q.exec()) { qDebug() << "Ошибка getTextHeads:" << q.lastError().text(); return items; }
+    while (q.next()) items.append({q.value(0).toInt(), q.value(1).toString()});
+    return items;
+}
+
+QList<HistoryItem> Database::getHistoryByIds(const QList<int> &ids)
+{
+    QList<HistoryItem> items;
+    if (ids.isEmpty()) return items;
+    QSqlQuery q;
+    if (!q.exec(QString("SELECT id, type, content, filepath, created_at, app_name FROM history "
+                        "WHERE id IN (%1)").arg(idList(ids)))) {
+        qDebug() << "Ошибка getHistoryByIds:" << q.lastError().text();
+        return items;
+    }
+    QHash<int, HistoryItem> byId;
+    while (q.next()) { HistoryItem h = historyFromQuery(q); byId.insert(h.id, h); }
+    for (int id : ids)
+        if (byId.contains(id)) items.append(byId.value(id));  // Порядок — как в запросе
+    return items;
 }
 
 // ─── Страница истории для подгрузки при прокрутке ────────────────────────────

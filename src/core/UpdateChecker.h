@@ -53,6 +53,11 @@ public:
     // языка — английский, потом русский; меток нет — весь текст.
     static QString localizedNotes(const QString &body, const QString &lang);
 
+    // Описание, взятое со страницы релиза (запасной путь), — это HTML, а не
+    // Markdown; такое описание начинается с этой метки
+    static constexpr const char *HTML_NOTES_PREFIX = "<!--html-->";
+    static bool notesAreHtml(const QString &body) { return body.startsWith(QLatin1String(HTML_NOTES_PREFIX)); }
+
 // ─── Сигналы — «оповещения» которые UpdateChecker отправляет подписчикам ─────
 // Сигналы не имеют тела — Qt генерирует код для них автоматически.
 // Подписаться: connect(checker, &UpdateChecker::updateAvailable, this, &MyClass::onUpdate)
@@ -87,6 +92,7 @@ private:
     void checkWeb();                                     // Страница релизов (запасной путь)
     void handleRelease(const QJsonObject &obj);          // Разобрать релиз и сравнить версии
     void fail(const QString &message);                   // Сообщить об ошибке (если не тихий режим)
+    static QString releaseBodyHtml(const QString &page);  // Описание со страницы релиза
 
     // Вспомогательный метод: конвертирует строку версии в целое число для сравнения.
     // Пример: "1.2.3" → 1*1000000 + 2*1000 + 3 = 1002003

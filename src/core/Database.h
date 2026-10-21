@@ -26,6 +26,8 @@
 // QStringList — список строк (наследник QList<QString>)
 #include <QString>
 #include <QList>
+#include <QSet>
+#include <QPair>
 #include <QStringList>
 
 // ─── Структуры данных ─────────────────────────────────────────────────────────
@@ -115,6 +117,14 @@ public:
 
     // Страница истории нескольких видов сразу (для подгрузки при прокрутке):
     // types — например {"image","video"}, asc — старые сначала.
+    // Записи этих видов новее afterId (новые — первыми): быстрое обновление окна
+    QList<HistoryItem> getHistoryNewer(const QStringList &types, int afterId);
+    // Какие из этих id ещё есть в истории (остальные удалены лимитом/повтором)
+    QSet<int> existingHistoryIds(const QList<int> &ids);
+    // Для поиска: id и начало текста (до maxChars символов) — без огромных логов целиком
+    QList<QPair<int, QString>> getTextHeads(int limit, bool asc, int maxChars);
+    // Записи по списку id — в том же порядке
+    QList<HistoryItem> getHistoryByIds(const QList<int> &ids);
     QList<HistoryItem> getHistoryPage(const QStringList &types, int limit, int offset, bool asc);
 
     // Удалить одну запись истории по её id.

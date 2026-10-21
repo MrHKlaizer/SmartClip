@@ -753,6 +753,14 @@ Turn on: Settings → Accessibility → Visual effects → Animation effects.</t
         <source>Настройки — доступно обновление %1</source>
         <translation>Settings — update %1 available</translation>
     </message>
+    <message>
+        <source>▶  Смотреть</source>
+        <translation>▶  Watch</translation>
+    </message>
+    <message>
+        <source>📂  Показать в папке</source>
+        <translation>📂  Show in folder</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1233,6 +1241,34 @@ When the limit is exceeded, the oldest entries of that kind are removed.</transl
     <message>
         <source>Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки.</source>
         <translation>While you scroll the history, a scale beside the column shows which day the cards are from.</translation>
+    </message>
+    <message>
+        <source>+ Папка</source>
+        <translation>+ Folder</translation>
+    </message>
+    <message>
+        <source>Автозахват записей и аудио</source>
+        <translation>Auto-capture recordings and audio</translation>
+    </message>
+    <message>
+        <source>Добавить папку, за которой следить</source>
+        <translation>Add a folder to watch</translation>
+    </message>
+    <message>
+        <source>Добавить стандартные папки: клипы Xbox Game Bar, «Записи экрана», «Звукозаписи»</source>
+        <translation>Add the standard folders: Xbox Game Bar clips, “Screen Recordings”, “Sound Recordings”</translation>
+    </message>
+    <message>
+        <source>Папка с записями</source>
+        <translation>Recordings folder</translation>
+    </message>
+    <message>
+        <source>Следит за папками: новое видео (Xbox Game Bar, «Ножницы») появится в колонке картинок, аудио (Звукозапись и т.п.) — в колонке текстов. Клик по карточке — вставить файл в Telegram, Discord и т.д. Папок может быть несколько — у каждого они свои.</source>
+        <translation>Watches folders: new videos (Xbox Game Bar, Snipping Tool) appear in the images column, audio (Sound Recorder etc.) in the texts column. Click a card to paste the file into Telegram, Discord, etc. You can add several folders — everyone has their own.</translation>
+    </message>
+    <message>
+        <source>Стандартные</source>
+        <translation>Standard</translation>
     </message>
 </context>
 <context>
