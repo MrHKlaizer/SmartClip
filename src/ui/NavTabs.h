@@ -35,6 +35,7 @@
 #include <QApplication>
 #include "Anim.h"
 #include "SmartButton.h"   // SmartButton::iconFontFamily() — системный шрифт значков
+#include "SmoothScroll.h"  // Плавная прокрутка разделов
 
 // ─── Боковое меню ────────────────────────────────────────────────────────────
 class SideNav : public QWidget
@@ -271,11 +272,21 @@ public:
 
     void addTab(QWidget *page, const QString &label, QChar glyph)
     {
-        // Колёсико над содержимым раздела (см. eventFilter)
-        page->installEventFilter(this);
-        for (QWidget *child : page->findChildren<QWidget*>())
+        // Каждый раздел прокручивается сам. Раньше прокручивалась только
+        // «История», а длинные разделы растягивали окно за край экрана.
+        auto *area = qobject_cast<QScrollArea *>(page);
+        if (!area) {
+            area = new QScrollArea();
+            area->setWidgetResizable(true);
+            area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            area->setFrameShape(QFrame::NoFrame);
+            area->setWidget(page);
+        }
+        new SmoothScroller(area);  // Плавная прокрутка, как у колонок SmartClip
+        // Колёсико над полями значений (см. eventFilter)
+        for (QWidget *child : area->findChildren<QWidget*>())
             child->installEventFilter(this);
-        m_stack->addWidget(page);
+        m_stack->addWidget(area);
         m_nav->addItem(label, glyph);
         m_labels << label;
         if (m_stack->count() == 1) setCurrentIndex(0);
@@ -308,75 +319,29 @@ public:
     }
 
 protected:
-    // Колёсико над содержимым раздела:
-    //  • длинный раздел сначала прокручивается сам;
-    //  • у края следующая прокрутка переключает на соседний раздел — но только
-    //    после короткой паузы у края, чтобы инерция не проскакивала разделы;
-    //  • списки и числовые поля меняют значение колёсиком, только если по ним
-    //    кликнули (иначе при листании случайно менялись настройки).
+    // Колёсико над содержимым раздела прокручивает ТОЛЬКО этот раздел
+    // (переключать разделы колёсиком — над меню слева, см. SideNav).
+    // Списки и числовые поля меняют значение колёсиком, только если по ним
+    // кликнули — иначе при прокрутке случайно менялись настройки.
     bool eventFilter(QObject *obj, QEvent *e) override
     {
         if (e->type() != QEvent::Wheel) return false;
-        auto *we = static_cast<QWheelEvent *>(e);
-        auto *w  = qobject_cast<QWidget *>(obj);
-        const int dy = we->angleDelta().y();
-        if (!w || dy == 0) return false;
-
+        auto *w = qobject_cast<QWidget *>(obj);
         const bool valueWidget = qobject_cast<QAbstractSpinBox *>(w) || qobject_cast<QComboBox *>(w);
-        if (valueWidget && w->hasFocus()) return false;  // Выбрано кликом — пусть меняет значение
+        if (!valueWidget || w->hasFocus()) return false;
 
-        // Была ли перед этим событием пауза (новый жест колёсика/тачпада)
-        const bool afterPause = !m_lastWheel.isValid() || m_lastWheel.elapsed() > 300;
-        m_lastWheel.restart();
-
-        // Прокручиваемый раздел и ему ещё есть куда ехать — прокручиваем
-        QWidget *page = m_stack->currentWidget();
-        QScrollArea *area = qobject_cast<QScrollArea *>(page);
-        if (!area && page) area = page->findChild<QScrollArea *>();
-        if (area) {
-            QScrollBar *sb = area->verticalScrollBar();
-            const bool canScroll = dy < 0 ? sb->value() < sb->maximum() : sb->value() > sb->minimum();
-            if (canScroll) {
-                m_armed = false;                 // Этим жестом листаем содержимое
-                if (!valueWidget) return false;  // Обычная прокрутка Qt
-                // Над полем значения — прокручиваем раздел вместо смены значения
-                QWheelEvent copy(we->position(), we->globalPosition(), we->pixelDelta(),
-                                 we->angleDelta(), we->buttons(), we->modifiers(),
-                                 we->phase(), we->inverted());
-                QApplication::sendEvent(area->viewport(), &copy);
-                return true;
-            }
-        }
-
-        // Край раздела (или раздел без прокрутки) — переключение на соседний.
-        // Только новым жестом после паузы: если крутить без остановки, у края
-        // ничего не происходит (иначе инерция проскакивала бы через разделы).
-        // Один жест — не больше одного раздела.
-        if (afterPause) { m_armed = true; m_wheelAcc = 0; }
-        if (!m_armed) return true;
-        m_wheelAcc += dy;
-        if (qAbs(m_wheelAcc) >= 120) {
-            const int i = currentIndex() + (m_wheelAcc < 0 ? +1 : -1);
-            m_wheelAcc = 0;
-            m_armed = false;
-            if (i >= 0 && i < count()) {
-                // Новый длинный раздел открываем с начала (листаем вниз) или
-                // с конца (листаем вверх) — ДО переключения, чтобы анимация
-                // сразу показала правильное место
-                if (QScrollArea *na = qobject_cast<QScrollArea *>(m_stack->widget(i))) {
-                    QScrollBar *sb = na->verticalScrollBar();
-                    sb->setValue(dy < 0 ? sb->minimum() : sb->maximum());
-                }
-                setCurrentIndex(i);
-            }
+        // Над полем значения — прокручиваем раздел вместо смены значения
+        auto *we = static_cast<QWheelEvent *>(e);
+        if (auto *area = qobject_cast<QScrollArea *>(m_stack->currentWidget())) {
+            QWheelEvent copy(area->viewport()->mapFromGlobal(we->globalPosition()),
+                             we->globalPosition(), we->pixelDelta(), we->angleDelta(),
+                             we->buttons(), we->modifiers(), we->phase(), we->inverted());
+            QApplication::sendEvent(area->viewport(), &copy);
         }
         return true;
     }
 
 private:
-    QElapsedTimer   m_lastWheel;    // Последнее событие колёсика над содержимым
-    bool            m_armed = false; // Этот жест может переключить раздел
-    int             m_wheelAcc = 0;
     SideNav        *m_nav     = nullptr;
     QWidget        *m_content = nullptr;
     QLabel         *m_title   = nullptr;

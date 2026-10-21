@@ -46,7 +46,8 @@
 #include <QComboBox>            // Выпадающий список
 #include <QLineEdit>            // Однострочное текстовое поле
 #include <QListWidget>          // Список элементов
-#include <QScrollArea>          // Прокручиваемая область
+#include <QScrollArea>
+#include <QScreen>          // Прокручиваемая область
 #include <QAbstractButton>      // Базовый класс для SdCloseBtn
 #include <QMouseEvent>          // Событие мыши (для перетаскивания диалога)
 #include <QMenu>                // Контекстное меню (не используется напрямую)
@@ -1649,6 +1650,16 @@ void SettingsDialog::setPendingUpdate(const QString &version, const QString &url
 // ─── showEvent — плавное появление окна настроек ─────────────────────────────
 void SettingsDialog::showEvent(QShowEvent *e)
 {
+    // Размер — по экрану (разделы прокручиваются, окно не должно вылезать
+    // за край), и ровно по центру экрана, где открыт SmartClip
+    QScreen *scr = parentWidget() ? parentWidget()->screen() : screen();
+    if (scr) {
+        const QRect av = scr->availableGeometry();
+        const QSize sz(qMin(qMax(minimumWidth(), 900), av.width() - 40),
+                       qMin(qMax(minimumHeight(), 820), av.height() - 40));
+        resize(sz);
+        move(av.center() - QPoint(sz.width() / 2, sz.height() / 2));
+    }
     QDialog::showEvent(e);
     m_anim->onShow();
 }
