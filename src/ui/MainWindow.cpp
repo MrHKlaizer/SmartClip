@@ -96,6 +96,7 @@
 #include <algorithm>    // std::sort, std::reverse, std::min, std::max
 #include <functional>   // std::function — для рекурсивных лямбд
 #include <windows.h>    // Win32 API: HWND, INPUT, SendInput, SetForegroundWindow
+#include <atomic>
 #include <windowsx.h>
 #include <ShObjIdl.h>   // IShellItemImageFactory — миниатюры видео через Shell
 
@@ -2083,11 +2084,16 @@ static void sendPaste()
 // ─── Окно без захвата фокуса: глобальные хуки ────────────────────────────────
 // Пока SmartClip на экране, фокус остаётся у программы пользователя. Поэтому
 // клавиши и клики мимо нам нужно ловить самим (см. MainWindow.h).
+//
+// Хуки клавиатуры и мыши работают в СВОЁМ потоке. Windows ждёт ответа хука на
+// каждое движение мыши во всей системе: пока они жили в потоке интерфейса,
+// любая заминка SmartClip (перестройка Истории после Закрепов и т.п.) делала
+// мышь рваной и «замедленной» на всём компьютере.
 namespace {
-MainWindow   *s_hookOwner = nullptr;
-HHOOK         s_kbHook    = nullptr;
-HHOOK         s_mouseHook = nullptr;
-HWINEVENTHOOK s_fgHook    = nullptr;
+std::atomic<MainWindow *> s_hookOwner{nullptr};
+HANDLE        s_hookThread   = nullptr;
+DWORD         s_hookThreadId = 0;
+HWINEVENTHOOK s_fgHook       = nullptr;
 
 bool isOwnWindow(HWND h)
 {
@@ -2117,12 +2123,14 @@ LRESULT CALLBACK keyboardHook(int code, WPARAM wp, LPARAM lp)
                            || (vk >= VK_BROWSER_BACK && vk <= VK_LAUNCH_APP2)
                            || vk == VK_NUMLOCK || vk == VK_SCROLL || vk == VK_PAUSE || vk == VK_SLEEP;
         // Сочетания с Ctrl/Alt/Win (горячие клавиши, Alt+Tab) не трогаем
-        if (!(kb->flags & LLKHF_INJECTED) && !modifier && !weAreForeground()
+        MainWindow *owner = s_hookOwner;
+        if (owner && !(kb->flags & LLKHF_INJECTED) && !modifier && !weAreForeground()
             && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_LWIN) && !held(VK_RWIN)) {
             const unsigned scan = kb->scanCode;
             const bool ext = (kb->flags & LLKHF_EXTENDED) != 0;
-            QMetaObject::invokeMethod(s_hookOwner, [vk, scan, ext]() {
-                if (s_hookOwner) s_hookOwner->onHookKey(vk, scan, ext);
+            // В поток интерфейса — очередью; сам хук отвечает Windows сразу
+            QMetaObject::invokeMethod(owner, [vk, scan, ext]() {
+                if (MainWindow *o = s_hookOwner) o->onHookKey(vk, scan, ext);
             }, Qt::QueuedConnection);
             return 1;  // Клавишу «съели» — программа под нами её не получит
         }
@@ -2133,10 +2141,11 @@ LRESULT CALLBACK keyboardHook(int code, WPARAM wp, LPARAM lp)
 // Любой клик: решаем на следующем шаге цикла событий, был ли он мимо SmartClip
 LRESULT CALLBACK mouseHook(int code, WPARAM wp, LPARAM lp)
 {
-    if (code == HC_ACTION && s_hookOwner
+    MainWindow *owner = s_hookOwner;
+    if (code == HC_ACTION && owner
         && (wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN || wp == WM_MBUTTONDOWN)) {
-        QMetaObject::invokeMethod(s_hookOwner, []() {
-            if (s_hookOwner) s_hookOwner->onGlobalClick();
+        QMetaObject::invokeMethod(owner, []() {
+            if (MainWindow *o = s_hookOwner) o->onGlobalClick();
         }, Qt::QueuedConnection);
     }
     return CallNextHookEx(nullptr, code, wp, lp);
@@ -2145,10 +2154,11 @@ LRESULT CALLBACK mouseHook(int code, WPARAM wp, LPARAM lp)
 // Сменилось активное окно (Alt+Tab, клик по панели задач и т.п.)
 void CALLBACK foregroundHook(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD)
 {
-    if (!s_hookOwner) return;
+    MainWindow *owner = s_hookOwner;
+    if (!owner) return;
     const quintptr h = reinterpret_cast<quintptr>(hwnd);
-    QMetaObject::invokeMethod(s_hookOwner, [h]() {
-        if (s_hookOwner) s_hookOwner->onForegroundChanged(h);
+    QMetaObject::invokeMethod(owner, [h]() {
+        if (MainWindow *o = s_hookOwner) o->onForegroundChanged(h);
     }, Qt::QueuedConnection);
 }
 
@@ -2159,6 +2169,23 @@ bool onOtherMonitor(HWND our, HWND h)
     if (!our || !h) return false;
     HMONITOR m = MonitorFromWindow(GetAncestor(h, GA_ROOT), MONITOR_DEFAULTTONULL);
     return m && m != MonitorFromWindow(our, MONITOR_DEFAULTTONEAREST);
+}
+
+// Поток хуков: ставит хуки и крутит свой цикл сообщений, пока не придёт WM_QUIT
+DWORD WINAPI hookThreadProc(LPVOID readyEvent)
+{
+    MSG msg;
+    PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE);  // Создаём очередь до сигнала «готов»
+    HHOOK kb    = SetWindowsHookExW(WH_KEYBOARD_LL, keyboardHook, GetModuleHandleW(nullptr), 0);
+    HHOOK mouse = SetWindowsHookExW(WH_MOUSE_LL, mouseHook, GetModuleHandleW(nullptr), 0);
+    SetEvent(static_cast<HANDLE>(readyEvent));
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if (kb)    UnhookWindowsHookEx(kb);
+    if (mouse) UnhookWindowsHookEx(mouse);
+    return 0;
 }
 
 // Куда можно вставлять. Панель задач (SmartClip открыли из трея) и сам
@@ -2181,10 +2208,16 @@ void MainWindow::installInputHooks()
     // перехватывать клавиатуру и мышь пользователя
     if (testAttribute(Qt::WA_DontShowOnScreen)) return;
     s_hookOwner = this;
-    if (!s_kbHook)
-        s_kbHook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboardHook, GetModuleHandleW(nullptr), 0);
-    if (!s_mouseHook)
-        s_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, mouseHook, GetModuleHandleW(nullptr), 0);
+    if (!s_hookThread) {
+        HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        s_hookThread = CreateThread(nullptr, 0, hookThreadProc, ready, 0, &s_hookThreadId);
+        if (s_hookThread) {
+            SetThreadPriority(s_hookThread, THREAD_PRIORITY_HIGHEST);  // Мышь — без задержек
+            WaitForSingleObject(ready, 1000);
+        }
+        CloseHandle(ready);
+    }
+    // Смена активного окна — событие без ожидания, его можно и в потоке интерфейса
     if (!s_fgHook)
         s_fgHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
                                    foregroundHook, 0, 0, WINEVENT_OUTOFCONTEXT);
@@ -2193,8 +2226,13 @@ void MainWindow::installInputHooks()
 void MainWindow::removeInputHooks()
 {
     s_hookOwner = nullptr;
-    if (s_kbHook)    { UnhookWindowsHookEx(s_kbHook);    s_kbHook = nullptr; }
-    if (s_mouseHook) { UnhookWindowsHookEx(s_mouseHook); s_mouseHook = nullptr; }
+    if (s_hookThread) {
+        PostThreadMessageW(s_hookThreadId, WM_QUIT, 0, 0);
+        WaitForSingleObject(s_hookThread, 1000);
+        CloseHandle(s_hookThread);
+        s_hookThread = nullptr;
+        s_hookThreadId = 0;
+    }
     if (s_fgHook)    { UnhookWinEvent(s_fgHook);         s_fgHook = nullptr; }
 }
 

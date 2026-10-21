@@ -22,6 +22,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
+#include <QHash>
 #include <QEvent>
 #include <QMouseEvent>
 #include <QMediaPlayer>
@@ -92,13 +93,19 @@ public:
 
     // Сменился «владелец» или звук — карточки перерисовывают свои кнопки.
     // ctx — карточка: удалили её — подписка снимается сама.
+    // (Раньше удалённые подписки оставались пустыми строками в списке, и он
+    //  рос с каждой перестройкой карточек.)
     void listen(QObject *ctx, std::function<void()> f)
     {
-        m_listeners.append(f);
-        const int idx = m_listeners.size() - 1;
-        QObject::connect(ctx, &QObject::destroyed, this, [this, idx]() { m_listeners[idx] = nullptr; });
+        const quint64 id = ++m_nextListener;
+        m_listeners.insert(id, std::move(f));
+        QObject::connect(ctx, &QObject::destroyed, this, [this, id]() { m_listeners.remove(id); });
     }
-    void notify() { for (const auto &f : m_listeners) if (f) f(); }
+    void notify()
+    {
+        const auto all = m_listeners;  // Копия: обработчик может удалить карточку
+        for (const auto &f : all) if (f) f();
+    }
 
 private:
     explicit Playback(QObject *parent) : QObject(parent)
@@ -118,7 +125,8 @@ private:
             if (st == QMediaPlayer::EndOfMedia) { m_player->setPosition(0); m_player->pause(); }
         });
     }
-    QList<std::function<void()>> m_listeners;
+    QHash<quint64, std::function<void()>> m_listeners;
+    quint64 m_nextListener = 0;
     QMediaPlayer     *m_player = nullptr;
     QAudioOutput     *m_out = nullptr;
     QPointer<QObject> m_owner;
