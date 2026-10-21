@@ -151,6 +151,14 @@ QJsonObject exportAll(Database *db)
     for (const char *k : kAnimKinds) speeds[k] = s.animSpeed(k);
     look["animSpeed"] = speeds;
     cfg["appearance"] = look;
+    // Полоска файлов (2.2). Папки не переносим — на другом компьютере пути свои
+    QJsonObject files;
+    files["strip"] = s.filesStrip();
+    files["days"]  = s.filesDays();
+    files["max"]   = s.filesMax();
+    files["view"]  = s.filesView();
+    files["types"] = QJsonArray::fromStringList(s.filesTypes());
+    cfg["files"] = files;
     root["settings"] = cfg;
 
     return root;
@@ -314,6 +322,18 @@ ImportResult importFromFile(Database *db, const QString &path)
             const QJsonObject speeds = look["animSpeed"].toObject();
             for (const char *k : kAnimKinds)
                 if (speeds.contains(k)) s.setAnimSpeed(k, speeds[k].toInt());
+        }
+        if (cfg.contains("files")) {
+            const QJsonObject files = cfg["files"].toObject();
+            if (files.contains("strip")) s.setFilesStrip(files["strip"].toBool());
+            if (files.contains("days"))  s.setFilesDays(files["days"].toInt());
+            if (files.contains("max"))   s.setFilesMax(files["max"].toInt());
+            if (files.contains("view"))  s.setFilesView(files["view"].toString());
+            if (files.contains("types")) {
+                QStringList types;
+                for (const QJsonValue &t : files["types"].toArray()) types << t.toString();
+                s.setFilesTypes(types);
+            }
         }
         if (cfg.contains("excludedApps")) {
             QStringList excl;
