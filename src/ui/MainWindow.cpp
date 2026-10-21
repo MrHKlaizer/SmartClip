@@ -1570,6 +1570,7 @@ void MainWindow::hideAnimated()
     // пропускает клики насквозь), а настоящий hide() — когда анимация доиграла.
     m_hidePending = true;
     removeInputHooks();  // Окно уходит — клавиши сразу снова идут в программу пользователя
+    if (m_imageViewer) m_imageViewer->hide();
     const int seq = ++m_hideSeq;
     auto hideNow = [this, seq]() {
         if (seq == m_hideSeq && m_hidePending) {
@@ -1877,7 +1878,8 @@ void MainWindow::onHookKey(unsigned vk, unsigned scan, bool extended)
     if (!isOpen()) return;
     if (vk == VK_ESCAPE) {
         // Как Esc в окне: сначала закрываем просмотр картинки
-        if (m_imageViewer && m_imageViewer->isVisible()) m_imageViewer->hide();
+        if (m_imageViewer && m_imageViewer->isVisible() && !m_imageViewer->isClosing())
+            m_imageViewer->closeAnimated();
         else hideAnimated();
         return;
     }
@@ -2076,7 +2078,7 @@ void MainWindow::showImageContextMenu(int id, const QString &filepath,
 {
     RoundedMenu menu(this);
 
-    menu.addAction(tr("🔍  Просмотреть"), [this, filepath]() { showImageViewer(filepath); });
+    menu.addAction(tr("🔍  Просмотреть"), [this, filepath, card]() { showImageViewer(filepath, card); });
     menu.addSeparator();
     menu.addAction(tr("📌  Закрепить"),   [this, filepath]() { pinImage(filepath); });
     menu.addSeparator();
@@ -2155,9 +2157,9 @@ void MainWindow::deleteCard(int id, QLabel *card)
     }
 }
 
-void MainWindow::showImageViewer(const QString &filepath)
+void MainWindow::showImageViewer(const QString &filepath, QWidget *source)
 {
-    m_imageViewer->showImage(filepath);
+    m_imageViewer->showImage(filepath, source);
 }
 
 // confirmTwice — двойное подтверждение для опасных действий.
@@ -2799,8 +2801,8 @@ void MainWindow::loadPins(bool allFolders)
                 }
                 RoundedMenu menu(this);
 
-                menu.addAction(tr("🔍  Просмотреть"), [this, fp = pin.filepath]() {
-                    showImageViewer(fp);
+                menu.addAction(tr("🔍  Просмотреть"), [this, fp = pin.filepath, card]() {
+                    showImageViewer(fp, card);
                 });
                 menu.addSeparator();
 
@@ -4039,6 +4041,7 @@ void MainWindow::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
     removeInputHooks();
+    if (m_imageViewer) m_imageViewer->hide();  // Отдельное окно — прячем вместе с SmartClip
     // Окно спрятано без анимации ухода (вставка по клику на карточку) —
     // убираем пустую сцену. Прозрачное окно поверх экрана в полноэкранной
     // игре может снижать FPS, держать его без дела нельзя.
@@ -4054,8 +4057,8 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         // Сначала закрываем просмотр картинки, если он открыт. Раньше Esc прятал
         // всё окно, а просмотрщик оставался «открытым» и при следующем показе
         // SmartClip висел поверх всего.
-        if (m_imageViewer && m_imageViewer->isVisible())
-            m_imageViewer->hide();
+        if (m_imageViewer && m_imageViewer->isVisible() && !m_imageViewer->isClosing())
+            m_imageViewer->closeAnimated();
         else
             hideAnimated();
     } else

@@ -669,6 +669,14 @@
         <source>Выделение переезжает, раздел выезжает с проявлением</source>
         <translation>Виділення переїжджає, розділ виїжджає з проявленням</translation>
     </message>
+    <message>
+        <source>Просмотр картинок</source>
+        <translation>Перегляд картинок</translation>
+    </message>
+    <message>
+        <source>Картинка вырастает из карточки, при закрытии — обратно</source>
+        <translation>Картинка виростає з картки, при закритті — назад</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>

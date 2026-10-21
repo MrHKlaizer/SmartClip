@@ -19,6 +19,10 @@
 // QPixmap — контейнер для хранения изображения в памяти видеокарты.
 // Оптимизирован для быстрого вывода на экран (в отличие от QImage, который хранит пиксели в RAM).
 #include <QPixmap>
+#include <QPointer>
+#include <QTimer>
+#include <QElapsedTimer>
+#include <QEasingCurve>
 
 // ─── Класс ImageViewer ────────────────────────────────────────────────────────
 // Полноэкранный просмотрщик. Создаётся каждый раз когда пользователь кликает
@@ -34,7 +38,13 @@ public:
 
     // Загрузить изображение из файла и отобразить его на весь экран.
     // filepath — абсолютный путь к файлу (jpg, png, bmp и т.д.)
-    void showImage(const QString &filepath);
+    // source — карточка, из которой открыли: картинка «вырастает» из неё
+    // и при закрытии улетает обратно (окно 🖌 → «Просмотр картинок»).
+    void showImage(const QString &filepath, QWidget *source = nullptr);
+
+    // Закрыть с анимацией (двойной клик, Esc). Обычный hide() — мгновенно.
+    void closeAnimated();
+    bool isClosing() const { return m_closing; }
 
 // ─── Обработчики событий (protected) ─────────────────────────────────────────
 // protected означает что эти методы доступны только внутри класса и в наследниках.
@@ -67,20 +77,47 @@ private:
     // Вызывается при открытии нового изображения.
     void resetView();
 
+    // Анимация появления/ухода: m_t от 0 (картинка в карточке, фон прозрачный)
+    // до 1 (картинка на своём месте, фон затемнён)
+    QRectF sourceRect() const;    // Где картинка лежит в карточке (координаты просмотрщика)
+    QRectF targetRect() const;    // Где она на экране сейчас (масштаб + смещение)
+    bool flying() const { return m_flying; }
+    void startFlight(qreal to, int durationMs, QEasingCurve curve);
+    // Один кадр на точном таймере (~165 кадров/с, как остальные анимации 2.0):
+    // полёт картинки и плавный зум колёсиком
+    void tick();
+    void applyZoom(qreal newScale, QPointF anchor);  // Масштаб вокруг точки (курсора)
+
+    QPointer<QWidget>  m_source;
+    QTimer             m_tick;
+    QElapsedTimer      m_clock;        // Время полёта
+    QElapsedTimer      m_frameClock;   // Время между кадрами (для зума)
+    qint64             m_lastFrame = 0;
+    QEasingCurve       m_curve;
+    qreal              m_from = 0, m_to = 1;
+    int                m_duration = 1;
+    bool               m_flying = false;
+    bool               m_clockStarted = false;  // Время пошло с первого кадра на экране
+    qreal              m_t = 1.0;
+    bool               m_closing = false;
+    // Картинка, заранее уменьшенная до размера на экране: в полёте и при
+    // небольшом масштабе рисуем её, а не огромный оригинал (скриншот 4K)
+    QPixmap            m_display;
+
     // ─── Данные ───────────────────────────────────────────────────────────────
     QPixmap m_pixmap;           // Само изображение в памяти видеокарты
 
     qreal   m_scale = 1.0;      // Текущий коэффициент масштабирования.
                                  // 1.0 = оригинальный размер, 2.0 = вдвое больше, 0.5 = вдвое меньше.
-                                 // qreal = double (псевдоним для повышенной точности)
+    qreal   m_scaleTarget = 1.0; // К какому масштабу плавно едем (колёсико)
+    QPointF m_zoomAnchor;       // Точка под курсором, вокруг которой идёт зум
 
-    QPoint  m_offset;           // Смещение изображения относительно центра экрана в пикселях.
-                                 // QPoint = пара координат (x, y)
+    QPointF m_offset;           // Левый верхний угол картинки на экране (дробный — для плавности)
 
     QPoint  m_dragStart;        // Позиция курсора в момент начала перетаскивания.
                                  // Нужна чтобы вычислить насколько сдвинулась мышь.
 
-    QPoint  m_offsetStart;      // Значение m_offset в момент начала перетаскивания.
+    QPointF m_offsetStart;      // Значение m_offset в момент начала перетаскивания.
                                  // Итоговое смещение = m_offsetStart + (текущая мышь - m_dragStart)
 
     bool    m_dragging = false;  // true пока пользователь тащит изображение мышью.

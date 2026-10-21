@@ -231,7 +231,7 @@ private:
     void importAudio();                         // Выбрать аудиофайл и добавить в закрепы
     void deleteCard(int id, QLabel *card);      // Удалить запись истории
     void deletePinCard(int pinId, QLabel *card);// Удалить закреп
-    void showImageViewer(const QString &filepath);          // Открыть полноэкранный просмотрщик
+    void showImageViewer(const QString &filepath, QWidget *source = nullptr);          // Открыть полноэкранный просмотрщик
     void editPin(int id, const QString &content, QLabel *card);  // Редактировать текст закрепа
     void showTagsDialog(int pinId, QWidget *card);          // Диалог редактирования тегов закрепа
 

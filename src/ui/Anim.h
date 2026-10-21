@@ -48,7 +48,7 @@ inline bool systemAllows()
 // ─── Виды анимаций ───────────────────────────────────────────────────────────
 // У каждого вида — свой стиль («Новый» / «Классика») и своя скорость
 // (окно «Оформление», кнопка 🖌). Новый вид = новая строка в Kind и в kinds().
-enum class Kind { Menu, Dialog, WindowOpen, WindowClose, Scroll, Tabs };
+enum class Kind { Menu, Dialog, WindowOpen, WindowClose, Scroll, Tabs, Viewer };
 
 struct KindInfo {
     Kind        kind;
@@ -72,6 +72,8 @@ inline const QList<KindInfo> &kinds()
           QT_TRANSLATE_NOOP("MainWindow", "Плавная, с инерцией и мягким краем") },
         { Kind::Tabs,        "tabs",   QT_TRANSLATE_NOOP("MainWindow", "Вкладки и разделы"),
           QT_TRANSLATE_NOOP("MainWindow", "Выделение переезжает, раздел выезжает с проявлением") },
+        { Kind::Viewer,      "viewer", QT_TRANSLATE_NOOP("MainWindow", "Просмотр картинок"),
+          QT_TRANSLATE_NOOP("MainWindow", "Картинка вырастает из карточки, при закрытии — обратно") },
     };
     return list;
 }

@@ -669,6 +669,14 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
         <source>Выделение переезжает, раздел выезжает с проявлением</source>
         <translation>Markierung gleitet, Bereich gleitet herein</translation>
     </message>
+    <message>
+        <source>Просмотр картинок</source>
+        <translation>Bildansicht</translation>
+    </message>
+    <message>
+        <source>Картинка вырастает из карточки, при закрытии — обратно</source>
+        <translation>Das Bild wächst aus seiner Karte und kehrt beim Schließen zurück</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>

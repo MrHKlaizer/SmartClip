@@ -669,6 +669,14 @@ Turn on: Settings → Accessibility → Visual effects → Animation effects.</t
         <source>Выделение переезжает, раздел выезжает с проявлением</source>
         <translation>Highlight glides over, the section slides in</translation>
     </message>
+    <message>
+        <source>Просмотр картинок</source>
+        <translation>Image viewer</translation>
+    </message>
+    <message>
+        <source>Картинка вырастает из карточки, при закрытии — обратно</source>
+        <translation>The image grows out of its card and flies back on close</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
