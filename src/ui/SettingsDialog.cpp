@@ -70,6 +70,8 @@
 #include <QVariantAnimation>
 #include <QEasingCurve>             // Безопасные ссылки на виджеты из асинхронных обработчиков
 #include <QDir>                 // toNativeSeparators() — слэши → обратные слэши
+#include <QGridLayout>
+#include "FilesStrip.h"         // Files:: — папки и типы полоски файлов
 #include <QDebug>               // qDebug() — вывод в консоль разработчика
 
 // ─── Автозапуск ───────────────────────────────────────────────────────────────
@@ -1403,7 +1405,6 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     ioLayout->addWidget(backupGroup);
     ioLayout->addStretch();
 
-    tabs->addTab(ioTab, tr("Экспорт и импорт"), QChar(0xE8B7));
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Вкладка 5: Специальные возможности (Бета)
@@ -1626,11 +1627,138 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     aboutLayout->addWidget(creditsLbl);
 
     betaLayout->addWidget(betaHintLabel);
-    betaLayout->addWidget(videoGroup);
     betaLayout->addWidget(feedbackBtn);
     betaLayout->addWidget(aboutGroup);
     betaLayout->addStretch();
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка: Файлы — полоска свежих файлов внизу окна и автозахват записей
+    // ═══════════════════════════════════════════════════════════════════════════
+    auto *filesScroll = new QScrollArea();
+    filesScroll->setWidgetResizable(true);
+    filesScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *filesTab    = new QWidget();
+    auto *filesLayout = new QVBoxLayout(filesTab);
+    filesLayout->setContentsMargins(14, 14, 14, 14);
+    filesLayout->setSpacing(12);
+
+    auto *stripGroup  = new QGroupBox(tr("Полоска файлов"), filesTab);
+    auto *stripLayout = new QVBoxLayout(stripGroup);
+    stripLayout->setSpacing(8);
+    auto *stripCheck = new SdCheckBox(tr("Показывать свежие файлы внизу окна"), stripGroup);
+    stripCheck->setChecked(AppSettings::get().filesStrip());
+    auto *stripHint = new QLabel(
+        tr("Полоска над поиском: наведи мышь — раскроется. Клик вставляет файл, "
+           "его можно и перетащить мышкой в Telegram, Discord и т.д."), stripGroup);
+    stripHint->setWordWrap(true);
+    stripHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
+
+    // Папки полоски: список, «+ Папка», «Стандартные», «Удалить»
+    auto *stripList = new QListWidget(stripGroup);
+    stripList->setFixedHeight(72);
+    for (const QString &f : Files::configuredFolders())
+        stripList->addItem(QDir::toNativeSeparators(f));
+    auto *stripBtnRow = new QHBoxLayout();
+    auto *stripAddBtn = new QPushButton(tr("+ Папка"), stripGroup);
+    auto *stripStdBtn = new QPushButton(tr("Стандартные"), stripGroup);
+    auto *stripDelBtn = new QPushButton(tr("✕ Удалить"), stripGroup);
+    stripAddBtn->setStyleSheet(videoAddBtn->styleSheet());
+    stripStdBtn->setStyleSheet(videoAddBtn->styleSheet());
+    stripDelBtn->setStyleSheet(videoDelBtn->styleSheet());
+    for (QPushButton *btn : {stripAddBtn, stripStdBtn, stripDelBtn}) btn->setCursor(Qt::PointingHandCursor);
+    stripAddBtn->setToolTip(tr("Добавить папку, файлы из которой показывать"));
+    stripStdBtn->setToolTip(tr("Добавить папку «Загрузки»"));
+    stripBtnRow->addWidget(stripAddBtn);
+    stripBtnRow->addWidget(stripStdBtn);
+    stripBtnRow->addStretch();
+    stripBtnRow->addWidget(stripDelBtn);
+    auto stripHas = [stripList](const QString &path) {
+        const QString n = QDir::cleanPath(QDir::fromNativeSeparators(path));
+        for (int i = 0; i < stripList->count(); ++i)
+            if (QDir::cleanPath(QDir::fromNativeSeparators(stripList->item(i)->text()))
+                    .compare(n, Qt::CaseInsensitive) == 0) return true;
+        return false;
+    };
+    connect(stripAddBtn, &QPushButton::clicked, this, [=]() {
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Папка с файлами"));
+        if (!dir.isEmpty() && !stripHas(dir)) stripList->addItem(QDir::toNativeSeparators(dir));
+    });
+    connect(stripStdBtn, &QPushButton::clicked, this, [=]() {
+        for (const QString &f : Files::defaultFolders())
+            if (!stripHas(f)) stripList->addItem(QDir::toNativeSeparators(f));
+    });
+    connect(stripDelBtn, &QPushButton::clicked, this, [stripList]() {
+        delete stripList->takeItem(stripList->currentRow());
+    });
+
+    // Срок, количество, вид
+    auto *stripForm = new QFormLayout();
+    stripForm->setSpacing(8);
+    auto *stripDaysSpin = new QSpinBox(stripGroup);
+    stripDaysSpin->setRange(1, 90);
+    stripDaysSpin->setValue(AppSettings::get().filesDays());
+    stripDaysSpin->setSuffix(tr(" дн."));
+    stripDaysSpin->setFixedWidth(120);
+    auto *stripMaxSpin = new QSpinBox(stripGroup);
+    stripMaxSpin->setRange(5, 100);
+    stripMaxSpin->setSingleStep(5);
+    stripMaxSpin->setValue(AppSettings::get().filesMax());
+    stripMaxSpin->setFixedWidth(120);
+    auto *stripViewCombo = new QComboBox(stripGroup);
+    stripViewCombo->addItem(tr("Плитки"), "tiles");
+    stripViewCombo->addItem(tr("Список"), "list");
+    stripViewCombo->setCurrentIndex(qMax(0, stripViewCombo->findData(AppSettings::get().filesView())));
+    stripViewCombo->setFixedWidth(120);
+    stripForm->addRow(tr("За последние:"), stripDaysSpin);
+    stripForm->addRow(tr("Сколько файлов:"), stripMaxSpin);
+    stripForm->addRow(tr("Вид:"), stripViewCombo);
+
+    stripLayout->addWidget(stripCheck);
+    stripLayout->addWidget(stripHint);
+    stripLayout->addWidget(stripList);
+    stripLayout->addLayout(stripBtnRow);
+    stripLayout->addLayout(stripForm);
+
+    // Какие типы файлов попадают в полоску
+    auto *typesGroup = new QGroupBox(tr("Какие файлы показывать"), filesTab);
+    auto *typesGrid  = new QGridLayout(typesGroup);
+    typesGrid->setHorizontalSpacing(16);
+    typesGrid->setVerticalSpacing(8);
+    const QStringList enabledTypes = AppSettings::get().filesTypes();
+    const QList<QPair<QString, QString>> typeNames = {
+        {"image",    tr("Картинки")},
+        {"video",    tr("Видео")},
+        {"audio",    tr("Аудио")},
+        {"docs",     tr("Документы (PDF, Word, Excel…)")},
+        {"archives", tr("Архивы (ZIP, RAR, 7z…)")},
+        {"programs", tr("Программы и установщики")},
+        {"other",    tr("Остальные")},
+    };
+    QList<QPair<QString, SdCheckBox *>> typeChecks;
+    for (int i = 0; i < typeNames.size(); ++i) {
+        auto *cb = new SdCheckBox(typeNames[i].second, typesGroup);
+        cb->setChecked(enabledTypes.contains(typeNames[i].first));
+        typesGrid->addWidget(cb, i / 2, i % 2);
+        typeChecks.append({typeNames[i].first, cb});
+    }
+
+    // Полоска выключена — её настройки неактивны
+    auto toggleStrip = [=](bool on) {
+        for (QWidget *wgt : std::initializer_list<QWidget *>{stripList, stripAddBtn, stripStdBtn, stripDelBtn,
+                                                             stripDaysSpin, stripMaxSpin, stripViewCombo, typesGroup})
+            wgt->setEnabled(on);
+    };
+    toggleStrip(stripCheck->isChecked());
+    connect(stripCheck, &QCheckBox::toggled, toggleStrip);
+
+    filesLayout->addWidget(stripGroup);
+    filesLayout->addWidget(typesGroup);
+    filesLayout->addWidget(videoGroup);  // Автозахват записей и аудио — тоже про файлы
+    filesLayout->addStretch();
+    filesScroll->setWidget(filesTab);
+
+    tabs->addTab(filesScroll, tr("Файлы"), QChar(0xE8A5));
+    tabs->addTab(ioTab, tr("Экспорт и импорт"), QChar(0xE8B7));
     tabs->addTab(betaTab, tr("Дополнительно"), QChar(0xE946));
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1779,7 +1907,21 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         AppSettings::get().setAutoBackupDays(backupDaysSpin->value());
         AppSettings::get().setAutoBackupPath(backupPathEdit->text().trimmed());
 
-        // Бета: видеомонитор
+        // Файлы: полоска внизу
+        AppSettings::get().setFilesStrip(stripCheck->isChecked());
+        QStringList stripFolders;
+        for (int i = 0; i < stripList->count(); ++i)
+            stripFolders << QDir::fromNativeSeparators(stripList->item(i)->text());
+        AppSettings::get().setFilesFolders(stripFolders);
+        AppSettings::get().setFilesDays(stripDaysSpin->value());
+        AppSettings::get().setFilesMax(stripMaxSpin->value());
+        AppSettings::get().setFilesView(stripViewCombo->currentData().toString());
+        QStringList types;
+        for (const auto &tc : typeChecks)
+            if (tc.second->isChecked()) types << tc.first;
+        AppSettings::get().setFilesTypes(types);
+
+        // Файлы: автозахват записей и аудио
         AppSettings::get().setVideoMonitorEnabled(videoCheck->isChecked());
         QStringList folders;
         for (int i = 0; i < videoList->count(); ++i)

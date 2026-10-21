@@ -1556,4 +1556,105 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <translation>Відео та аудіо відтворюються за допомогою &lt;a style='color:#9cc8ff' href='https://ffmpeg.org'&gt;FFmpeg&lt;/a&gt; (LGPL), інтерфейс — &lt;a style='color:#9cc8ff' href='https://www.qt.io'&gt;Qt&lt;/a&gt; (LGPL). Докладніше — у файлі THIRD_PARTY_NOTICES.txt у теці програми.</translation>
     </message>
 </context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <source>Архивы (ZIP, RAR, 7z…)</source>
+        <translation>Архіви (ZIP, RAR, 7z…)</translation>
+    </message>
+    <message>
+        <source>Аудио</source>
+        <translation>Аудіо</translation>
+    </message>
+    <message>
+        <source>Вид:</source>
+        <translation>Вигляд:</translation>
+    </message>
+    <message>
+        <source>Видео</source>
+        <translation>Відео</translation>
+    </message>
+    <message>
+        <source>Добавить папку «Загрузки»</source>
+        <translation>Додати теку «Завантаження»</translation>
+    </message>
+    <message>
+        <source>Добавить папку, файлы из которой показывать</source>
+        <translation>Додати теку, файли з якої показувати</translation>
+    </message>
+    <message>
+        <source>Документы (PDF, Word, Excel…)</source>
+        <translation>Документи (PDF, Word, Excel…)</translation>
+    </message>
+    <message>
+        <source>За последние:</source>
+        <translation>За останні:</translation>
+    </message>
+    <message>
+        <source>Какие файлы показывать</source>
+        <translation>Які файли показувати</translation>
+    </message>
+    <message>
+        <source>Картинки</source>
+        <translation>Картинки</translation>
+    </message>
+    <message>
+        <source>Остальные</source>
+        <translation>Інші</translation>
+    </message>
+    <message>
+        <source>Папка с файлами</source>
+        <translation>Тека з файлами</translation>
+    </message>
+    <message>
+        <source>Плитки</source>
+        <translation>Плитки</translation>
+    </message>
+    <message>
+        <source>Показывать свежие файлы внизу окна</source>
+        <translation>Показувати свіжі файли внизу вікна</translation>
+    </message>
+    <message>
+        <source>Полоска над поиском: наведи мышь — раскроется. Клик вставляет файл, его можно и перетащить мышкой в Telegram, Discord и т.д.</source>
+        <translation>Смужка над пошуком: наведи мишу — розгорнеться. Клік вставляє файл, його можна й перетягнути мишею в Telegram, Discord тощо.</translation>
+    </message>
+    <message>
+        <source>Полоска файлов</source>
+        <translation>Смужка файлів</translation>
+    </message>
+    <message>
+        <source>Программы и установщики</source>
+        <translation>Програми та інсталятори</translation>
+    </message>
+    <message>
+        <source>Сколько файлов:</source>
+        <translation>Скільки файлів:</translation>
+    </message>
+    <message>
+        <source>Список</source>
+        <translation>Список</translation>
+    </message>
+    <message>
+        <source>Файлы</source>
+        <translation>Файли</translation>
+    </message>
+</context>
+<context>
+    <name>FilesStrip</name>
+    <message>
+        <source>Ничего не найдено</source>
+        <translation>Нічого не знайдено</translation>
+    </message>
+    <message>
+        <source>Свежие файлы · %1</source>
+        <translation>Свіжі файли · %1</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>📋  Вставить</source>
+        <translation>📋  Вставити</translation>
+    </message>
+</context>
 </TS>

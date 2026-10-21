@@ -274,6 +274,7 @@ private:
     int          m_topMediaId = 0;          // ...и картинки/видео
     class QTimer *m_searchTimer = nullptr; // Задержка поиска по истории (не искать на каждую букву)
     ImageViewer *m_imageViewer  = nullptr; // Полноэкранный просмотрщик (создаётся при первом использовании)
+    class FilesStrip  *m_filesStrip = nullptr;  // Свежие файлы внизу по центру
     class VideoViewer *m_videoViewer = nullptr; // Большой просмотр видео (2.1)
 
     // Ожидающее обновление (данные о новой версии от UpdateChecker).

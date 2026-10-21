@@ -243,6 +243,43 @@ public:
     // Одна папка из версий до 2.0.1 (для перехода на список)
     QString legacyVideoPath() const { return m_s.value("beta/videoPath").toString(); }
 
+    // ─── Файлы (Настройки → Файлы, полоска свежих файлов — FilesStrip.h) ─────
+
+    // Показывать полоску свежих файлов внизу окна
+    bool filesStrip() const
+        { return m_s.value("files/strip", true).toBool(); }
+    void setFilesStrip(bool b)
+        { m_s.setValue("files/strip", b); m_s.sync(); }
+
+    // Папки полоски. Ещё не выбирали — Files::configuredFolders() возьмёт «Загрузки»
+    bool hasFilesFolders() const { return m_s.contains("files/folders"); }
+    QStringList filesFolders() const { return m_s.value("files/folders").toStringList(); }
+    void setFilesFolders(const QStringList &l)
+        { m_s.setValue("files/folders", l); m_s.sync(); }
+
+    // Файлы за сколько последних дней и сколько штук показывать
+    int filesDays() const
+        { return qBound(1, m_s.value("files/days", 7).toInt(), 90); }
+    void setFilesDays(int d)
+        { m_s.setValue("files/days", d); m_s.sync(); }
+    int filesMax() const
+        { return qBound(5, m_s.value("files/max", 30).toInt(), 100); }
+    void setFilesMax(int n)
+        { m_s.setValue("files/max", n); m_s.sync(); }
+
+    // Вид раскрытой полоски: "tiles" — плитки, "list" — список
+    QString filesView() const
+        { return m_s.value("files/view", "tiles").toString(); }
+    void setFilesView(const QString &v)
+        { m_s.setValue("files/view", v); m_s.sync(); }
+
+    // Какие типы показывать (image, video, audio, docs, archives, programs, other)
+    QStringList filesTypes() const
+        { return m_s.value("files/types", QStringList{"image", "video", "audio", "docs",
+                                                      "archives", "programs", "other"}).toStringList(); }
+    void setFilesTypes(const QStringList &l)
+        { m_s.setValue("files/types", l); m_s.sync(); }
+
     // ─── Резервные копии (раздел [backup]) ───────────────────────────────────
 
     // Автоматическое создание резервных копий базы данных.

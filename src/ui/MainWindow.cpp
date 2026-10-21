@@ -41,7 +41,8 @@
 #include "ScrollTopButton.h"   // Кнопка «наверх» в колонках
 #include "DateRuler.h"         // Шкала дат при прокрутке
 #include "MediaCards.h"        // Аудио и видео прямо в карточках (2.1)
-#include "VideoViewer.h"       // Большой просмотр видео
+#include "VideoViewer.h"
+#include "FilesStrip.h"       // Большой просмотр видео
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
 #include "core/Database.h"      // SQLite CRUD
 #include "core/AppSettings.h"   // Синглтон настроек
@@ -216,6 +217,48 @@ static QVariant videoPosterWork(const QString &filepath, QSize px)
     }
     if (SUCCEEDED(co)) CoUninitialize();
     return QVariantList{ img, durMs };
+}
+
+// Превью любого файла, как в Проводнике (картинка, кадр видео, значок программы).
+// В фоновом потоке. Значки приходят с прозрачностью, миниатюры фото — без неё.
+static QImage fileThumbWork(const QString &filepath, QSize px)
+{
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    QImage img;
+    IShellItemImageFactory *factory = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(QDir::toNativeSeparators(filepath).toStdWString().c_str(),
+                                              nullptr, IID_PPV_ARGS(&factory))) && factory) {
+        HBITMAP hBmp = nullptr;
+        const SIZE sz = { px.width(), px.height() };
+        if (SUCCEEDED(factory->GetImage(sz, SIIGBF_BIGGERSIZEOK, &hBmp)) && hBmp) {
+            BITMAP bm = {};
+            if (GetObject(hBmp, sizeof(bm), &bm) && bm.bmWidth > 0 && bm.bmHeight > 0) {
+                BITMAPINFOHEADER bi = {};
+                bi.biSize = sizeof(bi);
+                bi.biWidth = bm.bmWidth;
+                bi.biHeight = -bm.bmHeight;  // Сверху вниз
+                bi.biPlanes = 1;
+                bi.biBitCount = 32;
+                bi.biCompression = BI_RGB;
+                img = QImage(bm.bmWidth, bm.bmHeight, QImage::Format_RGB32);
+                HDC dc = GetDC(nullptr);
+                GetDIBits(dc, hBmp, 0, bm.bmHeight, img.bits(), reinterpret_cast<BITMAPINFO *>(&bi), DIB_RGB_COLORS);
+                ReleaseDC(nullptr, dc);
+                // Есть прозрачность (значок) — сохраняем её
+                bool alpha = false;
+                for (int y = 0; y < img.height() && !alpha; ++y) {
+                    const QRgb *line = reinterpret_cast<const QRgb *>(img.constScanLine(y));
+                    for (int x = 0; x < img.width(); ++x)
+                        if (qAlpha(line[x]) != 0) { alpha = true; break; }
+                }
+                if (alpha) img.reinterpretAsFormat(QImage::Format_ARGB32_Premultiplied);
+            }
+            DeleteObject(hBmp);
+        }
+        factory->Release();
+    }
+    if (SUCCEEDED(co)) CoUninitialize();
+    return img;
 }
 
 // Карточка видео: строка с названием сверху (nameH = 0 — без названия),
@@ -1244,6 +1287,7 @@ void MainWindow::setupLayout()
     // а полную перезагрузку делаем через 200мс после последней буквы
     // (раньше закрепы перестраивались целиком на КАЖДУЮ букву).
     connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString &q) {
+        if (m_filesStrip) m_filesStrip->setFilter(q);  // Файлы внизу — тоже по имени
         if (m_viewMode == ViewMode::History)
             filterHistory(q);
         else
@@ -1255,6 +1299,21 @@ void MainWindow::setupLayout()
     mainLayout->addWidget(m_foldersBar);   // скрыта по умолчанию
     mainLayout->addLayout(middleLayout);
     mainLayout->addWidget(m_bottomPanel);
+
+    // ── Свежие файлы — внизу по центру, над поиском (и в Истории, и в Закрепах)
+    m_filesStrip = new FilesStrip(this, m_scale, &fileThumbWork);
+    m_filesStrip->onPick = [this](const QString &f) { pasteFile(f); };
+    m_filesStrip->onDropped = [this]() { hideAnimated(); };  // Перетащили в другую программу
+    m_filesStrip->onMenu = [this](const QString &f, const QPoint &globalPos) {
+        RoundedMenu menu(this);
+        menu.addAction(tr("📋  Вставить"), [this, f]() { pasteFile(f); });
+        menu.addAction(tr("Открыть"), [f]() { QDesktopServices::openUrl(QUrl::fromLocalFile(f)); });
+        menu.addAction(tr("📂  Показать в папке"), [f]() {
+            QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(f)});
+        });
+        menu.exec(globalPos);
+    };
+    m_centerSpacer->installEventFilter(this);  // Полоска стоит по центру середины окна
 }
 
 // ─── loadHistory ─────────────────────────────────────────────────────────────
@@ -1675,6 +1734,12 @@ void MainWindow::showWindow()
     if (!screen) screen = QApplication::primaryScreen();
     setGeometry(screen->geometry());
 
+    // Свежие файлы — перечитываем папки в фоне при каждом открытии
+    if (m_filesStrip) {
+        m_filesStrip->collapseNow();
+        m_filesStrip->reload();
+    }
+
     // Запоминаем окно, которое было активным ДО нас — вернём ему фокус при вставке
     m_prevFocusHwnd = reinterpret_cast<quintptr>(GetForegroundWindow());
 
@@ -1960,6 +2025,9 @@ bool MainWindow::isInteractiveArea(const QPoint &pos) const
     // Если виджета нет или это прозрачный центр — клик проваливается
     if (!child || child == m_centerSpacer)
         return false;
+    // Над видимой частью полоски файлов — прозрачно (она растёт вверх внутри себя)
+    if (m_filesStrip && child == m_filesStrip && !m_filesStrip->hitVisible(m_filesStrip->mapFrom(this, pos)))
+        return false;
 
     return true;
 }
@@ -2084,6 +2152,15 @@ void CALLBACK foregroundHook(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD,
     }, Qt::QueuedConnection);
 }
 
+// Окно h — на другом мониторе, не там, где открыт SmartClip (our).
+// Работа на соседнем мониторе SmartClip не закрывает.
+bool onOtherMonitor(HWND our, HWND h)
+{
+    if (!our || !h) return false;
+    HMONITOR m = MonitorFromWindow(GetAncestor(h, GA_ROOT), MONITOR_DEFAULTTONULL);
+    return m && m != MonitorFromWindow(our, MONITOR_DEFAULTTONEAREST);
+}
+
 // Куда можно вставлять. Панель задач (SmartClip открыли из трея) и сам
 // SmartClip — некуда: тогда только кладём в буфер обмена.
 bool isPasteTarget(HWND h)
@@ -2172,6 +2249,9 @@ void MainWindow::onGlobalClick()
     // Прозрачный центр SmartClip клики пропускает, и WindowFromPoint вернёт
     // окно под нами — значит, клик мимо
     if (isOwnWindow(GetAncestor(WindowFromPoint(pt), GA_ROOT))) return;
+    // Клик на другом мониторе — SmartClip остаётся открытым
+    if (MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+        != MonitorFromWindow(reinterpret_cast<HWND>(winId()), MONITOR_DEFAULTTONEAREST)) return;
     if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
     hideAnimated();
 }
@@ -2184,6 +2264,12 @@ void MainWindow::onForegroundChanged(quintptr hwnd)
     // наш диалог) — это не повод закрываться
     HWND prev = reinterpret_cast<HWND>(m_prevFocusHwnd);
     if (prev && GetAncestor(h, GA_ROOT) == GetAncestor(prev, GA_ROOT)) return;
+    // Перешли в окно на другом мониторе — остаёмся открытыми, а вставлять
+    // теперь будем туда, где пользователь работает
+    if (onOtherMonitor(reinterpret_cast<HWND>(winId()), h)) {
+        if (isPasteTarget(h)) m_prevFocusHwnd = hwnd;
+        return;
+    }
     closeAllOnDeactivate();
 }
 
@@ -4178,6 +4264,7 @@ void MainWindow::showSettings()
     if (m_rightArc) m_rightArc->refresh();
     if (m_leftRuler)  m_leftRuler->refresh();
     if (m_rightRuler) m_rightRuler->refresh();
+    if (m_filesStrip) m_filesStrip->reload();  // Папки, типы, вид полоски файлов
     update();
 }
 
@@ -4229,7 +4316,9 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
             if (activating)
                 GetWindowThreadProcessId(activating, &activatingPid);
 
-            if (activatingPid != GetCurrentProcessId())
+            // Фокус ушёл в окно на другом мониторе — не прячемся
+            if (activatingPid != GetCurrentProcessId()
+                && !onOtherMonitor(reinterpret_cast<HWND>(winId()), activating))
                 hideAnimated();
         }
     }
@@ -4248,6 +4337,8 @@ void MainWindow::closeAllOnDeactivate()
     if (HWND fg = GetForegroundWindow())
         GetWindowThreadProcessId(fg, &pid);
     if (pid == GetCurrentProcessId()) return;
+    // Пользователь работает на другом мониторе — ничего не закрываем
+    if (onOtherMonitor(reinterpret_cast<HWND>(winId()), GetForegroundWindow())) return;
 
     // Открытые окна поверх SmartClip — сверху вниз
     QList<QPointer<QDialog>> dialogs;
@@ -4278,6 +4369,10 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
     // Клик в поиск — забираем фокус, чтобы туда можно было печатать
     if (obj == m_searchEdit && event->type() == QEvent::MouseButtonPress)
         activateForInput();
+
+    if (obj == m_centerSpacer && m_filesStrip &&
+        (event->type() == QEvent::Move || event->type() == QEvent::Resize))
+        m_filesStrip->place(m_centerSpacer->geometry());
 
     if ((obj == m_historyBtn || obj == m_pinsBtn) && m_viewPill &&
         (event->type() == QEvent::Move || event->type() == QEvent::Resize)) {

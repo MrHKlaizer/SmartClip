@@ -1556,4 +1556,105 @@ Im Standardplayer öffnen?</translation>
         <translation>Video und Audio werden mit &lt;a style='color:#9cc8ff' href='https://ffmpeg.org'&gt;FFmpeg&lt;/a&gt; (LGPL) abgespielt, die Oberfläche nutzt &lt;a style='color:#9cc8ff' href='https://www.qt.io'&gt;Qt&lt;/a&gt; (LGPL). Details stehen in THIRD_PARTY_NOTICES.txt im Programmordner.</translation>
     </message>
 </context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <source>Архивы (ZIP, RAR, 7z…)</source>
+        <translation>Archive (ZIP, RAR, 7z…)</translation>
+    </message>
+    <message>
+        <source>Аудио</source>
+        <translation>Audio</translation>
+    </message>
+    <message>
+        <source>Вид:</source>
+        <translation>Ansicht:</translation>
+    </message>
+    <message>
+        <source>Видео</source>
+        <translation>Video</translation>
+    </message>
+    <message>
+        <source>Добавить папку «Загрузки»</source>
+        <translation>Ordner „Downloads“ hinzufügen</translation>
+    </message>
+    <message>
+        <source>Добавить папку, файлы из которой показывать</source>
+        <translation>Ordner hinzufügen, dessen Dateien angezeigt werden</translation>
+    </message>
+    <message>
+        <source>Документы (PDF, Word, Excel…)</source>
+        <translation>Dokumente (PDF, Word, Excel…)</translation>
+    </message>
+    <message>
+        <source>За последние:</source>
+        <translation>Aus den letzten:</translation>
+    </message>
+    <message>
+        <source>Какие файлы показывать</source>
+        <translation>Welche Dateien anzeigen</translation>
+    </message>
+    <message>
+        <source>Картинки</source>
+        <translation>Bilder</translation>
+    </message>
+    <message>
+        <source>Остальные</source>
+        <translation>Sonstige</translation>
+    </message>
+    <message>
+        <source>Папка с файлами</source>
+        <translation>Ordner mit Dateien</translation>
+    </message>
+    <message>
+        <source>Плитки</source>
+        <translation>Kacheln</translation>
+    </message>
+    <message>
+        <source>Показывать свежие файлы внизу окна</source>
+        <translation>Neue Dateien unten im Fenster anzeigen</translation>
+    </message>
+    <message>
+        <source>Полоска над поиском: наведи мышь — раскроется. Клик вставляет файл, его можно и перетащить мышкой в Telegram, Discord и т.д.</source>
+        <translation>Leiste über der Suche: zum Aufklappen mit der Maus darüberfahren. Ein Klick fügt die Datei ein, sie lässt sich auch mit der Maus in Telegram, Discord usw. ziehen.</translation>
+    </message>
+    <message>
+        <source>Полоска файлов</source>
+        <translation>Dateileiste</translation>
+    </message>
+    <message>
+        <source>Программы и установщики</source>
+        <translation>Programme und Installer</translation>
+    </message>
+    <message>
+        <source>Сколько файлов:</source>
+        <translation>Anzahl Dateien:</translation>
+    </message>
+    <message>
+        <source>Список</source>
+        <translation>Liste</translation>
+    </message>
+    <message>
+        <source>Файлы</source>
+        <translation>Dateien</translation>
+    </message>
+</context>
+<context>
+    <name>FilesStrip</name>
+    <message>
+        <source>Ничего не найдено</source>
+        <translation>Nichts gefunden</translation>
+    </message>
+    <message>
+        <source>Свежие файлы · %1</source>
+        <translation>Neue Dateien · %1</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>📋  Вставить</source>
+        <translation>📋  Einfügen</translation>
+    </message>
+</context>
 </TS>
