@@ -26,13 +26,15 @@
 #include <QHBoxLayout>   // Горизонтальное расположение (слева направо)
 #include <QScrollArea>   // Прокручиваемая область (для длинных списков карточек)
 #include <QLineEdit>     // Строка ввода (поле поиска)
-#include <QPointer>      // «Умный» указатель Qt: автоматически обнуляется если объект удалён
+#include <QPointer>
+#include "Anim.h"         // Анимации 2.0 (Anim::Piece)      // «Умный» указатель Qt: автоматически обнуляется если объект удалён
 #include <QList>         // Динамический список
 #include <QPair>         // Пара значений (для отложенной загрузки картинок)
 #include <QLabel>        // Виджет для текста и изображений (карточки истории)
 #include <QPushButton>   // Кнопки
 #include <QPixmap>       // Изображение в видеопамяти
 #include <QSet>          // Множество уникальных значений (выбранные пины)
+#include "core/Database.h" // HistoryItem
 #include "SmartButton.h" // Наша кастомная кнопка с ручной отрисовкой
 
 // Предварительные объявления — нам нужны только указатели:
@@ -59,6 +61,15 @@ public slots:
     // Вызывается из HotkeyManager когда пользователь нажимает горячую клавишу.
     void showWindow();
 
+    // Закрыть окно с анимацией ухода (обратная лесенка, в 2 раза быстрее).
+    // Для вставки по клику на карточку — обычный hide(), без задержки.
+    void hideAnimated();
+
+    // Открыто ли окно для пользователя (видно и не уезжает прямо сейчас).
+    // Во время анимации ухода isVisible() ещё true — для переключения по
+    // горячей клавише нужно именно это.
+    bool isOpen() const;
+
     // Пометить историю как «устаревшую» — при следующем показе окна перезагрузить.
     // Вызывается ClipboardManager когда в истории появилась новая запись.
     void markHistoryDirty();
@@ -67,9 +78,29 @@ public slots:
     void pasteTextSilent(const QString &text);
 
     // Обработать уведомление о новой версии от UpdateChecker.
-    // Показывает диалог с предложением обновиться (только для major/minor обновлений).
+    // Запоминает обновление; сам диалог открывается по клику в трее или при открытии окна.
+    // sha256 — контрольная сумма файла из GitHub (может быть пустой).
     void onUpdateAvailable(const QString &version, const QString &downloadUrl,
-                           const QString &releaseNotes = {});
+                           const QString &releaseNotes = {}, const QString &sha256 = {});
+
+    // Открыть диалог для найденного обновления (клик по уведомлению в трее).
+    void showPendingUpdate();
+
+    // ─── Окно без захвата фокуса ─────────────────────────────────────────────
+    // SmartClip открывается, не отбирая фокус у программы, где работает
+    // пользователь, — иначе поля, которые закрываются при потере фокуса
+    // (переименование файла и т.п.), закрывались, и вставлять было некуда.
+    // Фокус берём, только когда пользователь начинает печатать или кликает в поиск.
+    // Эти методы вызывают глобальные хуки клавиатуры/мыши (MainWindow.cpp).
+    void onHookKey(unsigned vk, unsigned scan, bool extended); // Клавиша, пока мы без фокуса
+    void onGlobalClick();                                      // Клик где угодно на экране
+    void onForegroundChanged(quintptr hwnd);                   // Сменилось активное окно
+
+    // Показать диалог скачивания обновления БЕЗ проверки major/minor.
+    // Вызывается кнопкой «Обновить» из плашки в настройках — пользователь
+    // уже явно попросил обновление, фильтровать patch-версии нельзя.
+    void showUpdateDialog(const QString &version, const QString &downloadUrl,
+                          const QString &releaseNotes = {});
 
 // ─── Сигналы ─────────────────────────────────────────────────────────────────
 signals:
@@ -87,11 +118,14 @@ signals:
 
 // ─── Переопределённые методы QWidget ─────────────────────────────────────────
 protected:
+    // Следим за кнопками История/Закрепы, чтобы «пилюля» стояла на месте
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
     // Обработка нативных Windows-сообщений (WM_ACTIVATE, WM_NCHITTEST и т.д.)
     // Нужен для реализации «исчезания при потере фокуса» и кастомного хиттестинга.
     bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
 
-    // Скрытие окна — прячем также blur-окна через dcompBlurHide().
+    // Скрытие окна — снимаем хуки ввода и прячем просмотр картинок.
     void hideEvent(QHideEvent *event) override;
 
     // Нажатие клавиши — Escape закрывает окно.
@@ -120,7 +154,7 @@ private:
 
     // ─── Drag-to-reorder закрепов ─────────────────────────────────────────────
     // Пользователь может перетаскивать карточки закрепов мышью чтобы изменить порядок.
-    class ClickableCard *m_dragCard   = nullptr;  // Карточка которую тащим
+    QPointer<class ClickableCard> m_dragCard;     // Карточка которую тащим (QPointer — сам обнулится, если карточку удалят)
     QVBoxLayout         *m_dragLayout = nullptr;  // Колонка в которой перемещаем
 
     void onCardDragMoved(const QPoint &globalPos);   // Обновить положение во время перетаскивания
@@ -145,7 +179,18 @@ private:
 
     // ─── Загрузка и отображение данных ───────────────────────────────────────
     void setupLayout();                     // Создать все виджеты и лейауты (вызывается в конструкторе)
-    void loadHistory();                     // Загрузить историю из БД и отрисовать карточки
+    void loadHistory(bool textsOnly = false); // Загрузить историю из БД (textsOnly — только тексты, для поиска)
+    // Подгрузка истории порциями при прокрутке
+    void appendTexts();                      // Следующие TEXT_PAGE текстов
+    void appendMedia();                      // Следующие MEDIA_PAGE картинок/видео
+    void maybeLoadMore(class QScrollArea *area); // Долистали почти до конца — подгрузить
+    // insertAt — место в колонке (-1 — в конец)
+    void addTextCard(const HistoryItem &entry, int insertAt = -1);
+    void addImageCard(const HistoryItem &entry, int insertAt = -1);
+    void addVideoCard(const HistoryItem &entry, int insertAt = -1);
+    void addAudioCard(const HistoryItem &entry, int insertAt = -1);  // Аудио — в колонке текстов
+    void refreshHistory();                   // После копирования: только новые карточки сверху
+    void restoreHistoryPos();                // Вернуть Историю туда, где остановились
     void loadPins(bool allFolders = false); // Загрузить закрепы (всей папки или всех сразу)
     void loadFolderBar();                   // Перестроить полосу папок (вкладки папок в режиме Pins)
     void filterHistory(const QString &query);  // Фильтровать историю по тексту поиска
@@ -168,6 +213,8 @@ private:
     // ─── Профили быстрой вставки ─────────────────────────────────────────────
     void showProfilesMenu();    // Выпадающее меню со списком профилей
     void showProfileManager();  // Диалог создания/редактирования/удаления профилей
+    void closeAllOnDeactivate();   // Клик мимо при открытом окне/меню — закрыть всё
+    QList<Anim::Piece> buildOpenPieces(); // Куски окна для анимации сборки/ухода
 
     // ─── Настройки ───────────────────────────────────────────────────────────
     void showSettings();  // Открыть SettingsDialog
@@ -187,7 +234,7 @@ private:
     void importAudio();                         // Выбрать аудиофайл и добавить в закрепы
     void deleteCard(int id, QLabel *card);      // Удалить запись истории
     void deletePinCard(int pinId, QLabel *card);// Удалить закреп
-    void showImageViewer(const QString &filepath);          // Открыть полноэкранный просмотрщик
+    void showImageViewer(const QString &filepath, QWidget *source = nullptr);          // Открыть полноэкранный просмотрщик
     void editPin(int id, const QString &content, QLabel *card);  // Редактировать текст закрепа
     void showTagsDialog(int pinId, QWidget *card);          // Диалог редактирования тегов закрепа
 
@@ -198,7 +245,34 @@ private:
 
     // ─── Данные ───────────────────────────────────────────────────────────────
     Database    *m_db;                   // База данных SmartClip
+    QPointer<Anim::SnapshotOverlay> m_overlay; // Текущая сцена анимации окна (появление/уход)
+    class SmoothScroller *m_leftScroller  = nullptr; // Плавная прокрутка левой колонки
+    class SmoothScroller *m_rightScroller = nullptr; // ...и правой
+    class CardArc        *m_leftArc  = nullptr;      // Прокрутка «Дуга» левой колонки
+    class CardArc        *m_rightArc = nullptr;      // ...и правой
+    class DateRuler      *m_leftRuler  = nullptr;    // Шкала дат левой колонки
+    class DateRuler      *m_rightRuler = nullptr;    // ...и правой
+    bool         m_hidePending = false;  // Уход начался, окно спрячется через пару кадров
+    int          m_hideSeq     = 0;      // Счётчик: отменяет устаревшее отложенное скрытие
     bool         m_historyDirty = true;  // true = история устарела, нужно перезагрузить при показе
+    // Подгрузка истории порциями: сколько уже показано и всё ли закончилось
+    static constexpr int TEXT_PAGE  = 40;   // Текстов за раз
+    static constexpr int MEDIA_PAGE = 20;   // Картинок/видео за раз
+    int          m_textOffset  = 0;
+    int          m_mediaOffset = 0;
+    bool         m_textsDone   = false;
+    bool         m_mediaDone   = false;
+    bool         m_searching   = false;     // Идёт поиск — тексты берём по m_searchIds
+    // Где остановились в Истории перед переходом в Закрепы
+    struct HistoryPos { int left = 0, right = 0, texts = 0, media = 0; bool valid = false; };
+    HistoryPos   m_histPos;
+    QList<int>   m_searchIds;               // id всех совпадений поиска (показываются порциями)
+    QList<QPair<int, QString>> m_searchIndex; // Для поиска: id и начало текста (из базы, один раз)
+    bool         m_searchIndexValid = false;  // Индекс актуален (история не менялась)
+    bool         m_historyLoaded = false;   // История уже загружена — можно обновлять быстро
+    int          m_topTextId  = 0;          // Самая свежая загруженная запись: тексты
+    int          m_topMediaId = 0;          // ...и картинки/видео
+    class QTimer *m_searchTimer = nullptr; // Задержка поиска по истории (не искать на каждую букву)
     ImageViewer *m_imageViewer  = nullptr; // Полноэкранный просмотрщик (создаётся при первом использовании)
 
     // Ожидающее обновление (данные о новой версии от UpdateChecker).
@@ -206,6 +280,8 @@ private:
     QString m_pendingUpdateVersion;   // "1.1.0" или пусто
     QString m_pendingUpdateUrl;       // Ссылка на установщик
     QString m_pendingReleaseNotes;    // Описание что нового
+    QString m_pendingUpdateSha256;    // Контрольная сумма установщика (из GitHub API)
+    bool    m_updatePromptShown = false; // Диалог обновления уже предлагали в этой сессии
 
     // ─── Масштаб интерфейса ───────────────────────────────────────────────────
     // Читается из AppSettings ОДИН РАЗ при запуске. Для смены нужен перезапуск.
@@ -224,6 +300,20 @@ private:
     // quintptr — беззнаковое целое размером с указатель (32 или 64 бит).
     quintptr m_prevFocusHwnd = 0;
 
+    void activateForInput();   // Забрать фокус (пользователь начал печатать / кликнул в поиск)
+    void installInputHooks();  // Хуки клавиатуры/мыши/смены окна — пока окно на экране
+    void removeInputHooks();
+    void finishPaste();        // Спрятаться и вставить (Ctrl+V) в окно, где работал пользователь
+
+    // Перетаскивание закрепов (карточка едет за мышью, соседи расступаются)
+    void beginCardDrag(const QPoint &globalPos);
+    void stopCardDrag();   // Прервать перетаскивание (список перестраивают)
+    class CardArc *arcFor(QVBoxLayout *layout) const;
+    class QScrollArea *scrollFor(QVBoxLayout *layout) const;
+    QPointer<QWidget> m_dragPlaceholder;        // Пустое место, куда встанет карточка
+    QPoint            m_dragGrab;               // За какую точку карточку взяли
+    class QTimer     *m_dragScrollTimer = nullptr; // Автопрокрутка у края колонки
+
     // ─── Виджеты интерфейса ───────────────────────────────────────────────────
     QVBoxLayout *m_leftLayout;           // Лейаут левой колонки (карточки)
     QVBoxLayout *m_rightLayout;          // Лейаут правой колонки
@@ -239,6 +329,7 @@ private:
     SmartButton *m_pinsBtn     = nullptr; // Кнопка «Закрепы»
     SmartButton *m_editBtn     = nullptr; // Кнопка мультивыбора (только в режиме Закрепов)
     SmartButton *m_profilesBtn = nullptr; // Кнопка «Профили»
+    QWidget     *m_viewPill    = nullptr; // «Пилюля» активной вкладки История/Закрепы
     SmartButton *m_sortBtn     = nullptr; // Кнопка сортировки
     SmartButton *m_clearBtn    = nullptr; // Кнопка очистки истории
     SmartButton *m_settingsBtn = nullptr; // Кнопка настроек (шестерёнка)
@@ -251,4 +342,5 @@ private:
     static constexpr int BASE_BOT   = 54;  // Высота нижней панели, px
     static constexpr int BASE_LEFT  = 300; // Ширина левой колонки, px
     static constexpr int BASE_RIGHT = 300; // Ширина правой колонки, px
+    static constexpr int ARC_AMP    = 26;  // Запас колонки к центру под выдвинутую мышью карточку, px
 };

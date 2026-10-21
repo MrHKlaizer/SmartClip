@@ -17,7 +17,7 @@
 #include <QImage>          // Хранение изображения в памяти (RGB/ARGB пиксели)
 #include <QDateTime>       // Для генерации уникального имени файла картинки
 #include <QFileInfo>       // Для получения имени exe из полного пути
-#include <QSqlQuery>       // Прямые SQL-запросы для проверки дедупликации
+#include <QCryptographicHash> // Хэш картинки — отличить новую картинку от повтора
 
 // ─── Конструктор ─────────────────────────────────────────────────────────────
 ClipboardManager::ClipboardManager(Database *db, QObject *parent)
@@ -104,7 +104,7 @@ void ClipboardManager::stop()
 LRESULT CALLBACK ClipboardManager::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     // Восстанавливаем указатель на наш объект из GWLP_USERDATA.
-    // Без этого мы не можем обратиться к m_db, m_suppressNext и т.д.
+    // Без этого мы не можем обратиться к m_db, m_suppressTimer и т.д.
     ClipboardManager *self = reinterpret_cast<ClipboardManager*>(
         GetWindowLongPtr(hwnd, GWLP_USERDATA)
     );
@@ -112,11 +112,21 @@ LRESULT CALLBACK ClipboardManager::WndProc(HWND hwnd, UINT msg, WPARAM wParam, L
     // ── Обработка события «буфер изменился» ───────────────────────────────────
     if (msg == WM_CLIPBOARDUPDATE && self) {
 
-        // Если MainWindow сам положил данные в буфер — пропускаем событие,
-        // чтобы не записывать вставку в историю повторно.
-        if (self->m_suppressNext) {
-            self->m_suppressNext = false;
-            return DefWindowProc(hwnd, msg, wParam, lParam);
+        // Если буфер записал сам SmartClip (вставка из истории/закрепов) — не
+        // сохраняем это повторно. Определяем по ВЛАДЕЛЬЦУ буфера: Qt записывает
+        // через скрытое окно нашего же процесса. Так настоящее Ctrl+C сразу
+        // после вставки не теряется (раньше игнорировалось всё подряд 800мс).
+        {
+            DWORD ownerPid = 0;
+            if (HWND owner = GetClipboardOwner())
+                GetWindowThreadProcessId(owner, &ownerPid);
+            if (ownerPid == GetCurrentProcessId())
+                return DefWindowProc(hwnd, msg, wParam, lParam);
+            // Владельца нет (pasteFile открывает буфер без окна) — тогда
+            // подстраховываемся коротким окном после нашей вставки
+            if (!ownerPid && self->m_suppressTimer.isValid() &&
+                self->m_suppressTimer.elapsed() < 800)
+                return DefWindowProc(hwnd, msg, wParam, lParam);
         }
 
         // ── Определяем из какого приложения скопировали ───────────────────────
@@ -158,7 +168,10 @@ LRESULT CALLBACK ClipboardManager::WndProc(HWND hwnd, UINT msg, WPARAM wParam, L
         // Например, KeePass.exe — чтобы пароли не попадали в историю.
         if (!appName.isEmpty()) {
             const QStringList excluded = cfg.excludedApps();
-            for (const QString &ex : excluded) {
+            for (QString ex : excluded) {
+                ex = ex.trimmed();
+                // Пользователь мог ввести «KeePass.exe» — сравниваем без расширения
+                if (ex.endsWith(".exe", Qt::CaseInsensitive)) ex.chop(4);
                 if (appName.compare(ex, Qt::CaseInsensitive) == 0) {
                     CloseClipboard();
                     return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -171,60 +184,25 @@ LRESULT CALLBACK ClipboardManager::WndProc(HWND hwnd, UINT msg, WPARAM wParam, L
         // ════════════════════════════════════════════════════════════════════════
         // CF_UNICODETEXT — стандартный формат текста в буфере (UTF-16).
         if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
-
-            // ── Дебаунс 500мс ─────────────────────────────────────────────────
-            // Chrome и Electron-приложения шлют WM_CLIPBOARDUPDATE дважды:
-            // сначала с "черновым" содержимым, потом с финальным — с задержкой
-            // 100–400мс. 500мс гарантирует что второй вызов будет проигнорирован.
-            if (self->m_lastTextTimer.isValid() && self->m_lastTextTimer.elapsed() < 500) {
-                CloseClipboard();
-                return DefWindowProc(hwnd, msg, wParam, lParam);
-            }
-
             // GetClipboardData(CF_UNICODETEXT) → дескриптор глобальной памяти Windows.
+            QString text;
             HANDLE hData = GetClipboardData(CF_UNICODETEXT);
             if (hData) {
                 // GlobalLock → получаем указатель на данные (блокируем дескриптор).
-                wchar_t *raw = static_cast<wchar_t*>(GlobalLock(hData));
-                if (raw) {
-                    QString text = QString::fromWCharArray(raw);  // wchar_t* → QString
-                    GlobalUnlock(hData);  // Разблокируем дескриптор
-                    CloseClipboard();
-
-                    // Фильтрация:
-                    if (text.trimmed().isEmpty())
-                        return DefWindowProc(hwnd, msg, wParam, lParam);
-
-                    if (text.length() < cfg.minTextLength())  // Слишком короткий
-                        return DefWindowProc(hwnd, msg, wParam, lParam);
-
-                    // Дедупликация: не сохранять если такой текст уже есть
-                    if (cfg.deduplication()) {
-                        QSqlQuery q;
-                        q.prepare("SELECT COUNT(*) FROM history WHERE type='text' AND content=:c");
-                        q.bindValue(":c", text);
-                        q.exec();
-                        if (q.next() && q.value(0).toInt() > 0)
-                            return DefWindowProc(hwnd, msg, wParam, lParam);
-                    }
-
-                    // Сохраняем в историю
-                    self->m_lastTextTimer.restart();  // Сбрасываем дебаунс-таймер
-                    qDebug() << "Скопирован текст длиной:" << text.length() << "из" << appName;
-                    self->m_db->addHistory("text", text, "", appName);
-                    emit self->historyChanged();  // Сигнал → MainWindow обновит список
-                    return DefWindowProc(hwnd, msg, wParam, lParam);
+                if (auto *raw = static_cast<wchar_t*>(GlobalLock(hData))) {
+                    text = QString::fromWCharArray(raw);  // wchar_t* → QString
+                    GlobalUnlock(hData);
                 }
-                GlobalUnlock(hData);
             }
-            CloseClipboard();
+            CloseClipboard();  // Буфер держим открытым как можно меньше
+            if (!text.isNull())
+                self->handleText(text, appName);
             return DefWindowProc(hwnd, msg, wParam, lParam);
         }
 
         // ════════════════════════════════════════════════════════════════════════
         //  ИЗОБРАЖЕНИЕ
         // ════════════════════════════════════════════════════════════════════════
-        // Проверяем разные форматы картинок которые могут быть в буфере:
         // CF_BITMAP  — BitBlt/PrintScreen, Paint
         // CF_DIB     — Device Independent Bitmap (Telegram, Discord, браузеры)
         // CF_DIBV5   — расширенный DIB с цветовым профилем (фоторедакторы)
@@ -232,55 +210,92 @@ LRESULT CALLBACK ClipboardManager::WndProc(HWND hwnd, UINT msg, WPARAM wParam, L
                         IsClipboardFormatAvailable(CF_DIB)    ||
                         IsClipboardFormatAvailable(CF_DIBV5);
 
-        if (hasImage) {
-            // Пользователь выключил сохранение картинок — пропускаем
-            if (!cfg.saveImages()) {
-                CloseClipboard();
-                return DefWindowProc(hwnd, msg, wParam, lParam);
-            }
+        // Закрываем буфер — Qt сам его откроет через QClipboard::image()
+        CloseClipboard();
 
-            // ── Дебаунс 1500мс для картинок ───────────────────────────────────
-            // Win+Shift+S (Snipping Tool / Ножницы) — отправляет WM_CLIPBOARDUPDATE
-            // два раза: сначала «пустой» снимок, затем финальный.
-            // Задержка 1500мс гарантирует что мы получим только финальный.
-            if (self->m_lastImageTimer.isValid() && self->m_lastImageTimer.elapsed() < 1500) {
-                CloseClipboard();
-                return DefWindowProc(hwnd, msg, wParam, lParam);
-            }
-
-            // Закрываем буфер — Qt сам его откроет через QClipboard::image()
-            CloseClipboard();
-
+        if (hasImage && cfg.saveImages()) {
             // QClipboard::image() умеет читать CF_BITMAP, CF_DIB, CF_DIBV5 автоматически.
             QImage image = QApplication::clipboard()->image();
-            if (!image.isNull()) {
-                self->m_lastImageTimer.restart();  // Сбрасываем дебаунс-таймер
-
-                QString fmt     = cfg.imageFormat();  // "PNG" или "JPEG"
-                // Качество: для JPEG используем настройку, для PNG не нужно (-1 = по умолчанию)
-                int     quality = (fmt == "JPEG") ? cfg.imageQuality() : -1;
-                QString ext     = (fmt == "JPEG") ? "jpg" : "png";
-
-                // Уникальное имя файла на основе текущего времени в миллисекундах
-                QString filename = QString("img_%1.%2")
-                    .arg(QDateTime::currentMSecsSinceEpoch()).arg(ext);
-                QString filepath = self->m_db->imagesPath() + "/" + filename;
-
-                // Сохраняем картинку на диск
-                if (image.save(filepath, fmt.toUtf8().constData(), quality)) {
-                    qDebug() << "Скопирована картинка:" << filename << "из" << appName;
-                    // Для изображений: content = "" (файл хранится по filepath)
-                    self->m_db->addHistory("image", "", filepath, appName);
-                    emit self->historyChanged();
-                }
-            }
-            return DefWindowProc(hwnd, msg, wParam, lParam);
+            if (!image.isNull())
+                self->handleImage(image, appName);
         }
-
-        // Формат не поддерживается (файл, HTML и т.д.) — закрываем буфер
-        CloseClipboard();
+        return DefWindowProc(hwnd, msg, wParam, lParam);
     }
 
     // Все остальные сообщения — стандартная обработка Windows
     return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+// ─── Обработка скопированного текста ─────────────────────────────────────────
+void ClipboardManager::handleText(const QString &text, const QString &appName)
+{
+    auto &cfg = AppSettings::get();
+
+    // Фильтрация:
+    if (text.trimmed().isEmpty()) return;
+    if (text.length() < cfg.minTextLength()) return;  // Слишком короткий
+
+    const bool recent = m_lastTextTimer.isValid() && m_lastTextTimer.elapsed() < 2000;
+
+    // Тот же текст пришёл повторно почти сразу — это двойное событие от
+    // Chrome/Electron, а не новое копирование. Игнорируем.
+    if (recent && text == m_lastText) return;
+
+    // ДРУГОЙ текст пришёл в первые 300мс — приложение сначала положило
+    // «черновик», потом финальную версию. Оставляем только финальную.
+    if (recent && m_lastTextTimer.elapsed() < 300 && m_lastTextId > 0)
+        m_db->deleteHistory(m_lastTextId);
+
+    // Дедупликация: такой текст уже есть в истории → убираем старую копию,
+    // чтобы повторно скопированное оказалось наверху (раньше оно просто
+    // не сохранялось и «терялось» где-то глубоко в истории).
+    if (cfg.deduplication())
+        m_db->removeTextDuplicates(text);
+
+    qDebug() << "Скопирован текст длиной:" << text.length() << "из" << appName;
+    m_lastTextId = m_db->addHistory("text", text, "", appName);
+    m_lastText   = text;
+    m_lastTextTimer.restart();
+    emit historyChanged();  // Сигнал → MainWindow обновит список
+}
+
+// ─── Обработка скопированной картинки ────────────────────────────────────────
+void ClipboardManager::handleImage(const QImage &image, const QString &appName)
+{
+    auto &cfg = AppSettings::get();
+
+    // Хэш пикселей — чтобы понять, та же это картинка или новая
+    const QImage norm = image.convertToFormat(QImage::Format_ARGB32);
+    QCryptographicHash h(QCryptographicHash::Md5);
+    h.addData(QByteArrayView(reinterpret_cast<const char*>(norm.constBits()),
+                             norm.sizeInBytes()));
+    const QByteArray hash = h.result();
+
+    const bool recent = m_lastImageTimer.isValid() && m_lastImageTimer.elapsed() < 3000;
+    if (recent && hash == m_lastImageHash) return;  // Повторное событие — та же картинка
+
+    // Win+Shift+S шлёт сначала «черновой» снимок, потом финальный.
+    // Если новая картинка пришла сразу за предыдущей — заменяем её.
+    if (recent && m_lastImageTimer.elapsed() < 1500 && m_lastImageId > 0)
+        m_db->deleteHistory(m_lastImageId);  // Удалит и файл, если он не в закрепах
+
+    QString fmt     = cfg.imageFormat();  // "PNG" или "JPEG"
+    // Качество: для JPEG используем настройку, для PNG не нужно (-1 = по умолчанию)
+    int     quality = (fmt == "JPEG") ? cfg.imageQuality() : -1;
+    QString ext     = (fmt == "JPEG") ? "jpg" : "png";
+
+    // Уникальное имя файла на основе текущего времени в миллисекундах
+    QString filename = QString("img_%1.%2")
+        .arg(QDateTime::currentMSecsSinceEpoch()).arg(ext);
+    QString filepath = m_db->imagesPath() + "/" + filename;
+
+    // Сохраняем картинку на диск
+    if (image.save(filepath, fmt.toUtf8().constData(), quality)) {
+        qDebug() << "Скопирована картинка:" << filename << "из" << appName;
+        // Для изображений: content = "" (файл хранится по filepath)
+        m_lastImageId   = m_db->addHistory("image", "", filepath, appName);
+        m_lastImageHash = hash;
+        m_lastImageTimer.restart();
+        emit historyChanged();
+    }
 }

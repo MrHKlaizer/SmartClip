@@ -15,3 +15,10 @@ src/core/Secrets.h
 
 # Databases / local data
 *.db
+
+# Qt Creator служебная папка
+.qtcreator/
+
+# Готовые релизы (загружаются в GitHub Releases, в git не нужны)
+*.zip
+SmartClip_Installer_*.exe

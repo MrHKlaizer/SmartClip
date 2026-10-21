@@ -44,6 +44,9 @@ public:
     // Возвращает false если RegisterHotKey не удался (занят другой программой).
     bool start();
 
+    // Удалось ли занять главную горячую клавишу (false — её заняла другая программа).
+    bool mainHotkeyOk() const { return m_mainHotkeyOk; }
+
     // Снять все регистрации хоткеев, удалить скрытое окно.
     void stop();
 
@@ -70,6 +73,10 @@ signals:
     // Хоткей конкретного профиля нажат — вставить шаблон с profileId.
     void profileHotkeyPressed(int profileId);
 
+    // Новую главную комбинацию занять не удалось (её держит другая программа).
+    // Прежний хоткей уже восстановлен.
+    void mainHotkeyFailed(const QString &hotkey);
+
 private:
     // ─── Данные ───────────────────────────────────────────────────────────────
     HWND m_hwnd = nullptr;     // Скрытое Win32-окно для приёма WM_HOTKEY сообщений.
@@ -82,6 +89,8 @@ private:
     // Используется для перехвата комбинаций с Win-клавишей (Win+C, Win+X и т.д.),
     // которые RegisterHotKey перехватить не умеет.
 
+    bool  m_mainHotkeyOk = true; // Главный хоткей зарегистрирован успешно
+    QString m_currentHotkey;      // Строка рабочего главного хоткея (для отката)
     HHOOK m_llHook = nullptr; // Дескриптор хука (nullptr если хук не установлен).
                                // HHOOK = Handle to Hook (ID хука в системе).
     UINT  m_llVk   = 0;       // Код клавиши которую перехватываем совместно с Win.

@@ -63,6 +63,13 @@ public:
     void setAutostart(bool b)
         { m_s.setValue("system/autostart", b); m_s.sync(); }
 
+    // Работать с правами администратора (через задачу Планировщика, см. AdminMode.h),
+    // чтобы Win+V и вставка работали в окнах, открытых от администратора.
+    bool runAsAdmin() const
+        { return m_s.value("system/runAsAdmin", false).toBool(); }
+    void setRunAsAdmin(bool b)
+        { m_s.setValue("system/runAsAdmin", b); m_s.sync(); }
+
     // Язык интерфейса: "en", "de", "ua". По умолчанию: "en".
     QString language() const
         { return m_s.value("system/language", "en").toString(); }
@@ -78,12 +85,26 @@ public:
 
     // ─── Настройки истории (раздел [history]) ─────────────────────────────────
 
-    // Максимальное количество записей в истории. По умолчанию: 150.
-    // При превышении — самые старые записи автоматически удаляются.
-    int maxHistoryRecords() const
+    // Лимиты истории — ОТДЕЛЬНО для текстов и для картинок (картинки занимают
+    // много места, тексты почти нисколько, общий лимит был неудобен: одни
+    // вытесняли другие). При превышении самые старые записи этого вида удаляются.
+    // Видео из папки записей экрана считаются вместе с картинками.
+    // Начальные значения ставит Database::init() (миграция со старого общего
+    // лимита history/maxRecords) — см. migrateHistoryLimits().
+    int maxTexts() const
+        { return qMax(10, m_s.value("history/maxTexts", 40).toInt()); }
+    void setMaxTexts(int n)
+        { m_s.setValue("history/maxTexts", n); m_s.sync(); }
+    int maxImages() const
+        { return qMax(5, m_s.value("history/maxImages", 20).toInt()); }
+    void setMaxImages(int n)
+        { m_s.setValue("history/maxImages", n); m_s.sync(); }
+
+    // Есть ли ключ в настройках (для миграции)
+    bool has(const QString &key) const { return m_s.contains(key); }
+    // Старый общий лимит (до 2.0): по умолчанию был 150
+    int legacyMaxRecords() const
         { return m_s.value("history/maxRecords", 150).toInt(); }
-    void setMaxHistoryRecords(int n)
-        { m_s.setValue("history/maxRecords", n); m_s.sync(); }
 
     // Автоочистка: удалять записи старше N дней. 0 = выключена.
     int autocleanDays() const
@@ -156,6 +177,39 @@ public:
     void setSolidPanels(bool b)
         { m_s.setValue("ui/solidPanels", b); m_s.sync(); }
 
+    // ─── Оформление и анимации (Настройки → Оформление) ──────────────────────
+
+    // Настройки ОТДЕЛЬНО для каждого вида анимации (kind — "menu", "dialog",
+    // "open", "close"; список видов — в src/ui/Anim.h).
+    //
+    // Шкала дат сбоку колонки при прокрутке (DateRuler.h):
+    // "outer" — у края экрана, "inner" — со стороны центра, "off" — выключена
+    QString dateRuler() const
+        { return m_s.value("ui/dateRuler", "outer").toString(); }
+    void setDateRuler(const QString &s)
+        { m_s.setValue("ui/dateRuler", s); m_s.sync(); }
+
+    // Карточка выезжает и увеличивается при наведении мыши (CardArc.h)
+    bool cardHover() const
+        { return m_s.value("ui/cardHover", true).toBool(); }
+    void setCardHover(bool b)
+        { m_s.setValue("ui/cardHover", b); m_s.sync(); }
+
+    // Стиль прокрутки колонок:
+    // "arc" — дуга-барабан, "smooth" — просто плавная. По умолчанию — дуга.
+    QString scrollStyle() const
+        { return m_s.value("anim/scroll/style", "arc").toString(); }
+    void setScrollStyle(const QString &s)
+        { m_s.setValue("anim/scroll/style", s); m_s.sync(); }
+
+    // Скорость этого вида в процентах: 100 = обычная, 200 = в 2 раза быстрее,
+    // 50 = в 2 раза медленнее. Допустимо 50–200.
+    int animSpeed(const QString &kind) const
+        { return qBound(50, m_s.value("anim/" + kind + "/speed",
+                                      m_s.value("ui/animSpeed", 100)).toInt(), 200); }
+    void setAnimSpeed(const QString &kind, int pct)
+        { m_s.setValue("anim/" + kind + "/speed", qBound(50, pct, 200)); m_s.sync(); }
+
     // Масштаб интерфейса в процентах. Допустимые значения: 75, 90, 100, 110, 125.
     // 100 = стандартный размер. Применяется после перезапуска программы.
     int uiScale() const
@@ -174,20 +228,20 @@ public:
 
     // ─── Бета-функции (раздел [beta]) ─────────────────────────────────────────
 
-    // Включён ли мониторинг папки видеозаписей Xbox Game Bar.
+    // Включён ли автозахват записей экрана и аудио из папок (VideoWatcher).
     bool videoMonitorEnabled() const
         { return m_s.value("beta/videoMonitor", false).toBool(); }
     void setVideoMonitorEnabled(bool b)
         { m_s.setValue("beta/videoMonitor", b); m_s.sync(); }
 
-    // Путь к папке с видеозаписями.
-    // По умолчанию: %USERPROFILE%/Videos/Captures (стандартный путь Xbox Game Bar).
-    QString videoMonitorPath() const {
-        QString def = QDir::homePath() + "/Videos/Captures";
-        return m_s.value("beta/videoPath", def).toString();
-    }
-    void setVideoMonitorPath(const QString &p)
-        { m_s.setValue("beta/videoPath", p); m_s.sync(); }
+    // Папки автозахвата (видео и аудио), которые выбрал пользователь.
+    // Ещё не выбирал — VideoWatcher::configuredFolders() возьмёт стандартные.
+    bool hasMediaFolders() const { return m_s.contains("beta/mediaFolders"); }
+    QStringList mediaFolders() const { return m_s.value("beta/mediaFolders").toStringList(); }
+    void setMediaFolders(const QStringList &l)
+        { m_s.setValue("beta/mediaFolders", l); m_s.sync(); }
+    // Одна папка из версий до 2.0.1 (для перехода на список)
+    QString legacyVideoPath() const { return m_s.value("beta/videoPath").toString(); }
 
     // ─── Резервные копии (раздел [backup]) ───────────────────────────────────
 

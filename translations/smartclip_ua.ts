@@ -120,12 +120,16 @@
         <translation>Очистити %1</translation>
     </message>
     <message>
-        <source>Удалить %1?\nЭто действие нельзя отменить.</source>
-        <translation>Видалити %1?\nЦю дію не можна скасувати.</translation>
+        <source>Удалить %1?
+Это действие нельзя отменить.</source>
+        <translation>Видалити %1?
+Цю дію не можна скасувати.</translation>
     </message>
     <message>
-        <source>Вы точно уверены?\nБудет безвозвратно удалено %1 записей.</source>
-        <translation>Ви впевнені?\n%1 записів буде безповоротно видалено.</translation>
+        <source>Вы точно уверены?
+Будет безвозвратно удалено %1 записей.</source>
+        <translation>Ви впевнені?
+%1 записів буде безповоротно видалено.</translation>
     </message>
     <message>
         <source>Очистить по приложению</source>
@@ -146,12 +150,16 @@
         <translation>Очистити історію %1</translation>
     </message>
     <message>
-        <source>Удалить все записи из %1?\nЭто действие нельзя отменить.</source>
-        <translation>Видалити всі записи з %1?\nЦю дію не можна скасувати.</translation>
+        <source>Удалить все записи из %1?
+Это действие нельзя отменить.</source>
+        <translation>Видалити всі записи з %1?
+Цю дію не можна скасувати.</translation>
     </message>
     <message>
-        <source>Вы точно уверены?\nБудет удалено %1 записей из %2.</source>
-        <translation>Ви впевнені?\nБуде видалено %1 записів з %2.</translation>
+        <source>Вы точно уверены?
+Будет удалено %1 записей из %2.</source>
+        <translation>Ви впевнені?
+Буде видалено %1 записів з %2.</translation>
     </message>
     <message>
         <source>🏷  Переименовать</source>
@@ -463,6 +471,296 @@
         <source>Ошибка: </source>
         <translation>Помилка: </translation>
     </message>
+    <message>
+        <source>Повторить</source>
+        <translation>Повторити</translation>
+    </message>
+    <message>
+        <source>Установка отменена. Нажмите «Повторить», когда будете готовы.</source>
+        <translation>Встановлення скасовано. Натисніть «Повторити», коли будете готові.</translation>
+    </message>
+    <message>
+        <source>Не удалось запустить установщик (код %1).</source>
+        <translation>Не вдалося запустити інсталятор (код %1).</translation>
+    </message>
+    <message>
+        <source>Сервер вернул пустой файл. Попробуйте позже.</source>
+        <translation>Сервер повернув порожній файл. Спробуйте пізніше.</translation>
+    </message>
+    <message>
+        <source>Файл повреждён при скачивании (не совпала контрольная сумма).</source>
+        <translation>Файл пошкоджено під час завантаження (контрольна сума не збігається).</translation>
+    </message>
+    <message>
+        <source>Ошибка записи файла: </source>
+        <translation>Помилка запису файлу: </translation>
+    </message>
+    <message>
+        <source>Распаковка...</source>
+        <translation>Розпакування...</translation>
+    </message>
+    <message>
+        <source>Installer.exe не найден в архиве</source>
+        <translation>Installer.exe не знайдено в архіві</translation>
+    </message>
+    <message>
+        <source>Выбрать папку</source>
+        <translation>Вибрати папку</translation>
+    </message>
+    <message>
+        <source>Папка «%1» уже существует.</source>
+        <translation>Папка «%1» вже існує.</translation>
+    </message>
+    <message>
+        <source>Удалить папку</source>
+        <translation>Видалити папку</translation>
+    </message>
+    <message>
+        <source>Удалить папку «%1» и все её подпапки?
+Закрепы из неё не удалятся — они переместятся во «Все».</source>
+        <translation>Видалити папку «%1» і всі її підпапки?
+Закріплені з неї не видаляться — вони перемістяться у «Усі».</translation>
+    </message>
+    <message>
+        <source>Файл изображения не найден</source>
+        <translation>Файл зображення не знайдено</translation>
+    </message>
+    <message>
+        <source>Удалить закрепы</source>
+        <translation>Видалити закріплені</translation>
+    </message>
+    <message>
+        <source>Удалить выбранные закрепы (%1)?
+Это действие нельзя отменить.</source>
+        <translation>Видалити вибрані закріплені (%1)?
+Цю дію не можна скасувати.</translation>
+    </message>
+    <message>
+        <source>Удалить профиль</source>
+        <translation>Видалити профіль</translation>
+    </message>
+    <message>
+        <source>Удалить профиль «%1»?</source>
+        <translation>Видалити профіль «%1»?</translation>
+    </message>
+    <message>
+        <source>Закрепить аудио</source>
+        <translation>Закріпити аудіо</translation>
+    </message>
+    <message>
+        <source>▶  Воспроизвести</source>
+        <translation>▶  Відтворити</translation>
+    </message>
+    <message>
+        <source>Оформление и анимации</source>
+        <translation>Оформлення та анімації</translation>
+    </message>
+    <message>
+        <source>Оформление</source>
+        <translation>Оформлення</translation>
+    </message>
+    <message>
+        <source>Стиль:</source>
+        <translation>Стиль:</translation>
+    </message>
+    <message>
+        <source>Новый (2.0) — плавные анимации</source>
+        <translation>Новий (2.0) — плавні анімації</translation>
+    </message>
+    <message>
+        <source>Классика — как раньше, без анимаций</source>
+        <translation>Класика — як раніше, без анімацій</translation>
+    </message>
+    <message>
+        <source>Скорость анимаций: %1%</source>
+        <translation>Швидкість анімацій: %1%</translation>
+    </message>
+    <message>
+        <source>медленнее</source>
+        <translation>повільніше</translation>
+    </message>
+    <message>
+        <source>быстрее</source>
+        <translation>швидше</translation>
+    </message>
+    <message>
+        <source>⚠ В Windows выключена анимация интерфейса, поэтому SmartClip тоже работает без неё.
+Включить: Параметры → Специальные возможности → Визуальные эффекты → Эффекты анимации.</source>
+        <translation>⚠ У Windows вимкнено анімацію інтерфейсу, тому SmartClip теж працює без неї.
+Увімкнути: Параметри → Спеціальні можливості → Візуальні ефекти → Ефекти анімації.</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: виды прокрутки, эффекты карточек и темы оформления.</source>
+        <translation>Незабаром тут: види прокрутки, ефекти карток і теми оформлення.</translation>
+    </message>
+    <message>
+        <source>Меню</source>
+        <translation>Меню</translation>
+    </message>
+    <message>
+        <source>Разворачиваются шторкой сверху вниз</source>
+        <translation>Розгортаються шторкою згори вниз</translation>
+    </message>
+    <message>
+        <source>Окна и диалоги</source>
+        <translation>Вікна та діалоги</translation>
+    </message>
+    <message>
+        <source>Выпрыгивают из центра с пружинкой</source>
+        <translation>Вистрибують із центру з пружинкою</translation>
+    </message>
+    <message>
+        <source>Открытие SmartClip</source>
+        <translation>Відкриття SmartClip</translation>
+    </message>
+    <message>
+        <source>Панели съезжаются с краёв, карточки — лесенкой</source>
+        <translation>Панелі з’їжджаються з країв, картки — драбинкою</translation>
+    </message>
+    <message>
+        <source>Закрытие SmartClip</source>
+        <translation>Закриття SmartClip</translation>
+    </message>
+    <message>
+        <source>Карточки разъезжаются обратной лесенкой</source>
+        <translation>Картки роз’їжджаються зворотною драбинкою</translation>
+    </message>
+    <message>
+        <source>Для каждого вида анимации — свой стиль и своя скорость. «Классика» — как было раньше, без анимации.</source>
+        <translation>Для кожного виду анімації — свій стиль і своя швидкість. «Класика» — як було раніше, без анімації.</translation>
+    </message>
+    <message>
+        <source>Новый</source>
+        <translation>Новий</translation>
+    </message>
+    <message>
+        <source>Классика</source>
+        <translation>Класика</translation>
+    </message>
+    <message>
+        <source>Скорость: левее — медленнее, правее — быстрее</source>
+        <translation>Швидкість: лівіше — повільніше, правіше — швидше</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: прокрутка, эффекты карточек и темы оформления.</source>
+        <translation>Незабаром тут: прокрутка, ефекти карток і теми оформлення.</translation>
+    </message>
+    <message>
+        <source>По умолчанию</source>
+        <translation>За замовчуванням</translation>
+    </message>
+    <message>
+        <source>Прокрутка</source>
+        <translation>Прокрутка</translation>
+    </message>
+    <message>
+        <source>Плавная, с инерцией и мягким краем</source>
+        <translation>Плавна, з інерцією та м’яким краєм</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: эффекты карточек и темы оформления.</source>
+        <translation>Незабаром тут: ефекти карток і теми оформлення.</translation>
+    </message>
+    <message>
+        <source>Вкладки и разделы</source>
+        <translation>Вкладки та розділи</translation>
+    </message>
+    <message>
+        <source>Выделение переезжает, раздел выезжает с проявлением</source>
+        <translation>Виділення переїжджає, розділ виїжджає з проявленням</translation>
+    </message>
+    <message>
+        <source>Просмотр картинок</source>
+        <translation>Перегляд картинок</translation>
+    </message>
+    <message>
+        <source>Картинка вырастает из карточки, при закрытии — обратно</source>
+        <translation>Картинка виростає з картки, при закритті — назад</translation>
+    </message>
+    <message>
+        <source>Дуга</source>
+        <translation>Дуга</translation>
+    </message>
+    <message>
+        <source>Плавная</source>
+        <translation>Плавна</translation>
+    </message>
+    <message>
+        <source>«Дуга» — колонки выгибаются к центру, «Плавная» — без дуги</source>
+        <translation>«Дуга» — колонки вигинаються до центру, «Плавна» — без дуги</translation>
+    </message>
+    <message>
+        <source>«Дуга» — крайние карточки уходят по дуге, под мышью выдвигаются; «Плавная» — без этого</source>
+        <translation>«Дуга» — крайні картки йдуть по дузі, під мишею висуваються; «Плавна» — без цього</translation>
+    </message>
+    <message>
+        <source>Наверх</source>
+        <translation>Нагору</translation>
+    </message>
+    <message>
+        <source>Скорость каждой анимации настраивается отдельно: левее — медленнее, правее — быстрее.</source>
+        <translation>Швидкість кожної анімації налаштовується окремо: лівіше — повільніше, правіше — швидше.</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: темы оформления.</source>
+        <translation>Незабаром тут: теми оформлення.</translation>
+    </message>
+    <message>
+        <source>«Дуга» — крайние карточки уходят за край по дуге, «Плавная» — без дуги</source>
+        <translation>«Дуга» — крайні картки йдуть за край по дузі, «Плавна» — без дуги</translation>
+    </message>
+    <message>
+        <source>Связь прервалась, пробую ещё раз...</source>
+        <translation>Зв’язок перервався, пробую ще раз...</translation>
+    </message>
+    <message>
+        <source>Связь прервалась при скачивании. Проверьте интернет и нажмите «Повторить».</source>
+        <translation>Зв’язок перервався під час завантаження. Перевірте інтернет і натисніть «Повторити».</translation>
+    </message>
+    <message>
+        <source>Не удалось скачать обновление (ошибка %1). Попробуйте позже.</source>
+        <translation>Не вдалося завантажити оновлення (помилка %1). Спробуйте пізніше.</translation>
+    </message>
+    <message>
+        <source>SmartClip %1</source>
+        <translation>SmartClip %1</translation>
+    </message>
+    <message>
+        <source>Большое обновление</source>
+        <translation>Велике оновлення</translation>
+    </message>
+    <message>
+        <source>Небольшое обновление</source>
+        <translation>Невелике оновлення</translation>
+    </message>
+    <message>
+        <source>у вас сейчас %1</source>
+        <translation>у вас зараз %1</translation>
+    </message>
+    <message>
+        <source>Что нового</source>
+        <translation>Що нового</translation>
+    </message>
+    <message>
+        <source>Посмотреть, что нового, на GitHub</source>
+        <translation>Подивитися, що нового, на GitHub</translation>
+    </message>
+    <message>
+        <source>Скачать и установить</source>
+        <translation>Завантажити та встановити</translation>
+    </message>
+    <message>
+        <source>Настройки — доступно обновление %1</source>
+        <translation>Налаштування — доступне оновлення %1</translation>
+    </message>
+    <message>
+        <source>▶  Смотреть</source>
+        <translation>▶  Дивитися</translation>
+    </message>
+    <message>
+        <source>📂  Показать в папке</source>
+        <translation>📂  Показати в папці</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -569,10 +867,6 @@
     <message>
         <source>Сохранять изображения из буфера</source>
         <translation>Зберігати зображення з буфера</translation>
-    </message>
-    <message>
-        <source>Дедупликация — не сохранять если такой текст уже есть</source>
-        <translation>Дедуплікація — не зберігати якщо такий текст вже є</translation>
     </message>
     <message>
         <source>Минимальная длина текста:</source>
@@ -802,6 +1096,180 @@
         <translation>Імпортовано: закріпів — %1, профілів — %2.
 Перезавантажте історію щоб побачити зміни.</translation>
     </message>
+    <message>
+        <source>SmartClip v%1</source>
+        <translation>SmartClip v%1</translation>
+    </message>
+    <message>
+        <source>Ошибка соединения</source>
+        <translation>Помилка з'єднання</translation>
+    </message>
+    <message>
+        <source>Добавлено: закрепов — %1, профилей — %2.</source>
+        <translation>Додано: закріплених — %1, профілів — %2.</translation>
+    </message>
+    <message>
+        <source>Пропущено (уже есть): закрепов — %1, профилей — %2.</source>
+        <translation>Пропущено (вже є): закріплених — %1, профілів — %2.</translation>
+    </message>
+    <message>
+        <source>Настройки из файла применены. Окно настроек будет закрыто, чтобы старые значения не перезаписали импортированные.</source>
+        <translation>Налаштування з файлу застосовано. Вікно налаштувань буде закрито, щоб старі значення не перезаписали імпортовані.</translation>
+    </message>
+    <message>
+        <source>Файл «%1» больше 50 МБ и не будет отправлен.</source>
+        <translation>Файл «%1» більший за 50 МБ і не буде надісланий.</translation>
+    </message>
+    <message>
+        <source>Опишите подробнее — ещё минимум %1 симв.</source>
+        <translation>Опишіть детальніше — ще щонайменше %1 симв.</translation>
+    </message>
+    <message>
+        <source>Без повторов — повторно скопированное поднимается наверх</source>
+        <translation>Без повторів — повторно скопійоване піднімається вгору</translation>
+    </message>
+    <message>
+        <source>Система</source>
+        <translation>Система</translation>
+    </message>
+    <message>
+        <source>История</source>
+        <translation>Історія</translation>
+    </message>
+    <message>
+        <source>Закрепы</source>
+        <translation>Закріплені</translation>
+    </message>
+    <message>
+        <source>Экспорт и импорт</source>
+        <translation>Експорт та імпорт</translation>
+    </message>
+    <message>
+        <source>Дополнительно</source>
+        <translation>Додатково</translation>
+    </message>
+    <message>
+        <source>О программе</source>
+        <translation>Про програму</translation>
+    </message>
+    <message>
+        <source>сейчас: %1</source>
+        <translation>зараз: %1</translation>
+    </message>
+    <message>
+        <source>Максимум текстов:</source>
+        <translation>Максимум текстів:</translation>
+    </message>
+    <message>
+        <source>Максимум картинок:</source>
+        <translation>Максимум картинок:</translation>
+    </message>
+    <message>
+        <source>Тексты и картинки хранятся раздельно: одни больше не вытесняют другие.
+При превышении удаляются самые старые записи этого вида.</source>
+        <translation>Тексти й картинки зберігаються окремо: одні більше не витісняють інші.
+При перевищенні видаляються найстаріші записи цього виду.</translation>
+    </message>
+    <message>
+        <source>Работать в окнах администратора</source>
+        <translation>Працювати у вікнах адміністратора</translation>
+    </message>
+    <message>
+        <source>SmartClip будет запускаться с правами администратора, чтобы горячая клавиша и вставка работали в программах, открытых от имени администратора (например, в терминале). Windows один раз спросит разрешение.</source>
+        <translation>SmartClip запускатиметься з правами адміністратора, щоб гаряча клавіша та вставка працювали в програмах, відкритих від імені адміністратора (наприклад, у терміналі). Windows один раз спитає дозвіл.</translation>
+    </message>
+    <message>
+        <source>Нужна учётная запись администратора Windows.</source>
+        <translation>Потрібен обліковий запис адміністратора Windows.</translation>
+    </message>
+    <message>
+        <source>Окна администратора</source>
+        <translation>Вікна адміністратора</translation>
+    </message>
+    <message>
+        <source>Не удалось включить: Windows не дала разрешение.</source>
+        <translation>Не вдалося увімкнути: Windows не надала дозвіл.</translation>
+    </message>
+    <message>
+        <source>Оформление</source>
+        <translation>Оформлення</translation>
+    </message>
+    <message>
+        <source>Анимации</source>
+        <translation>Анімації</translation>
+    </message>
+    <message>
+        <source>Карточки</source>
+        <translation>Картки</translation>
+    </message>
+    <message>
+        <source>Карточка выезжает и увеличивается при наведении</source>
+        <translation>Картка висувається та збільшується при наведенні</translation>
+    </message>
+    <message>
+        <source>Карточка под мышью плавно выдвигается к центру экрана и чуть увеличивается, раздвигая соседние.</source>
+        <translation>Картка під мишею плавно висувається до центру екрана й трохи збільшується, розсуваючи сусідні.</translation>
+    </message>
+    <message>
+        <source>Что нового?</source>
+        <translation>Що нового?</translation>
+    </message>
+    <message>
+        <source>Доступно большое обновление — SmartClip %1</source>
+        <translation>Доступне велике оновлення — SmartClip %1</translation>
+    </message>
+    <message>
+        <source>Доступно обновление %1 — исправления и улучшения</source>
+        <translation>Доступне оновлення %1 — виправлення та покращення</translation>
+    </message>
+    <message>
+        <source>Шкала дат при прокрутке:</source>
+        <translation>Шкала дат під час прокрутки:</translation>
+    </message>
+    <message>
+        <source>У края экрана</source>
+        <translation>Біля краю екрана</translation>
+    </message>
+    <message>
+        <source>Со стороны центра</source>
+        <translation>З боку центру</translation>
+    </message>
+    <message>
+        <source>Выключена</source>
+        <translation>Вимкнена</translation>
+    </message>
+    <message>
+        <source>Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки.</source>
+        <translation>Поки гортаєш історію, збоку колонки видно, до якого дня належать картки.</translation>
+    </message>
+    <message>
+        <source>+ Папка</source>
+        <translation>+ Папка</translation>
+    </message>
+    <message>
+        <source>Автозахват записей и аудио</source>
+        <translation>Автозахоплення записів і аудіо</translation>
+    </message>
+    <message>
+        <source>Добавить папку, за которой следить</source>
+        <translation>Додати папку, за якою стежити</translation>
+    </message>
+    <message>
+        <source>Добавить стандартные папки: клипы Xbox Game Bar, «Записи экрана», «Звукозаписи»</source>
+        <translation>Додати стандартні папки: кліпи Xbox Game Bar, «Записи екрана», «Звукозаписи»</translation>
+    </message>
+    <message>
+        <source>Папка с записями</source>
+        <translation>Папка із записами</translation>
+    </message>
+    <message>
+        <source>Следит за папками: новое видео (Xbox Game Bar, «Ножницы») появится в колонке картинок, аудио (Звукозапись и т.п.) — в колонке текстов. Клик по карточке — вставить файл в Telegram, Discord и т.д. Папок может быть несколько — у каждого они свои.</source>
+        <translation>Стежить за папками: нове відео (Xbox Game Bar, «Ножиці») з’явиться в колонці картинок, аудіо (Звукозапис тощо) — у колонці текстів. Клік по картці — вставити файл у Telegram, Discord тощо. Папок може бути кілька — у кожного вони свої.</translation>
+    </message>
+    <message>
+        <source>Стандартные</source>
+        <translation>Стандартні</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -988,6 +1456,14 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <source>Нажмите комбинацию... (Esc — отмена)</source>
         <translation>Натисніть комбінацію... (Esc — скасування)</translation>
     </message>
+    <message>
+        <source>Нужен Ctrl, Alt, Shift или Win + клавиша</source>
+        <translation>Потрібен Ctrl, Alt, Shift або Win + клавіша</translation>
+    </message>
+    <message>
+        <source>Ctrl+C / Ctrl+V / Ctrl+X нельзя — выберите другую</source>
+        <translation>Ctrl+C / Ctrl+V / Ctrl+X не можна — виберіть іншу</translation>
+    </message>
 </context>
 <context>
     <name>ImageViewer</name>
@@ -1021,6 +1497,39 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
     <message>
         <source>Отмена</source>
         <translation>Скасувати</translation>
+    </message>
+    <message>
+        <source>Горячая клавиша %1 занята другой программой.
+Откройте SmartClip двойным кликом по значку в трее и выберите другую клавишу в настройках.</source>
+        <translation>Гаряча клавіша %1 зайнята іншою програмою.
+Відкрийте SmartClip подвійним кліком по значку в треї та виберіть іншу клавішу в налаштуваннях.</translation>
+    </message>
+    <message>
+        <source>Комбинация %1 занята другой программой. Оставлена прежняя: %2.</source>
+        <translation>Комбінація %1 зайнята іншою програмою. Залишено попередню: %2.</translation>
+    </message>
+    <message>
+        <source>Доступна новая версия %1. Нажмите, чтобы установить.</source>
+        <translation>Доступна нова версія %1. Натисніть, щоб встановити.</translation>
+    </message>
+</context>
+<context>
+    <name>UpdateChecker</name>
+    <message>
+        <source>На GitHub пока нет опубликованной версии SmartClip.</source>
+        <translation>На GitHub поки немає опублікованої версії SmartClip.</translation>
+    </message>
+    <message>
+        <source>GitHub ответил ошибкой %1. Попробуйте позже.</source>
+        <translation>GitHub відповів помилкою %1. Спробуйте пізніше.</translation>
+    </message>
+    <message>
+        <source>Нет связи с GitHub. Проверьте интернет и попробуйте ещё раз.</source>
+        <translation>Немає зв’язку з GitHub. Перевірте інтернет і спробуйте ще раз.</translation>
+    </message>
+    <message>
+        <source>В последнем релизе на GitHub нет файла установщика.</source>
+        <translation>В останньому релізі на GitHub немає файлу інсталятора.</translation>
     </message>
 </context>
 </TS>

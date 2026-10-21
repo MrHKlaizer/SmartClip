@@ -26,6 +26,8 @@
 // QStringList — список строк (наследник QList<QString>)
 #include <QString>
 #include <QList>
+#include <QSet>
+#include <QPair>
 #include <QStringList>
 
 // ─── Структуры данных ─────────────────────────────────────────────────────────
@@ -94,8 +96,13 @@ public:
     // content  — текст или имя файла
     // filepath — путь к файлу (для изображений, видео)
     // appName  — имя приложения-источника
-    bool addHistory(const QString &type, const QString &content,
+    // Возвращает id новой записи или -1 при ошибке.
+    int  addHistory(const QString &type, const QString &content,
                     const QString &filepath = "", const QString &appName = "");
+
+    // Удалить из истории все текстовые записи с таким же содержимым.
+    // Нужно для дедупликации: повторно скопированный текст «поднимается» наверх.
+    void removeTextDuplicates(const QString &text);
 
     // Удалить записи старше N дней (0 = не удалять).
     // Вызывается при старте программы согласно настройкам.
@@ -107,6 +114,18 @@ public:
 
     // Получить историю только определённого типа (например только "image").
     QList<HistoryItem> getHistoryByType(const QString &type, int limit, int offset);
+
+    // Страница истории нескольких видов сразу (для подгрузки при прокрутке):
+    // types — например {"image","video"}, asc — старые сначала.
+    // Записи этих видов новее afterId (новые — первыми): быстрое обновление окна
+    QList<HistoryItem> getHistoryNewer(const QStringList &types, int afterId);
+    // Какие из этих id ещё есть в истории (остальные удалены лимитом/повтором)
+    QSet<int> existingHistoryIds(const QList<int> &ids);
+    // Для поиска: id и начало текста (до maxChars символов) — без огромных логов целиком
+    QList<QPair<int, QString>> getTextHeads(int limit, bool asc, int maxChars);
+    // Записи по списку id — в том же порядке
+    QList<HistoryItem> getHistoryByIds(const QList<int> &ids);
+    QList<HistoryItem> getHistoryPage(const QStringList &types, int limit, int offset, bool asc);
 
     // Удалить одну запись истории по её id.
     bool deleteHistory(int id);
@@ -128,8 +147,8 @@ public:
     QStringList getAppNames();
 
     // ─── Закрепы (pins) ───────────────────────────────────────────────────────
-    // Добавить новый закреп.
-    bool addPin(const QString &folder, const QString &name, const QString &type,
+    // Добавить новый закреп. Возвращает id нового закрепа или -1 при ошибке.
+    int  addPin(const QString &folder, const QString &name, const QString &type,
                 const QString &content = "", const QString &filepath = "");
 
     // Получить закрепы из одной папки. folder="" = все закрепы.
@@ -188,8 +207,18 @@ private:
     QSqlDatabase m_db;         // Объект подключения к SQLite-базе данных
     QString      m_imagesPath; // Путь к папке с сохранёнными картинками
 
+    // Удалить файл с диска, но только если он «наш» (лежит в папке images)
+    // и на него больше не ссылается ни история, ни закреп.
+    // Защищает видео пользователя и картинки в закрепах от случайного удаления.
+    void removeFileIfUnused(const QString &path);
+
+    // Экранировать % и _ для LIKE (иначе папка "50%" совпадёт с чем угодно).
+    static QString escapeLike(const QString &s);
+
     // Вспомогательные методы (внутренние):
     bool createTables();     // Создать таблицы при первом запуске
-    void trimHistory();      // Обрезать историю до максимального лимита (из настроек)
+    void trimHistory();      // Обрезать историю до лимитов (тексты и картинки — раздельно)
+    void trimType(const QString &where, int limit);  // Обрезать один вид записей
+    void migrateHistoryLimits();  // Общий лимит (до 2.0) → раздельные, без потери данных
     void migrateIfNeeded();  // Добавить новые колонки в уже существующую БД (обновление схемы)
 };

@@ -20,12 +20,18 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 #include "SettingsDialog.h"
+#include "core/Backup.h"   // Экспорт/импорт JSON (общий с автобэкапом)
 #include "HotkeyEdit.h"             // Виджет захвата горячих клавиш
+#include "Anim.h"                   // Плавное появление окон
+#include "NavTabs.h"                // Боковое меню разделов с анимацией
+#include "SmartButton.h"            // Системный шрифт значков
 #include "core/AppSettings.h"       // Синглтон настроек
 #include "core/Database.h"          // Чтение/запись в SQLite
 #include "core/BugReporter.h"       // Отправка обратной связи в Telegram
 #include "core/Version.h"           // APP_VERSION — строка вида "1.0.2"
 #include "core/UpdateChecker.h"     // Проверка обновлений через GitHub API
+#include "core/AdminMode.h"
+#include "core/VideoWatcher.h"     // Папки автозахвата         // Работа в окнах администратора
 
 // Qt-виджеты и инфраструктура:
 #include <QPainter>             // Рисование (paintEvent)
@@ -41,7 +47,10 @@
 #include <QComboBox>            // Выпадающий список
 #include <QLineEdit>            // Однострочное текстовое поле
 #include <QListWidget>          // Список элементов
-#include <QScrollArea>          // Прокручиваемая область
+#include <QScrollArea>
+#include <QIcon>
+#include <QSlider>
+#include <QScreen>          // Прокручиваемая область
 #include <QAbstractButton>      // Базовый класс для SdCloseBtn
 #include <QMouseEvent>          // Событие мыши (для перетаскивания диалога)
 #include <QMenu>                // Контекстное меню (не используется напрямую)
@@ -57,6 +66,9 @@
 #include <QSettings>            // Чтение/запись реестра Windows
 #include <QCoreApplication>     // applicationFilePath(), quit()
 #include <QFileInfo>            // baseName() — имя файла без пути и расширения
+#include <QPointer>
+#include <QVariantAnimation>
+#include <QEasingCurve>             // Безопасные ссылки на виджеты из асинхронных обработчиков
 #include <QDir>                 // toNativeSeparators() — слэши → обратные слэши
 #include <QDebug>               // qDebug() — вывод в консоль разработчика
 
@@ -79,6 +91,19 @@ static void applyAutostart(bool enable)
         // Удаляем ключ — программа больше не запускается автоматически
         reg.remove("SmartClip");
     }
+}
+
+// Реальное состояние автозапуска — есть ли запись в реестре.
+// Раньше галочка бралась из ini (по умолчанию «выкл»), хотя установщик
+// включает автозапуск через реестр. В итоге любое «Сохранить» в настройках
+// молча выключало автозапуск.
+static bool isAutostartEnabled()
+{
+    QSettings reg(
+        "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        QSettings::NativeFormat
+    );
+    return reg.contains("SmartClip");
 }
 
 // ─── SdCloseBtn — кнопка закрытия диалога ────────────────────────────────────
@@ -111,38 +136,79 @@ class SdCheckBox : public QCheckBox {
 public:
     // «using QCheckBox::QCheckBox» — наследуем все конструкторы родителя без изменений.
     using QCheckBox::QCheckBox;
+
+    // Дизайн 2.0: тумблер вместо квадратика с «✕» (который читался как
+    // «выключено»). Кружок плавно переезжает, включённый тумблер — голубой.
+    QSize sizeHint() const override {
+        const QSize t = fontMetrics().size(Qt::TextSingleLine, text());
+        return QSize(TRACK_W + SPACING + t.width() + 4, qMax(TRACK_H + 4, t.height() + 6));
+    }
+    QSize minimumSizeHint() const override { return sizeHint(); }
+
 protected:
     void paintEvent(QPaintEvent *) override {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-
-        const int boxSize = 16;   // Размер квадрата чекбокса
-        const int spacing = 6;    // Отступ между квадратом и текстом
-        // Центрируем квадрат по вертикали относительно виджета
-        QRect box(0, (height() - boxSize) / 2, boxSize, boxSize);
-
-        // Рисуем фон и рамку квадратика
-        p.setPen(QPen(QColor(255, 255, 255, isChecked() ? 130 : 70), 1));
-        p.setBrush(QColor(28, 28, 44, 245));
-        p.drawRoundedRect(box.adjusted(0, 0, -1, -1), 3, 3);
-
-        // Белый ✕ внутри когда включено
-        if (isChecked()) {
-            p.setPen(QColor(255, 255, 255, 230));
-            QFont f = font();
-            f.setPixelSize(11);
-            p.setFont(f);
-            p.drawText(box, Qt::AlignCenter, "✕");
+        // Первый показ: подписываемся на переключение и ставим кружок на место
+        if (!m_ready) {
+            m_ready = true;
+            m_knob = isChecked() ? 1.0 : 0.0;
+            m_anim.setEasingCurve(QEasingCurve::OutBack);
+            QObject::connect(&m_anim, &QVariantAnimation::valueChanged, this,
+                             [this](const QVariant &v) { m_knob = v.toReal(); update(); });
+            QObject::connect(this, &QCheckBox::toggled, this, [this](bool on) {
+                m_anim.stop();
+                if (Anim::enabled(Anim::Kind::Tabs) && isVisible()) {
+                    m_anim.setDuration(Anim::ms(Anim::Kind::Tabs, 220));
+                    m_anim.setStartValue(m_knob);
+                    m_anim.setEndValue(on ? 1.0 : 0.0);
+                    m_anim.start();
+                } else {
+                    m_knob = on ? 1.0 : 0.0;
+                    update();
+                }
+            });
         }
 
-        // Рисуем текст метки вручную (справа от квадрата)
-        p.setPen(QColor(0xc0, 0xc0, 0xd0));
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const qreal k = qBound(0.0, m_knob, 1.0);
+        const bool hover = underMouse() && isEnabled();
+        const qreal op = isEnabled() ? 1.0 : 0.45;
+        p.setOpacity(op);
+
+        // Дорожка: цвет плавно переходит от серого к голубому
+        const QRectF track(1, (height() - TRACK_H) / 2.0, TRACK_W, TRACK_H);
+        auto mix = [k](int a, int b) { return int(a + (b - a) * k); };
+        const QColor offFill(44, 44, 64), onFill(96, 140, 210);
+        p.setPen(QPen(k > 0.5 ? QColor(160, 200, 255, 160)
+                              : QColor(255, 255, 255, hover ? 110 : 70), 1));
+        p.setBrush(QColor(mix(offFill.red(), onFill.red()), mix(offFill.green(), onFill.green()),
+                          mix(offFill.blue(), onFill.blue())));
+        p.drawRoundedRect(track, TRACK_H / 2.0, TRACK_H / 2.0);
+
+        // Кружок
+        const qreal d = TRACK_H - 6;
+        const qreal x = track.left() + 3 + (TRACK_W - 6 - d) * m_knob;
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 255, 255, int(200 + 55 * k)));
+        p.drawEllipse(QRectF(x, track.top() + 3, d, d));
+
+        // Подпись справа от тумблера
+        p.setPen(QColor(0xd0, 0xd0, 0xdc));
         p.setFont(font());
-        p.drawText(rect().adjusted(boxSize + spacing, 0, 0, 0),
+        p.drawText(rect().adjusted(TRACK_W + SPACING, 0, 0, 0),
                    Qt::AlignVCenter | Qt::AlignLeft, text());
     }
+    bool hitButton(const QPoint &pos) const override { return rect().contains(pos); }
     void enterEvent(QEnterEvent *e) override { update(); QCheckBox::enterEvent(e); }
     void leaveEvent(QEvent *e)       override { update(); QCheckBox::leaveEvent(e); }
+
+private:
+    static constexpr int TRACK_W = 36;   // Ширина тумблера
+    static constexpr int TRACK_H = 20;   // Высота тумблера
+    static constexpr int SPACING = 10;   // Отступ до подписи
+    bool              m_ready = false;
+    qreal             m_knob  = 0.0;     // 0 = выключено, 1 = включено (между — анимация)
+    QVariantAnimation m_anim;
 };
 
 // ─── SdDialog — переиспользуемый мини-диалог ─────────────────────────────────
@@ -192,6 +258,17 @@ public:
     // body() — возвращает виджет-контейнер куда вставляется содержимое.
     QWidget *body() { return m_body; }
 protected:
+    // «Выпрыгивает» из центра и уходит обратно (см. Anim.h)
+    void showEvent(QShowEvent *e) override {
+        QDialog::showEvent(e);
+        m_anim->onShow();
+    }
+    void done(int r) override {
+        if (!m_anim->handleDone([self = QPointer<SdDialog>(this), r]() {
+                if (self) self->QDialog::done(r);
+            }))
+            QDialog::done(r);
+    }
     // Рисуем скруглённый тёмный фон диалога (как у SettingsDialog).
     void paintEvent(QPaintEvent *) override {
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
@@ -217,6 +294,7 @@ private:
     QWidget *m_titleBar = nullptr;
     QWidget *m_body     = nullptr;
     QPoint   m_drag;   // Смещение курсора относительно угла окна (для перетаскивания)
+    Anim::DialogAnimator *m_anim = new Anim::DialogAnimator(this);
 };
 
 // ── Стили кнопок для мини-диалогов ───────────────────────────────────────────
@@ -225,7 +303,10 @@ static const char *SD_OK_BTN =
     "QPushButton{background:rgba(28,28,44,245);color:rgba(160,200,255,240);"
     "border:1px solid rgba(120,160,255,160);border-radius:6px;"
     "padding:5px 18px;font-size:13px;min-width:60px;}"
-    "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}";
+    "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}"
+    // Неактивная кнопка должна ВЫГЛЯДЕТЬ неактивной — раньше она была
+    // неотличима от обычной, и казалось, что «Отправить» просто сломана
+    "QPushButton:disabled{color:rgba(160,200,255,80);border-color:rgba(120,160,255,50);}";
 static const char *SD_CANCEL_BTN =
     "QPushButton{background:rgba(28,28,44,245);color:rgba(255,255,255,200);"
     "border:1px solid rgba(255,255,255,55);border-radius:6px;"
@@ -456,6 +537,14 @@ static void showFeedbackDialog(QWidget *parent)
 
         for (const QString &path : files) {
             if (attached.contains(path)) continue;  // Не добавлять дубликаты
+            // Telegram не принимает файлы больше 50 МБ — раньше подсказка про лимит
+            // была, а проверки не было, и отправка просто падала с ошибкой
+            if (QFileInfo(path).size() > 50LL * 1024 * 1024) {
+                sdInfo(&dlg, FTR("Прикрепить файлы"),
+                       FTR("Файл «%1» больше 50 МБ и не будет отправлен.")
+                           .arg(QFileInfo(path).fileName()));
+                continue;
+            }
             const auto kind = BugReporter::kindOfFile(path);
             // Считаем текущее количество каждого типа
             int photos = 0, videos = 0, audios = 0;
@@ -520,11 +609,21 @@ static void showFeedbackDialog(QWidget *parent)
     btnRow->addWidget(sendBtn);
     vl->addLayout(btnRow);
 
-    // Активируем кнопку «Отправить» как только введено >= 10 символов
-    QObject::connect(descEdit, &QTextEdit::textChanged, [&]() {
-        sendBtn->setEnabled(canSend &&
-                            descEdit->toPlainText().trimmed().length() >= 10);
-    });
+    // Активируем кнопку «Отправить» как только введено >= 10 символов.
+    // Подсказка со счётчиком — раньше условие нигде не показывалось, и при
+    // коротком тексте кнопка выглядела просто «сломанной».
+    constexpr int MIN_LEN = 10;
+    auto *lenHint = new QLabel(dlg.body());
+    lenHint->setStyleSheet("color:rgba(160,160,180,150);font-size:11px;background:transparent;");
+    vl->insertWidget(vl->indexOf(descEdit) + 1, lenHint);
+    auto updateSend = [&, lenHint]() {
+        const int len = descEdit->toPlainText().trimmed().length();
+        sendBtn->setEnabled(canSend && len >= MIN_LEN);
+        lenHint->setVisible(canSend && len < MIN_LEN);
+        lenHint->setText(FTR("Опишите подробнее — ещё минимум %1 симв.").arg(MIN_LEN - len));
+    };
+    QObject::connect(descEdit, &QTextEdit::textChanged, updateSend);
+    updateSend();
 
     QObject::connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
 
@@ -540,18 +639,27 @@ static void showFeedbackDialog(QWidget *parent)
         auto *reporter = new BugReporter(parent);
         reporter->send(selType, descEdit->toPlainText(), attached);
 
+        // QPointer обнуляется сам, если диалог закрыли до ответа сервера.
+        // Раньше обработчики ниже держали ссылки на уже уничтоженные dlg/sendBtn —
+        // закрыл окно во время отправки → вылет программы.
+        QPointer<QDialog>     dlgGuard(&dlg);
+        QPointer<QPushButton> btnGuard(sendBtn);
+
         // По сигналу sent — закрываем диалог и показываем «Спасибо!»
-        QObject::connect(reporter, &BugReporter::sent, [&, reporter, parent]() {
+        QObject::connect(reporter, &BugReporter::sent, reporter, [reporter, parent, dlgGuard]() {
             reporter->deleteLater();  // Удаляем reporter когда управление вернётся в Qt
-            dlg.accept();
+            if (dlgGuard) dlgGuard->accept();
             sdInfo(parent, FTR("Спасибо!"),
                    FTR("Сообщение отправлено. Мы обязательно его рассмотрим!"));
         });
         // По сигналу failed — показываем ошибку, разблокируем кнопку
-        QObject::connect(reporter, &BugReporter::failed, [&, reporter, parent](const QString &err) {
+        QObject::connect(reporter, &BugReporter::failed, reporter,
+                         [reporter, parent, btnGuard](const QString &err) {
             reporter->deleteLater();
-            sendBtn->setEnabled(true);
-            sendBtn->setText(FTR("📩  Отправить"));
+            if (btnGuard) {
+                btnGuard->setEnabled(true);
+                btnGuard->setText(FTR("📩  Отправить"));
+            }
             sdInfo(parent, FTR("Ошибка отправки"),
                    FTR("Не удалось отправить: %1").arg(err));
         });
@@ -574,86 +682,85 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
     setWindowTitle(tr("Настройки SmartClip"));
-    setMinimumSize(520, 560);
+    m_anim = new Anim::DialogAnimator(this);  // Появление/уход с анимацией
+    // Разделы прокручиваются — окну хватает и маленького экрана
+    // (ноутбук 1366×768 при масштабе 125% — около 600 px по высоте)
+    setMinimumSize(700, 460);
 
     // ── Глобальный QSS-стиль для всего диалога ───────────────────────────────
     // QSS (Qt Style Sheet) — это CSS для Qt-виджетов.
     // Здесь мы задаём стили для QTabWidget, QGroupBox, QLabel, QCheckBox,
     // QSpinBox, QComboBox, QLineEdit, QListWidget, QPushButton, QScrollBar.
+    // Дизайн 2.0: разделы — карточки со скруглением (заголовок НАД карточкой,
+    // а не врезанный в рамку), поля со стрелками, единый мягко-голубой акцент.
     setStyleSheet(
         "QWidget { background: transparent; }"
-        // Вкладки (QTabWidget) — основной контейнер настроек
-        "QTabWidget::pane {"
-        "  background: rgba(20,20,32,210);"
-        "  border: 1px solid rgba(255,255,255,35);"
-        "  border-radius: 8px; padding: 2px; }"
-        "QTabBar::tab {"
-        "  background: rgba(20,20,32,220); color: rgba(255,255,255,130);"
-        "  padding: 5px 14px;"
-        "  border: 1px solid rgba(255,255,255,50);"
-        "  border-radius: 6px; margin-right: 3px; font-size: 12px; }"
-        "QTabBar::tab:selected {"
-        "  background: rgba(40,40,58,245); color: #fff;"
-        "  border: 1px solid rgba(255,255,255,80); }"
-        "QTabBar::tab:hover:!selected {"
-        "  border: 1px solid rgba(255,255,255,70);"
-        "  color: rgba(255,255,255,200); }"
-        // Группирующие рамки
+        // Карточка раздела
         "QGroupBox {"
-        "  color: rgba(255,255,255,180);"
-        "  border: 1px solid rgba(255,255,255,30);"
-        "  border-radius: 8px; margin-top: 10px; padding-top: 10px; font-size: 12px; }"
+        "  background: rgba(255,255,255,7);"
+        "  border: 1px solid rgba(255,255,255,24);"
+        "  border-radius: 12px; margin-top: 28px; padding: 2px 12px 10px 12px;"
+        "  color: #eaeaf6; font-size: 13px; font-weight: 600; }"
         "QGroupBox::title {"
-        "  subcontrol-origin: margin; left: 10px; padding: 0 6px; }"
-        "QLabel { color: #c0c0d0; font-size: 12px; background: transparent; }"
-        "QCheckBox { color: #c0c0d0; font-size: 12px; spacing: 6px; }"
-        // Числовое поле
+        "  subcontrol-origin: margin; subcontrol-position: top left;"
+        "  left: 4px; top: 4px; padding: 0; }"
+        "QLabel { color: #c0c0d0; font-size: 12px; font-weight: normal; background: transparent; }"
+        "QCheckBox { color: #d0d0dc; font-size: 12px; font-weight: normal; spacing: 8px; }"
+        // Числовое поле: аккуратные кнопки ▲▼ со стрелками
         "QSpinBox {"
         "  background: rgba(28,28,44,245); color: #f0f0f0;"
-        "  border: 1px solid rgba(255,255,255,55);"
-        "  border-radius: 4px; padding: 4px 8px; font-size: 12px; }"
+        "  border: 1px solid rgba(255,255,255,50);"
+        "  border-radius: 7px; padding: 4px 26px 4px 10px; font-size: 12px; font-weight: normal; }"
+        "QSpinBox:hover, QComboBox:hover, QLineEdit:hover { border: 1px solid rgba(255,255,255,85); }"
+        "QSpinBox:focus, QLineEdit:focus { border: 1px solid rgba(160,200,255,170); }"
         "QSpinBox::up-button, QSpinBox::down-button {"
-        "  background: rgba(40,40,60,200); border: none; width: 18px; }"
-        // Выпадающий список
+        "  subcontrol-origin: border; width: 22px; border: none; background: transparent; }"
+        "QSpinBox::up-button { subcontrol-position: top right; border-top-right-radius: 7px; }"
+        "QSpinBox::down-button { subcontrol-position: bottom right; border-bottom-right-radius: 7px; }"
+        "QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: rgba(255,255,255,18); }"
+        "QSpinBox::up-arrow { image: url(:/icons/chevron_up.png); width: 10px; height: 10px; }"
+        "QSpinBox::down-arrow { image: url(:/icons/chevron_down.png); width: 10px; height: 10px; }"
+        // Выпадающий список со стрелкой
         "QComboBox {"
         "  background: rgba(28,28,44,245); color: #f0f0f0;"
-        "  border: 1px solid rgba(255,255,255,55);"
-        "  border-radius: 4px; padding: 4px 8px; font-size: 12px; }"
-        "QComboBox::drop-down { border: none; width: 20px; }"
+        "  border: 1px solid rgba(255,255,255,50);"
+        "  border-radius: 7px; padding: 5px 30px 5px 10px; font-size: 12px; font-weight: normal; }"
+        "QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: center right;"
+        "  width: 26px; border: none; }"
+        "QComboBox::down-arrow { image: url(:/icons/chevron_down.png); width: 10px; height: 10px; }"
         "QComboBox QAbstractItemView {"
         "  background: rgba(22,22,36,252); color: #e0e0e0;"
-        "  border: 1px solid rgba(255,255,255,55);"
-        "  selection-background-color: rgba(255,255,255,18); outline: none; padding: 2px; }"
+        "  border: 1px solid rgba(255,255,255,55); border-radius: 6px;"
+        "  selection-background-color: rgba(160,200,255,40); outline: none; padding: 4px; }"
         // Текстовое поле
         "QLineEdit {"
         "  background: rgba(28,28,44,245); color: #f0f0f0;"
-        "  border: 1px solid rgba(255,255,255,55);"
-        "  border-radius: 4px; padding: 4px 8px; font-size: 12px; }"
-        "QLineEdit:focus { border: 1px solid rgba(255,255,255,90); }"
+        "  border: 1px solid rgba(255,255,255,50);"
+        "  border-radius: 7px; padding: 5px 10px; font-size: 12px; font-weight: normal; }"
         // Список
         "QListWidget {"
         "  background: rgba(22,22,36,200); color: #e0e0e0;"
         "  border: 1px solid rgba(255,255,255,40);"
-        "  border-radius: 6px; font-size: 12px; outline: none; }"
-        "QListWidget::item { padding: 3px 6px; }"
-        "QListWidget::item:selected { background: rgba(255,255,255,18); color: #fff; }"
+        "  border-radius: 8px; font-size: 12px; font-weight: normal; outline: none; padding: 2px; }"
+        "QListWidget::item { padding: 4px 8px; border-radius: 5px; }"
+        "QListWidget::item:selected { background: rgba(160,200,255,40); color: #fff; }"
         // Обычные кнопки
         "QPushButton {"
-        "  background: rgba(28,28,44,245); color: rgba(255,255,255,200);"
-        "  border: 1px solid rgba(255,255,255,55);"
-        "  border-radius: 5px; padding: 6px 16px; font-size: 12px; }"
+        "  background: rgba(28,28,44,245); color: rgba(255,255,255,210);"
+        "  border: 1px solid rgba(255,255,255,50);"
+        "  border-radius: 7px; padding: 6px 16px; font-size: 12px; font-weight: normal; }"
         "QPushButton:hover {"
         "  background: rgba(40,40,62,245);"
         "  border: 1px solid rgba(255,255,255,90); color: #fff; }"
-        // Кнопка «Сохранить» — зелёная (выбирается по objectName="saveBtn")
+        // Кнопка «Сохранить» — акцентная
         "QPushButton#saveBtn {"
-        "  background: rgba(30,80,40,220); color: #aaffaa;"
-        "  border: 1px solid rgba(100,200,100,80); }"
-        "QPushButton#saveBtn:hover { background: rgba(40,120,55,240); color: #fff; }"
-        // Полоса прокрутки — тонкая (4px), без кнопок
+        "  background: rgba(70,110,180,200); color: #ffffff;"
+        "  border: 1px solid rgba(160,200,255,140); }"
+        "QPushButton#saveBtn:hover { background: rgba(90,135,215,230); }"
+        // Полоса прокрутки — тонкая, без кнопок
         "QScrollBar:vertical { background: transparent; width: 4px; margin: 4px 0; }"
         "QScrollBar::handle:vertical {"
-        "  background: rgba(255,255,255,45); border-radius: 2px; min-height: 28px; }"
+        "  background: rgba(255,255,255,40); border-radius: 2px; min-height: 28px; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
         "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
         "QScrollArea { background: transparent; border: none; }"
@@ -687,7 +794,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     bodyLayout->setSpacing(10);
     master->addWidget(body, 1);
 
-    auto *tabs = new QTabWidget(body);
+    // Боковое меню разделов с анимацией (см. NavTabs.h) вместо вкладок сверху
+    auto *tabs = new NavTabs(body, QColor(18, 18, 30));
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Вкладка 1: Система
@@ -717,13 +825,31 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *startGroup  = new QGroupBox(tr("Запуск системы"), sysTab);
     auto *startLayout = new QVBoxLayout(startGroup);
     auto *autostartCheck = new SdCheckBox(tr("Запускать SmartClip вместе с Windows"), startGroup);
-    autostartCheck->setChecked(AppSettings::get().autostart());
+    autostartCheck->setChecked(isAutostartEnabled());
     auto *startHint = new QLabel(
         tr("SmartClip будет автоматически стартовать при входе в систему."), startGroup);
     startHint->setWordWrap(true);
     startHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
     startLayout->addWidget(autostartCheck);
     startLayout->addWidget(startHint);
+
+    // Окна администратора: Windows не пускает обычные программы в окна,
+    // открытые «от имени администратора» (терминал и т.п.) — там Win+V
+    // открывал бы системный буфер. С галочкой SmartClip стартует с правами админа.
+    auto *adminCheck = new SdCheckBox(tr("Работать в окнах администратора"), startGroup);
+    adminCheck->setChecked(AppSettings::get().runAsAdmin());
+    const bool canElevate = AdminMode::canElevate();
+    adminCheck->setEnabled(canElevate || adminCheck->isChecked());
+    auto *adminHint = new QLabel(canElevate
+        ? tr("SmartClip будет запускаться с правами администратора, чтобы горячая клавиша "
+             "и вставка работали в программах, открытых от имени администратора "
+             "(например, в терминале). Windows один раз спросит разрешение.")
+        : tr("Нужна учётная запись администратора Windows."), startGroup);
+    adminHint->setWordWrap(true);
+    adminHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
+    startLayout->addSpacing(6);
+    startLayout->addWidget(adminCheck);
+    startLayout->addWidget(adminHint);
 
     // ── Язык ──────────────────────────────────────────────────────────────────
     // itemData() хранит код языка ("ru", "ua", "en", "de") — используется при сохранении.
@@ -766,28 +892,164 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     scaleLayout->addWidget(scaleCombo);
     scaleLayout->addWidget(scaleHint);
 
-    // ── Внешний вид ───────────────────────────────────────────────────────────
-    // solidPanels — тёмный непрозрачный фон за колонками.
-    auto *uiGroup  = new QGroupBox(tr("Внешний вид"), sysTab);
+    // Добавляем группы на вкладку и растягиваем (addStretch → свободное место снизу)
+    sysLayout->addWidget(hkGroup);
+    sysLayout->addWidget(startGroup);
+    sysLayout->addWidget(langGroup);
+    sysLayout->addWidget(scaleGroup);
+    sysLayout->addStretch();
+
+    tabs->addTab(sysTab, tr("Система"), QChar(0xE770));
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка 2: Оформление — анимации, карточки, затемнение
+    //  (раньше — отдельное окно по кнопке 🖌)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Названия анимаций и часть подписей уже переведены в контексте MainWindow
+    auto mw = [](const char *s) { return QCoreApplication::translate("MainWindow", s); };
+    const QString hintCss = "color: rgba(255,255,255,100); font-size: 11px;";
+    auto *lookTab    = new QWidget();
+    auto *lookLayout = new QVBoxLayout(lookTab);
+    lookLayout->setContentsMargins(14, 14, 14, 14);
+    lookLayout->setSpacing(12);
+
+    // ── Анимации: у каждой своя скорость, у прокрутки — ещё и вид ────────────
+    auto *animGroup  = new QGroupBox(tr("Анимации"), lookTab);
+    auto *animLayout = new QVBoxLayout(animGroup);
+    animLayout->setSpacing(4);
+    auto *animIntro = new QLabel(mw("Скорость каждой анимации настраивается отдельно: "
+                                    "левее — медленнее, правее — быстрее."), animGroup);
+    animIntro->setWordWrap(true);
+    animIntro->setStyleSheet(hintCss);
+    animLayout->addWidget(animIntro);
+
+    struct AnimRow { QString key; QComboBox *style; QSlider *speed; };  // style — только у прокрутки
+    QList<AnimRow> animRows;
+    const QString sliderCss =
+        "QSlider::groove:horizontal{height:4px;background:rgba(255,255,255,30);border-radius:2px;}"
+        "QSlider::sub-page:horizontal{background:rgba(160,200,255,170);border-radius:2px;}"
+        "QSlider::handle:horizontal{width:14px;height:14px;margin:-5px 0;border-radius:7px;"
+        "background:#e0e8ff;}";
+    for (const Anim::KindInfo &info : Anim::kinds()) {
+        const QString key = QString::fromLatin1(info.key);
+        auto *title = new QLabel(mw(info.title), animGroup);
+        title->setStyleSheet("color:#e0e0f0;font-size:13px;font-weight:600;");
+        auto *hint = new QLabel(mw(info.hint), animGroup);
+        hint->setWordWrap(true);
+        hint->setStyleSheet(hintCss);
+
+        QComboBox *style = nullptr;
+        if (info.kind == Anim::Kind::Scroll) {
+            style = new QComboBox(animGroup);
+            style->addItem(mw("Дуга"), QStringLiteral("arc"));
+            style->addItem(mw("Плавная"), QStringLiteral("smooth"));
+            style->setCurrentIndex(qMax(0, style->findData(AppSettings::get().scrollStyle())));
+            style->setFixedWidth(130);
+        }
+        auto *speed = new QSlider(Qt::Horizontal, animGroup);
+        speed->setRange(50, 200);
+        speed->setSingleStep(10);
+        speed->setPageStep(25);
+        speed->setValue(AppSettings::get().animSpeed(key));
+        speed->setStyleSheet(sliderCss);
+        speed->setToolTip(mw("Скорость: левее — медленнее, правее — быстрее"));
+        auto *speedLbl = new QLabel(animGroup);
+        speedLbl->setStyleSheet(hintCss);
+        speedLbl->setFixedWidth(42);
+        speedLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        auto showSpeed = [speedLbl](int v) { speedLbl->setText(QString("%1%").arg(v)); };
+        showSpeed(speed->value());
+        connect(speed, &QSlider::valueChanged, this, showSpeed);
+
+        auto *row = new QHBoxLayout();
+        row->setSpacing(12);
+        if (style) row->addWidget(style);
+        row->addWidget(speed, 1);
+        row->addWidget(speedLbl);
+        animLayout->addSpacing(8);
+        animLayout->addWidget(title);
+        animLayout->addWidget(hint);
+        animLayout->addLayout(row);
+        animRows << AnimRow{ key, style, speed };
+    }
+    // Анимации запрещены самой Windows — честно об этом говорим
+    if (!Anim::systemAllows()) {
+        auto *sysLbl = new QLabel(
+            mw("⚠ В Windows выключена анимация интерфейса, поэтому SmartClip тоже "
+               "работает без неё.\nВключить: Параметры → Специальные возможности → "
+               "Визуальные эффекты → Эффекты анимации."), animGroup);
+        sysLbl->setWordWrap(true);
+        sysLbl->setStyleSheet("color:#ffcc66;font-size:11px;");
+        animLayout->addWidget(sysLbl);
+    }
+    // «По умолчанию» — прокрутка «Дуга» и везде скорость 100%
+    auto *animResetBtn = new QPushButton(mw("По умолчанию"), animGroup);
+    animResetBtn->setCursor(Qt::PointingHandCursor);
+    connect(animResetBtn, &QPushButton::clicked, this, [animRows]() {
+        for (const AnimRow &r : animRows) {
+            if (r.style) r.style->setCurrentIndex(0);
+            r.speed->setValue(100);
+        }
+    });
+    auto *resetRow = new QHBoxLayout();
+    resetRow->addStretch();
+    resetRow->addWidget(animResetBtn);
+    animLayout->addSpacing(8);
+    animLayout->addLayout(resetRow);
+
+    // ── Карточки ──────────────────────────────────────────────────────────────
+    auto *cardGroup  = new QGroupBox(tr("Карточки"), lookTab);
+    auto *cardLayout = new QVBoxLayout(cardGroup);
+    auto *hoverCheck = new SdCheckBox(tr("Карточка выезжает и увеличивается при наведении"), cardGroup);
+    hoverCheck->setChecked(AppSettings::get().cardHover());
+    auto *hoverHint = new QLabel(
+        tr("Карточка под мышью плавно выдвигается к центру экрана и чуть увеличивается, "
+           "раздвигая соседние."), cardGroup);
+    hoverHint->setWordWrap(true);
+    hoverHint->setStyleSheet(hintCss);
+    cardLayout->addWidget(hoverCheck);
+    cardLayout->addWidget(hoverHint);
+
+    // Шкала дат сбоку колонки при прокрутке
+    auto *rulerRow = new QHBoxLayout();
+    auto *rulerLbl = new QLabel(tr("Шкала дат при прокрутке:"), cardGroup);
+    auto *rulerCombo = new QComboBox(cardGroup);
+    rulerCombo->addItem(tr("У края экрана"), QStringLiteral("outer"));
+    rulerCombo->addItem(tr("Со стороны центра"), QStringLiteral("inner"));
+    rulerCombo->addItem(tr("Выключена"), QStringLiteral("off"));
+    rulerCombo->setCurrentIndex(qMax(0, rulerCombo->findData(AppSettings::get().dateRuler())));
+    rulerRow->addWidget(rulerLbl);
+    rulerRow->addWidget(rulerCombo);
+    rulerRow->addStretch();
+    auto *rulerHint = new QLabel(
+        tr("Пока листаешь историю, сбоку колонки видно, к какому дню относятся карточки."), cardGroup);
+    rulerHint->setWordWrap(true);
+    rulerHint->setStyleSheet(hintCss);
+    cardLayout->addSpacing(8);
+    cardLayout->addLayout(rulerRow);
+    cardLayout->addWidget(rulerHint);
+
+    // ── Затемнение (solidPanels — тёмный фон за колонками) ──────────────────
+    auto *uiGroup  = new QGroupBox(tr("Внешний вид"), lookTab);
     auto *uiLayout = new QVBoxLayout(uiGroup);
     auto *blurCheck = new SdCheckBox(tr("Тёмный фон за колонками"), uiGroup);
     blurCheck->setChecked(AppSettings::get().solidPanels());
     auto *blurHint = new QLabel(
         tr("Добавляет тёмную полупрозрачную подложку за левой, правой колонками и панелями.\nДля тех, кто предпочитает непрозрачный интерфейс."), uiGroup);
     blurHint->setWordWrap(true);
-    blurHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
+    blurHint->setStyleSheet(hintCss);
     uiLayout->addWidget(blurCheck);
     uiLayout->addWidget(blurHint);
 
-    // Добавляем группы на вкладку и растягиваем (addStretch → свободное место снизу)
-    sysLayout->addWidget(hkGroup);
-    sysLayout->addWidget(startGroup);
-    sysLayout->addWidget(langGroup);
-    sysLayout->addWidget(scaleGroup);
-    sysLayout->addWidget(uiGroup);
-    sysLayout->addStretch();
+    auto *soonLbl = new QLabel(mw("Скоро здесь: темы оформления."), lookTab);
+    soonLbl->setStyleSheet(hintCss);
 
-    tabs->addTab(sysTab, tr("⚙️  Система"));
+    lookLayout->addWidget(animGroup);
+    lookLayout->addWidget(cardGroup);
+    lookLayout->addWidget(uiGroup);
+    lookLayout->addWidget(soonLbl);
+    lookLayout->addStretch();
+    tabs->addTab(lookTab, tr("Оформление"), QChar(0xE771));  // Кисточка
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Вкладка 2: История
@@ -806,14 +1068,34 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *limitGroup  = new QGroupBox(tr("Размер буфера"), histTab);
     auto *limitLayout = new QFormLayout(limitGroup);
     limitLayout->setSpacing(8);
-    auto *maxRecordsSpin = new QSpinBox(limitGroup);
-    maxRecordsSpin->setRange(10, 2000);
-    maxRecordsSpin->setSingleStep(50);   // Шаг изменения при нажатии ▲▼
-    maxRecordsSpin->setValue(AppSettings::get().maxHistoryRecords());
+    // Раздельные лимиты: тексты и картинки (видео — вместе с картинками).
+    // Справа от поля — сколько занято сейчас.
+    const int usedTexts  = db->countHistory("text") + db->countHistory("audio");
+    const int usedImages = db->countHistory("image") + db->countHistory("video");
+    auto makeLimitRow = [&](int value, int used) {
+        auto *spin = new QSpinBox(limitGroup);
+        spin->setRange(5, 10000);
+        spin->setSingleStep(10);
+        spin->setValue(value);
+        spin->setFixedWidth(130);
+        auto *usedLbl = new QLabel(tr("сейчас: %1").arg(used), limitGroup);
+        usedLbl->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
+        auto *row = new QHBoxLayout();
+        row->addWidget(spin);
+        row->addWidget(usedLbl);
+        row->addStretch();
+        return std::make_pair(spin, row);
+    };
+    auto textsLimit  = makeLimitRow(AppSettings::get().maxTexts(),  usedTexts);
+    auto imagesLimit = makeLimitRow(AppSettings::get().maxImages(), usedImages);
+    QSpinBox *maxTextsSpin  = textsLimit.first;
+    QSpinBox *maxImagesSpin = imagesLimit.first;
     auto *limitHint = new QLabel(
-        tr("Сколько записей хранить в истории. При превышении\nстарые записи удаляются автоматически."), limitGroup);
+        tr("Тексты и картинки хранятся раздельно: одни больше не вытесняют другие.\n"
+           "При превышении удаляются самые старые записи этого вида."), limitGroup);
     limitHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
-    limitLayout->addRow(tr("Максимум записей:"), maxRecordsSpin);
+    limitLayout->addRow(tr("Максимум текстов:"), textsLimit.second);
+    limitLayout->addRow(tr("Максимум картинок:"), imagesLimit.second);
     limitLayout->addRow(limitHint);
 
     // ── Поведение при копировании ─────────────────────────────────────────────
@@ -824,7 +1106,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     saveImagesCheck->setChecked(AppSettings::get().saveImages());
     // Дедупликация: не сохранять если такой текст уже есть в истории
     auto *dedupCheck = new SdCheckBox(
-        tr("Дедупликация — не сохранять если такой текст уже есть"), behavGroup);
+        tr("Без повторов — повторно скопированное поднимается наверх"), behavGroup);
     dedupCheck->setChecked(AppSettings::get().deduplication());
     // Минимальная длина текста — игнорировать слишком короткие копирования
     auto *minLenLayout = new QHBoxLayout();
@@ -832,7 +1114,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *minLenSpin   = new QSpinBox(behavGroup);
     minLenSpin->setRange(1, 500);
     minLenSpin->setValue(AppSettings::get().minTextLength());
-    minLenSpin->setFixedWidth(80);
+    minLenSpin->setFixedWidth(110);  // Шире: справа кнопки со стрелками
     auto *minLenHint = new QLabel(tr("симв."), behavGroup);
     minLenHint->setStyleSheet("color: rgba(255,255,255,100);");
     minLenLayout->addWidget(minLenLabel);
@@ -853,7 +1135,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     cleanSpin->setRange(0, 365);
     cleanSpin->setValue(AppSettings::get().autocleanDays());
     cleanSpin->setSpecialValueText(tr("Выкл"));  // 0 → "Выкл"
-    cleanSpin->setFixedWidth(90);
+    cleanSpin->setFixedWidth(120);  // Шире: справа кнопки со стрелками
     auto *cleanDaysLabel = new QLabel(tr("дней"), cleanGroup);
     cleanDaysLabel->setStyleSheet("color: rgba(255,255,255,100);");
     cleanLayout->addWidget(cleanLabel);
@@ -955,7 +1237,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     qualSpin->setRange(1, 100);
     qualSpin->setValue(AppSettings::get().imageQuality());
     qualSpin->setSuffix("%");  // Добавляет «%» после числа: «85%»
-    qualSpin->setFixedWidth(75);
+    qualSpin->setFixedWidth(105);  // Шире: справа кнопки со стрелками
     qualRow->addWidget(qualLabel); qualRow->addWidget(qualSpin); qualRow->addStretch();
     qualSpin->setEnabled(fmtCombo->currentIndex() == 1);  // Активно только для JPEG
     // QOverload<int>::of — уточняем какой именно сигнал currentIndexChanged (с int)
@@ -972,7 +1254,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     histLayout->addStretch();
 
     histScroll->setWidget(histTab);  // Вставляем виджет в прокручиваемую область
-    tabs->addTab(histScroll, tr("📋  История"));
+    tabs->addTab(histScroll, tr("История"), QChar(0xE81C));
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Вкладка 3: Закрепы
@@ -1022,7 +1304,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     pinsLayout->addWidget(recentGroup);
     pinsLayout->addStretch();
 
-    tabs->addTab(pinsTab, tr("📌  Закрепы"));
+    tabs->addTab(pinsTab, tr("Закрепы"), QChar(0xE718));
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Вкладка 4: Экспорт / Импорт
@@ -1082,7 +1364,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     backupDaysSpin->setRange(1, 30);
     backupDaysSpin->setValue(AppSettings::get().autoBackupDays());
     backupDaysSpin->setSuffix(tr(" дн."));
-    backupDaysSpin->setFixedWidth(80);
+    backupDaysSpin->setFixedWidth(120);  // Шире: справа кнопки со стрелками
     backupDaysRow->addWidget(backupDaysLabel);
     backupDaysRow->addWidget(backupDaysSpin);
     backupDaysRow->addStretch();
@@ -1090,7 +1372,10 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *backupPathEdit  = new QLineEdit(backupGroup);
     backupPathEdit->setText(AppSettings::get().autoBackupPath());
     backupPathEdit->setPlaceholderText(tr("Папка для бекапов..."));
-    auto *backupBrowseBtn = new QPushButton("📁", backupGroup);
+    // Значок папки из системного шрифта (эмодзи «📁» здесь не отображался)
+    auto *backupBrowseBtn = new QPushButton(QString(QChar(0xE8B7)), backupGroup);
+    backupBrowseBtn->setStyleSheet(QString("QPushButton{font-family:'%1';font-size:14px;padding:0;min-height:26px;}")
+                              .arg(SmartButton::iconFontFamily()));
     backupBrowseBtn->setFixedWidth(32);
     backupBrowseBtn->setToolTip(tr("Выбрать папку"));
     backupPathRow->addWidget(backupPathEdit);
@@ -1118,7 +1403,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     ioLayout->addWidget(backupGroup);
     ioLayout->addStretch();
 
-    tabs->addTab(ioTab, tr("💾  Экспорт / Импорт"));
+    tabs->addTab(ioTab, tr("Экспорт и импорт"), QChar(0xE8B7));
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Вкладка 5: Специальные возможности (Бета)
@@ -1141,42 +1426,74 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     // ── Автозахват записей экрана ─────────────────────────────────────────────
     // VideoWatcher следит за папкой и добавляет новые видео в историю.
-    auto *videoGroup  = new QGroupBox(tr("Автозахват записей экрана"), betaTab);
+    auto *videoGroup  = new QGroupBox(tr("Автозахват записей и аудио"), betaTab);
     auto *videoLayout = new QVBoxLayout(videoGroup);
     videoLayout->setSpacing(8);
     auto *videoCheck = new SdCheckBox(
         tr("Автоматически добавлять новые записи в историю"), videoGroup);
     videoCheck->setChecked(AppSettings::get().videoMonitorEnabled());
     auto *videoHint = new QLabel(
-        tr("Следит за папкой видеозаписей. Новое видео (Xbox Game Bar,\n"
-           "Snipping Tool) появится в истории SmartClip автоматически.\n"
-           "Клик по карточке — вставить файл в Telegram, Discord и т.д."),
+        tr("Следит за папками: новое видео (Xbox Game Bar, «Ножницы») появится в колонке картинок, "
+           "аудио (Звукозапись и т.п.) — в колонке текстов. Клик по карточке — вставить файл "
+           "в Telegram, Discord и т.д. Папок может быть несколько — у каждого они свои."),
         videoGroup);
     videoHint->setWordWrap(true);
     videoHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
-    auto *videoPathRow  = new QHBoxLayout();
-    auto *videoPathEdit = new QLineEdit(videoGroup);
-    videoPathEdit->setText(AppSettings::get().videoMonitorPath());
-    auto *videoBrowseBtn = new QPushButton("📁", videoGroup);
-    videoBrowseBtn->setFixedWidth(32);
-    videoBrowseBtn->setToolTip(tr("Выбрать папку"));
-    videoPathRow->addWidget(videoPathEdit);
-    videoPathRow->addWidget(videoBrowseBtn);
-    connect(videoBrowseBtn, &QPushButton::clicked, [=]() {
-        QString dir = QFileDialog::getExistingDirectory(
-            this, tr("Папка с видеозаписями"), videoPathEdit->text());
-        if (!dir.isEmpty()) videoPathEdit->setText(dir);
+
+    // Папки: список, «+ Папка», «Стандартные», «Удалить»
+    auto *videoList = new QListWidget(videoGroup);
+    videoList->setFixedHeight(96);
+    for (const QString &f : VideoWatcher::configuredFolders())
+        videoList->addItem(QDir::toNativeSeparators(f));
+    auto *videoBtnRow  = new QHBoxLayout();
+    auto *videoAddBtn  = new QPushButton(tr("+ Папка"), videoGroup);
+    auto *videoStdBtn  = new QPushButton(tr("Стандартные"), videoGroup);
+    auto *videoDelBtn  = new QPushButton(tr("✕ Удалить"), videoGroup);
+    videoAddBtn->setStyleSheet(
+        "QPushButton{background:rgba(20,25,55,220);color:#aaaadd;"
+        "border:1px solid rgba(80,80,160,80);border-radius:5px;padding:4px 12px;font-size:11px;}"
+        "QPushButton:hover{background:rgba(28,32,80,240);color:#fff;}");
+    videoStdBtn->setStyleSheet(videoAddBtn->styleSheet());
+    videoDelBtn->setStyleSheet(
+        "QPushButton{background:rgba(55,18,18,220);color:#ddaaaa;"
+        "border:1px solid rgba(160,60,60,80);border-radius:5px;padding:4px 12px;font-size:11px;}"
+        "QPushButton:hover{background:rgba(90,25,25,240);color:#fff;}");
+    for (QPushButton *btn : {videoAddBtn, videoStdBtn, videoDelBtn}) btn->setCursor(Qt::PointingHandCursor);
+    videoAddBtn->setToolTip(tr("Добавить папку, за которой следить"));
+    videoStdBtn->setToolTip(tr("Добавить стандартные папки: клипы Xbox Game Bar, «Записи экрана», «Звукозаписи»"));
+    videoBtnRow->addWidget(videoAddBtn);
+    videoBtnRow->addWidget(videoStdBtn);
+    videoBtnRow->addStretch();
+    videoBtnRow->addWidget(videoDelBtn);
+    auto listHas = [videoList](const QString &path) {
+        const QString n = QDir::cleanPath(QDir::fromNativeSeparators(path));
+        for (int i = 0; i < videoList->count(); ++i)
+            if (QDir::cleanPath(QDir::fromNativeSeparators(videoList->item(i)->text()))
+                    .compare(n, Qt::CaseInsensitive) == 0) return true;
+        return false;
+    };
+    connect(videoAddBtn, &QPushButton::clicked, this, [=]() {
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Папка с записями"));
+        if (!dir.isEmpty() && !listHas(dir)) videoList->addItem(QDir::toNativeSeparators(dir));
     });
-    // Блокируем поле пути если функция выключена
+    connect(videoStdBtn, &QPushButton::clicked, this, [=]() {
+        for (const QString &f : VideoWatcher::defaultFolders())
+            if (!listHas(f)) videoList->addItem(QDir::toNativeSeparators(f));
+    });
+    connect(videoDelBtn, &QPushButton::clicked, this, [videoList]() {
+        delete videoList->takeItem(videoList->currentRow());
+    });
+    // Блокируем список, если автозахват выключен
     auto toggleVideo = [=](bool on) {
-        videoPathEdit->setEnabled(on);
-        videoBrowseBtn->setEnabled(on);
+        for (QWidget *wgt : std::initializer_list<QWidget *>{videoList, videoAddBtn, videoStdBtn, videoDelBtn})
+            wgt->setEnabled(on);
     };
     toggleVideo(videoCheck->isChecked());
     connect(videoCheck, &QCheckBox::toggled, toggleVideo);
     videoLayout->addWidget(videoCheck);
     videoLayout->addWidget(videoHint);
-    videoLayout->addLayout(videoPathRow);
+    videoLayout->addWidget(videoList);
+    videoLayout->addLayout(videoBtnRow);
 
     // ── Кнопка «Сообщить об ошибке» ──────────────────────────────────────────
     auto *feedbackBtn = new QPushButton(
@@ -1198,8 +1515,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     auto *versionLbl = new QLabel(
         tr("SmartClip v%1").arg(QLatin1String(APP_VERSION)), betaTab);
     versionLbl->setStyleSheet(
-        "color:rgba(255,255,255,80);font-size:11px;background:transparent;");
-    versionLbl->setAlignment(Qt::AlignRight);
+        "color:#ffffff;font-size:15px;font-weight:600;background:transparent;");
 
     // ── Ручная проверка обновлений ────────────────────────────────────────────
     // При нажатии создаём UpdateChecker и запускаем check(false) (false = не показывать
@@ -1231,10 +1547,13 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             checkUpdBtn->setText(tr("✓  Уже актуальная версия"));
             checkUpdBtn->setEnabled(true);
         });
-        // Ошибка соединения — сообщаем пользователю
-        connect(uc, &UpdateChecker::checkFailed, this, [checkUpdBtn](const QString &) {
+        // Ошибка соединения — сообщаем пользователю (временно показываем текст
+        // реальной ошибки в тултипе, чтобы понять причину сбоя на конкретной машине)
+        connect(uc, &UpdateChecker::checkFailed, this, [this, checkUpdBtn](const QString &err) {
             checkUpdBtn->setText(tr("✕  Ошибка соединения"));
+            checkUpdBtn->setToolTip(err);
             checkUpdBtn->setEnabled(true);
+            sdInfo(this, tr("Ошибка соединения"), err);
         });
 
         // check(false) — false означает «не форсировать показ диалога при upToDate»
@@ -1244,33 +1563,35 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     // ── Плашка обновления (скрыта до setPendingUpdate) ────────────────────────
     // Показывается когда UpdateChecker нашёл новую версию.
     // m_updateBanner — хранится в h-файле чтобы setPendingUpdate() мог к ней обратиться.
-    m_updateBanner = new QWidget(betaTab);
+    m_updateBanner = new QWidget(this);
+    m_updateBanner->setObjectName("updateBanner");
     m_updateBanner->setStyleSheet(
-        "background:rgba(255,200,50,18);border:1px solid rgba(255,200,50,80);"
-        "border-radius:8px;");
+        "#updateBanner{background:rgba(120,190,255,22);border:1px solid rgba(120,190,255,90);"
+        "border-radius:10px;}");
     m_updateBanner->hide();  // Скрыта до получения информации об обновлении
 
     auto *bannerRow  = new QHBoxLayout(m_updateBanner);
     bannerRow->setContentsMargins(14, 10, 14, 10);
     bannerRow->setSpacing(10);
 
-    auto *bannerIcon = new QLabel("🆙", m_updateBanner);
-    bannerIcon->setStyleSheet("background:transparent;font-size:18px;");
+    auto *bannerIcon = new QLabel(QString(QChar(0xE896)), m_updateBanner);  // Стрелка «скачать»
+    bannerIcon->setFont(QFont(SmartButton::iconFontFamily()));
+    bannerIcon->setStyleSheet("background:transparent; color:#cfe6ff; font-size:16px;");
 
     // bannerText имеет objectName — по нему найдём этот QLabel в setPendingUpdate()
     // через findChild<QLabel*>("bannerText")
     auto *bannerText = new QLabel(m_updateBanner);
     bannerText->setObjectName("bannerText");
     bannerText->setStyleSheet(
-        "background:transparent;color:rgba(255,220,100,220);font-size:12px;");
+        "background:transparent;color:rgba(220,235,255,235);font-size:12px;");
     bannerText->setWordWrap(true);
 
-    auto *bannerBtn = new QPushButton(tr("Обновить"), m_updateBanner);
-    bannerBtn->setFixedWidth(90);
+    auto *bannerBtn = new QPushButton(tr("Что нового?"), m_updateBanner);
+    bannerBtn->setCursor(Qt::PointingHandCursor);
     bannerBtn->setStyleSheet(
-        "QPushButton{background:rgba(255,200,50,200);color:#1a1200;"
-        "border:none;border-radius:5px;padding:5px 10px;font-weight:bold;font-size:12px;}"
-        "QPushButton:hover{background:rgba(255,220,80,230);}");
+        "QPushButton{background:rgba(120,190,255,220);color:#0e1a2c;"
+        "border:none;border-radius:6px;padding:6px 14px;font-weight:600;font-size:12px;}"
+        "QPushButton:hover{background:rgba(150,205,255,240);}");
 
     bannerRow->addWidget(bannerIcon);
     bannerRow->addWidget(bannerText, 1);
@@ -1278,20 +1599,30 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     // Кнопка «Обновить» — отправляет сигнал updateRequested и закрывает диалог.
     connect(bannerBtn, &QPushButton::clicked, this, [this]() {
+        // Сначала закрываем настройки, и только потом MainWindow открывает окно
+        // обновления. Раньше оно открывалось ПОВЕРХ ещё открытых настроек
+        // (два вложенных модальных окна).
         emit updateRequested(m_pendingVersion, m_pendingUrl, m_pendingNotes);
-        reject();  // Закрываем настройки (MainWindow откроет браузер)
+        reject();
     });
+
+    // Блок «О программе»: версия, проверка обновлений и плашка обновления
+    auto *aboutGroup  = new QGroupBox(tr("О программе"), betaTab);
+    auto *aboutLayout = new QVBoxLayout(aboutGroup);
+    aboutLayout->setSpacing(8);
+    auto *aboutRow = new QHBoxLayout();
+    aboutRow->addWidget(versionLbl);
+    aboutRow->addStretch();
+    aboutRow->addWidget(checkUpdBtn);
+    aboutLayout->addLayout(aboutRow);
 
     betaLayout->addWidget(betaHintLabel);
     betaLayout->addWidget(videoGroup);
     betaLayout->addWidget(feedbackBtn);
-    betaLayout->addWidget(checkUpdBtn);
-    betaLayout->addStretch();
-    betaLayout->addWidget(m_updateBanner);
-    betaLayout->addWidget(versionLbl);
+    betaLayout->addWidget(aboutGroup);
     betaLayout->addStretch();
 
-    tabs->addTab(betaTab, tr("⚡  Специальные возможности"));
+    tabs->addTab(betaTab, tr("Дополнительно"), QChar(0xE946));
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Логика экспорта (JSON-файл с закрепами, профилями, настройками)
@@ -1303,62 +1634,13 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             tr("JSON файл (*.json)"));
         if (path.isEmpty()) return;
 
-        QJsonObject root;
-        root["version"]     = "1.0";
-        root["exported_at"] = QDateTime::currentDateTime().toString(Qt::ISODate);
-
-        // Собираем все закрепы: сначала без папки, потом по каждой папке
-        QJsonArray allPins;
-        auto addPinsFromFolder = [&](const QString &folder) {
-            for (const PinItem &p : db->getPins(folder)) {
-                QJsonObject obj;
-                obj["folder"]   = p.folder;
-                obj["name"]     = p.name;
-                obj["type"]     = p.type;
-                obj["content"]  = p.content;
-                obj["filepath"] = p.filepath;
-                allPins.append(obj);
-            }
-        };
-        addPinsFromFolder("");  // Закрепы без папки
-        for (const FolderItem &f : db->getAllFolders())
-            addPinsFromFolder(f.name);  // Закрепы из каждой папки
-        root["pins"] = allPins;
-
-        // Профили (горячие клавиши)
-        QJsonArray profArr;
-        for (const ProfileItem &p : db->getProfiles()) {
-            QJsonObject obj;
-            obj["name"]   = p.name;
-            obj["hotkey"] = p.hotkey;
-            obj["text"]   = p.text;
-            profArr.append(obj);
-        }
-        root["profiles"] = profArr;
-
-        // Основные настройки
-        QJsonObject cfg;
-        cfg["mainHotkey"]    = AppSettings::get().mainHotkey();
-        cfg["maxRecords"]    = AppSettings::get().maxHistoryRecords();
-        cfg["autocleanDays"] = AppSettings::get().autocleanDays();
-        cfg["saveImages"]    = AppSettings::get().saveImages();
-        cfg["deduplication"] = AppSettings::get().deduplication();
-        cfg["minTextLength"] = AppSettings::get().minTextLength();
-        cfg["excludedApps"]  = QJsonArray::fromStringList(AppSettings::get().excludedApps());
-        cfg["pinsNoName"]    = AppSettings::get().pinsNoName();
-        root["settings"]     = cfg;
-
-        // Записываем JSON в файл
-        QFile file(path);
-        if (file.open(QIODevice::WriteOnly)) {
-            // QJsonDocument::Indented — форматируем с отступами (читаемый JSON)
-            file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-            file.close();
+        // Вся логика — в core/Backup.cpp (общая с автобэкапом)
+        QString error;
+        if (Backup::exportToFile(db, path, &error))
             sdInfo(this, tr("Экспорт завершён"),
                    tr("Данные сохранены в:\n%1").arg(path));
-        } else {
-            sdInfo(this, tr("Ошибка"), tr("Не удалось сохранить файл."));
-        }
+        else
+            sdInfo(this, tr("Ошибка"), tr("Не удалось сохранить файл.") + "\n" + error);
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1370,57 +1652,32 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
             tr("JSON файл (*.json)"));
         if (path.isEmpty()) return;
 
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            sdInfo(this, tr("Ошибка"), tr("Не удалось открыть файл."));
-            return;
-        }
-        // fromJson + QJsonParseError — проверяем что файл валидный JSON
-        QJsonParseError err;
-        QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
-        file.close();
-        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        // Уже существующие закрепы/профили не дублируются — повторный импорт
+        // того же файла ничего не меняет.
+        const Backup::ImportResult r = Backup::importFromFile(db, path);
+        if (!r.ok) {
             sdInfo(this, tr("Ошибка"),
                    tr("Файл повреждён или не является бекапом SmartClip."));
             return;
         }
 
-        QJsonObject root = doc.object();
-        int pinCount = 0, profCount = 0;
-        // Добавляем закрепы из JSON в БД (не удаляя существующие)
-        for (const QJsonValue &v : root["pins"].toArray()) {
-            QJsonObject o = v.toObject();
-            db->addPin(o["folder"].toString(), o["name"].toString(),
-                       o["type"].toString(),   o["content"].toString(),
-                       o["filepath"].toString());
-            ++pinCount;
-        }
-        // Добавляем профили
-        for (const QJsonValue &v : root["profiles"].toArray()) {
-            QJsonObject o = v.toObject();
-            db->addProfile(o["name"].toString(), o["hotkey"].toString(), o["text"].toString());
-            ++profCount;
-        }
-        // Применяем настройки из бекапа если они есть
-        if (root.contains("settings")) {
-            QJsonObject cfg = root["settings"].toObject();
-            if (cfg.contains("maxRecords"))    AppSettings::get().setMaxHistoryRecords(cfg["maxRecords"].toInt());
-            if (cfg.contains("autocleanDays")) AppSettings::get().setAutocleanDays(cfg["autocleanDays"].toInt());
-            if (cfg.contains("saveImages"))    AppSettings::get().setSaveImages(cfg["saveImages"].toBool());
-            if (cfg.contains("deduplication")) AppSettings::get().setDeduplication(cfg["deduplication"].toBool());
-            if (cfg.contains("minTextLength")) AppSettings::get().setMinTextLength(cfg["minTextLength"].toInt());
-            if (cfg.contains("pinsNoName"))    AppSettings::get().setPinsNoName(cfg["pinsNoName"].toBool());
-            if (cfg.contains("excludedApps")) {
-                QStringList excl;
-                for (const QJsonValue &a : cfg["excludedApps"].toArray())
-                    excl << a.toString();
-                AppSettings::get().setExcludedApps(excl);
-            }
-        }
-        emit settingsChanged();  // Уведомляем MainWindow что настройки изменились
-        sdInfo(this, tr("Импорт завершён"),
-               tr("Импортировано: закрепов — %1, профилей — %2.\n"
-                  "Перезагрузите историю чтобы увидеть изменения.").arg(pinCount).arg(profCount));
+        if (r.mainHotkeyChanged) emit mainHotkeyChanged(AppSettings::get().mainHotkey());
+        emit settingsChanged();
+        emit dataImported();  // MainWindow перезагрузит закрепы и хоткеи профилей
+
+        QString msg = tr("Добавлено: закрепов — %1, профилей — %2.").arg(r.pinsAdded).arg(r.profilesAdded);
+        if (r.pinsSkipped || r.profilesSkipped)
+            msg += "\n" + tr("Пропущено (уже есть): закрепов — %1, профилей — %2.")
+                              .arg(r.pinsSkipped).arg(r.profilesSkipped);
+        if (r.settingsApplied)
+            msg += "\n\n" + tr("Настройки из файла применены. Окно настроек будет закрыто, "
+                                "чтобы старые значения не перезаписали импортированные.");
+        sdInfo(this, tr("Импорт завершён"), msg);
+
+        // Раньше после импорта окно оставалось открытым, и кнопка «Сохранить»
+        // записывала СТАРЫЕ значения из полей поверх импортированных —
+        // поэтому казалось, что настройки «не импортировались».
+        if (r.settingsApplied) reject();
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1436,6 +1693,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     btnBox->addWidget(cancelBtn);
     btnBox->addWidget(saveBtn);
 
+    // Плашка «Доступно обновление» — вверху окна, видна из любого раздела
+    bodyLayout->addWidget(m_updateBanner);
     bodyLayout->addWidget(tabs, 1);
     bodyLayout->addLayout(btnBox);
 
@@ -1455,11 +1714,39 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         AppSettings::get().setAutostart(autostartOn);
         applyAutostart(autostartOn);
 
-        // Внешний вид
+        // Окна администратора. Включение — создаём задачу Планировщика
+        // (Windows покажет окно UAC). Отказали — галочку не сохраняем.
+        bool adminRestart = false;
+        const bool adminWanted = adminCheck->isChecked();
+        if (adminWanted != AppSettings::get().runAsAdmin()) {
+            if (adminWanted) {
+                if (AdminMode::requestCreateTask()) {
+                    AppSettings::get().setRunAsAdmin(true);
+                    adminRestart = !AdminMode::isElevated();
+                } else {
+                    adminCheck->setChecked(false);
+                    sdInfo(this, tr("Окна администратора"),
+                           tr("Не удалось включить: Windows не дала разрешение."));
+                }
+            } else {
+                AppSettings::get().setRunAsAdmin(false);
+                AdminMode::deleteTask();  // Получится, только если мы уже с правами админа
+                adminRestart = AdminMode::isElevated();
+            }
+        }
+
+        // Оформление
         AppSettings::get().setSolidPanels(blurCheck->isChecked());
+        AppSettings::get().setCardHover(hoverCheck->isChecked());
+        AppSettings::get().setDateRuler(rulerCombo->currentData().toString());
+        for (const AnimRow &r : animRows) {
+            if (r.style) AppSettings::get().setScrollStyle(r.style->currentData().toString());
+            AppSettings::get().setAnimSpeed(r.key, r.speed->value());
+        }
 
         // История
-        AppSettings::get().setMaxHistoryRecords(maxRecordsSpin->value());
+        AppSettings::get().setMaxTexts(maxTextsSpin->value());
+        AppSettings::get().setMaxImages(maxImagesSpin->value());
         AppSettings::get().setSaveImages(saveImagesCheck->isChecked());
         AppSettings::get().setDeduplication(dedupCheck->isChecked());
         AppSettings::get().setMinTextLength(minLenSpin->value());
@@ -1485,7 +1772,10 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
         // Бета: видеомонитор
         AppSettings::get().setVideoMonitorEnabled(videoCheck->isChecked());
-        AppSettings::get().setVideoMonitorPath(videoPathEdit->text().trimmed());
+        QStringList folders;
+        for (int i = 0; i < videoList->count(); ++i)
+            folders << QDir::fromNativeSeparators(videoList->item(i)->text());
+        AppSettings::get().setMediaFolders(folders);
 
         // Отправляем сигналы об изменениях
         if (hotkeyChanged) emit mainHotkeyChanged(newHotkey);
@@ -1503,8 +1793,8 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
         accept();  // Закрываем диалог с результатом «принято»
 
-        // Если сменился язык или масштаб — предлагаем перезапуск
-        if (langChanged || scaleChanged) {
+        // Если сменился язык, масштаб или права — предлагаем перезапуск
+        if (langChanged || scaleChanged || adminRestart) {
             if (sdQuestion(parentWidget(),
                            tr("Перезапуск"),
                            tr("Для применения изменений необходимо перезапустить приложение.\n"
@@ -1534,9 +1824,37 @@ void SettingsDialog::setPendingUpdate(const QString &version, const QString &url
     // findChild — ищем QLabel с objectName == "bannerText" среди дочерних виджетов
     auto *lbl = m_updateBanner->findChild<QLabel*>("bannerText");
     if (lbl)
-        lbl->setText(tr("Доступна новая версия %1 — нажми «Обновить» чтобы установить.").arg(version));
+        lbl->setText(UpdateChecker::isMajorUpdate(version)
+            ? tr("Доступно большое обновление — SmartClip %1").arg(version)
+            : tr("Доступно обновление %1 — исправления и улучшения").arg(version));
 
     m_updateBanner->show();  // Показываем ранее скрытую плашку
+}
+
+// ─── showEvent — плавное появление окна настроек ─────────────────────────────
+void SettingsDialog::showEvent(QShowEvent *e)
+{
+    // Размер — по экрану (разделы прокручиваются, окно не должно вылезать
+    // за край), и ровно по центру экрана, где открыт SmartClip
+    QScreen *scr = parentWidget() ? parentWidget()->screen() : screen();
+    if (scr) {
+        const QRect av = scr->availableGeometry();
+        const QSize sz(qMin(qMax(minimumWidth(), 900), av.width() - 40),
+                       qMin(qMax(minimumHeight(), 820), av.height() - 40));
+        resize(sz);
+        move(av.center() - QPoint(sz.width() / 2, sz.height() / 2));
+    }
+    QDialog::showEvent(e);
+    m_anim->onShow();
+}
+
+// ─── done — закрытие (крестик, «Отмена», «Сохранить», Esc) с анимацией ухода ─
+void SettingsDialog::done(int r)
+{
+    if (!m_anim->handleDone([self = QPointer<SettingsDialog>(this), r]() {
+            if (self) self->QDialog::done(r);
+        }))
+        QDialog::done(r);
 }
 
 // ─── paintEvent — рисуем скруглённый тёмный фон диалога ─────────────────────

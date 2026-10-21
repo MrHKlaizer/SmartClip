@@ -21,9 +21,6 @@
 #include <QDir>               // Работа с папками
 #include <QFile>              // Работа с файлами
 #include <QProcess>           // Запуск нового процесса (для перезапуска после смены языка)
-#include <QJsonDocument>      // Сериализация/десериализация JSON (для бекапа)
-#include <QJsonObject>        // JSON-объект {ключ: значение}
-#include <QJsonArray>         // JSON-массив [...]
 #include <QDateTime>          // Дата и время
 #include <QTimer>             // Таймер (для отложенной проверки обновлений)
 #include <QRegularExpression> // Регулярные выражения (для масштабирования QSS)
@@ -40,6 +37,8 @@
 #include "core/AppSettings.h"      // Настройки (синглтон, INI-файл)
 #include "core/VideoWatcher.h"     // Мониторинг папки с видеозаписями
 #include "core/UpdateChecker.h"    // Проверка обновлений на GitHub
+#include "core/Backup.h"           // Автобэкап закрепов/профилей в JSON
+#include "core/AdminMode.h"        // Работа в окнах администратора
 #include "ui/MainWindow.h"         // Главное окно SmartClip
 
 // ─── Точка входа ─────────────────────────────────────────────────────────────
@@ -48,6 +47,26 @@
 // argv — массив строк-аргументов (argv[0] = путь к .exe)
 int main(int argc, char *argv[])
 {
+    // ── Режим «Работать в окнах администратора» (см. core/AdminMode.h) ───────
+    bool launchedByTask = false;
+    for (int i = 1; i < argc; ++i) {
+        // Нас запустили с правами админа только чтобы создать задачу Планировщика
+        if (qstrcmp(argv[i], AdminMode::ARG_CREATE_TASK) == 0)
+            return AdminMode::createTask() ? 0 : 1;
+        if (qstrcmp(argv[i], AdminMode::ARG_ELEVATED) == 0)
+            launchedByTask = true;
+    }
+    // Обычный запуск при включённой настройке: просим Планировщик запустить
+    // SmartClip с правами администратора, а сами выходим. Если SmartClip уже
+    // работает — не трогаем Планировщик, ниже просто покажем его окно.
+    // launchedByTask — защита от зацикливания, если права так и не повысились.
+    if (!launchedByTask && !AdminMode::isElevated() && AppSettings::get().runAsAdmin()) {
+        HANDLE running = OpenMutexW(SYNCHRONIZE, FALSE, L"SmartClipSingleInstance");
+        if (running) CloseHandle(running);
+        else if (AdminMode::runTask()) return 0;
+        // Задачи нет (удалили вручную) — работаем как обычно, без прав админа
+    }
+
     // ── Защита от двойного запуска ────────────────────────────────────────────
     // Если SmartClip уже запущен (автозапуск + ручной старт) — второй экземпляр
     // сразу выходит. Без этого оба процесса пишут в одну БД → каждая копия
@@ -55,7 +74,15 @@ int main(int argc, char *argv[])
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"SmartClipSingleInstance");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         if (hMutex) CloseHandle(hMutex);
-        return 0; // Уже запущен — тихо выходим
+        // Уже запущен (сидит в трее). Раньше второй запуск просто ничего не делал —
+        // казалось, что программа «не открывается». Теперь просим первую копию
+        // показать окно: шлём её скрытому окну хоткеев то же сообщение,
+        // что и при нажатии горячей клавиши.
+        if (HWND other = FindWindowExW(HWND_MESSAGE, nullptr, L"SmartClipHotkeyWindow", nullptr)) {
+            AllowSetForegroundWindow(ASFW_ANY);
+            PostMessageW(other, WM_HOTKEY, 1 /* HotkeyManager::HOTKEY_ID */, 0);
+        }
+        return 0;
     }
 
     // QApplication — «сердце» Qt-приложения. Управляет событиями, шрифтами, темой.
@@ -67,6 +94,12 @@ int main(int argc, char *argv[])
     // Не выходить при закрытии последнего окна.
     // SmartClip «живёт» в системном трее даже когда окно скрыто.
     app.setQuitOnLastWindowClosed(false);
+
+    // Свою анимацию меню делаем сами (src/ui/Anim.h). Встроенная анимация меню
+    // Qt (включается вслед за настройкой Windows) запускалась одновременно и
+    // перебивала нашу — меню мигало вместо плавного появления.
+    QApplication::setEffectEnabled(Qt::UI_AnimateMenu, false);
+    QApplication::setEffectEnabled(Qt::UI_FadeMenu, false);
 
     // Иконка приложения — отображается в трее и диалогах.
     // ":/icons/smartclip.ico" — путь к ресурсу (qrc файл).
@@ -203,15 +236,30 @@ int main(int argc, char *argv[])
 
     tray.show();  // Показываем иконку в трее
 
+    // Какое уведомление сейчас в трее: клик по уведомлению об обновлении
+    // открывает установку, а клик по предупреждению о хоткее — нет
+    bool updateBalloonShown = false;
+
+    // Горячую клавишу заняла другая программа — не молчим, а подсказываем
+    if (!hotkey.mainHotkeyOk()) {
+        updateBalloonShown = false;
+        tray.showMessage("SmartClip",
+            QObject::tr("Горячая клавиша %1 занята другой программой.\n"
+                        "Откройте SmartClip двойным кликом по значку в трее "
+                        "и выберите другую клавишу в настройках.")
+                .arg(AppSettings::get().mainHotkey()),
+            QSystemTrayIcon::Warning, 10000);
+    }
+
     // ── Обработка главного хоткея ─────────────────────────────────────────────
     // Нажатие хоткея: если окно открыто — закрыть, если закрыто — открыть.
     QObject::connect(&hotkey, &HotkeyManager::hotkeyPressed, [&]() {
-        if (window.isVisible()) {
+        if (window.isOpen()) {
             // Закрываем модальный диалог если открыт (Настройки, диалог обновления...).
             // activeModalWidget() — возвращает верхнее модальное окно или nullptr.
             if (QWidget *modal = QApplication::activeModalWidget())
                 modal->close();
-            window.hide();
+            window.hideAnimated();
         } else {
             window.showWindow();
         }
@@ -248,6 +296,15 @@ int main(int argc, char *argv[])
     // Смена главного хоткея → перерегистрация через HotkeyManager
     QObject::connect(&window, &MainWindow::mainHotkeyChanged,
                      &hotkey, &HotkeyManager::setMainHotkey);
+    // Новая комбинация занята — HotkeyManager вернул прежнюю, сообщаем об этом
+    QObject::connect(&hotkey, &HotkeyManager::mainHotkeyFailed, [&](const QString &hk) {
+        updateBalloonShown = false;
+        tray.showMessage("SmartClip",
+            QObject::tr("Комбинация %1 занята другой программой. "
+                        "Оставлена прежняя: %2.")
+                .arg(hk, AppSettings::get().mainHotkey()),
+            QSystemTrayIcon::Warning, 8000);
+    });
 
     // Хоткей профиля нажат → найти текст профиля и вставить без открытия окна
     QObject::connect(&hotkey, &HotkeyManager::profileHotkeyPressed,
@@ -260,90 +317,39 @@ int main(int argc, char *argv[])
         }
     });
 
-    // ── Автоматический бекап ─────────────────────────────────────────────────
-    // При каждом запуске проверяем: прошло ли достаточно дней с последнего бекапа.
-    // Бекап сохраняется в JSON-файл в указанную папку.
+    // ── Обслуживание: автобэкап и автоочистка ────────────────────────────────
+    // Раньше выполнялось только при запуске — а SmartClip неделями живёт в трее
+    // без перезапуска, и ни бэкап, ни очистка просто не происходили.
+    // Теперь: при старте и далее каждые 6 часов.
+    auto runMaintenance = [&db]() {
+        Backup::runAutoBackupIfDue(&db);
+        const int days = AppSettings::get().autocleanDays();
+        if (days > 0) {
+            db.autocleanByDays(days);
+        }
+    };
+    Backup::runAutoBackupIfDue(&db);  // Автоочистку при старте уже сделал db.init()
+    QTimer maintenanceTimer;
+    maintenanceTimer.setInterval(6 * 60 * 60 * 1000);
+    QObject::connect(&maintenanceTimer, &QTimer::timeout, runMaintenance);
+    maintenanceTimer.start();
+
     auto &cfg = AppSettings::get();
-    if (cfg.autoBackup() && !cfg.autoBackupPath().isEmpty()) {
-        QString backupDir = cfg.autoBackupPath();
-
-        // stampFile — текстовый файл с датой последнего бекапа (ISO-формат)
-        QString stampFile = backupDir + "/last_backup.txt";
-        bool needBackup = true;
-
-        QFile sf(stampFile);
-        if (sf.open(QIODevice::ReadOnly)) {
-            // Читаем дату последнего бекапа
-            QDateTime last = QDateTime::fromString(
-                QString(sf.readAll()).trimmed(), Qt::ISODate);
-            sf.close();
-            // Если с последнего бекапа прошло меньше autoBackupDays — не делаем
-            if (last.isValid() && last.daysTo(QDateTime::currentDateTime()) < cfg.autoBackupDays())
-                needBackup = false;
-        }
-
-        if (needBackup) {
-            // ── Формируем JSON-документ с закрепами и профилями ──────────────
-            QJsonObject root;
-            root["version"]     = "1.0";
-            root["exported_at"] = QDateTime::currentDateTime().toString(Qt::ISODate);
-
-            // Собираем все закрепы (из всех папок)
-            QJsonArray allPins;
-            auto addPins = [&](const QString &folder) {
-                for (const PinItem &p : db.getPins(folder)) {
-                    QJsonObject o;
-                    o["folder"]   = p.folder; o["name"]    = p.name;
-                    o["type"]     = p.type;   o["content"] = p.content;
-                    o["filepath"] = p.filepath;
-                    allPins.append(o);
-                }
-            };
-            addPins("");  // Закрепы без папки
-            for (const FolderItem &f : db.getAllFolders())
-                addPins(f.name);  // Закрепы из каждой папки
-            root["pins"] = allPins;
-
-            // Собираем профили
-            QJsonArray profArr;
-            for (const ProfileItem &p : db.getProfiles()) {
-                QJsonObject o;
-                o["name"] = p.name; o["hotkey"] = p.hotkey; o["text"] = p.text;
-                profArr.append(o);
-            }
-            root["profiles"] = profArr;
-
-            // Сохраняем JSON в файл с датой в имени: smartclip_backup_2025-01-15.json
-            QString fname = backupDir + "/smartclip_backup_"
-                + QDateTime::currentDateTime().toString("yyyy-MM-dd") + ".json";
-            QFile f(fname);
-            if (f.open(QIODevice::WriteOnly)) {
-                f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-                f.close();
-                // Обновляем штамп времени бекапа
-                if (sf.open(QIODevice::WriteOnly)) {
-                    sf.write(QDateTime::currentDateTime().toString(Qt::ISODate).toUtf8());
-                    sf.close();
-                }
-                qDebug() << "Автобекап сохранён:" << fname;
-            }
-        }
-    }
 
     // ── Мониторинг папки видеозаписей (Бета) ─────────────────────────────────
     // Следим за папкой Xbox Game Bar — новые видео автоматически появляются в истории.
     VideoWatcher videoWatcher(&db);
-    if (cfg.videoMonitorEnabled() && !cfg.videoMonitorPath().isEmpty()) {
-        videoWatcher.start(cfg.videoMonitorPath());
-        // Новое видео → обновить историю в главном окне
-        QObject::connect(&videoWatcher, &VideoWatcher::newVideoAdded,
-                         &window, &MainWindow::markHistoryDirty);
-    }
-    // При изменении настроек — обновляем VideoWatcher (включить/выключить/сменить папку)
+    // Новое видео → обновить историю в главном окне.
+    // Подключаем всегда: раньше связь создавалась только если мониторинг был
+    // включён при запуске, и при включении в настройках видео не появлялись.
+    QObject::connect(&videoWatcher, &VideoWatcher::newVideoAdded,
+                     &window, &MainWindow::markHistoryDirty);
+    if (cfg.videoMonitorEnabled())
+        videoWatcher.start(VideoWatcher::configuredFolders());
+    // При изменении настроек — обновляем VideoWatcher (включить/выключить/сменить папки)
     QObject::connect(&window, &MainWindow::settingsChanged, [&]() {
-        auto &s = AppSettings::get();
-        if (s.videoMonitorEnabled())
-            videoWatcher.setFolder(s.videoMonitorPath());
+        if (AppSettings::get().videoMonitorEnabled())
+            videoWatcher.setFolders(VideoWatcher::configuredFolders());
         else
             videoWatcher.stop();
     });
@@ -354,14 +360,28 @@ int main(int argc, char *argv[])
     auto *updater = new UpdateChecker(&app);
     QObject::connect(updater, &UpdateChecker::updateAvailable,
                      &window, &MainWindow::onUpdateAvailable);
+    // Вместо окна поверх всего (могло выскочить посреди игры) — уведомление в трее.
+    // Клик по нему открывает установку обновления. Только о БОЛЬШОМ обновлении
+    // (2.0 → 3.0); мелкие правки (2.0.1) ждут в настройках — без уведомлений.
+    QObject::connect(updater, &UpdateChecker::updateAvailable,
+                     [&tray, &updateBalloonShown](const QString &version) {
+        if (!UpdateChecker::isMajorUpdate(version)) return;
+        updateBalloonShown = true;
+        tray.showMessage("SmartClip",
+            QObject::tr("Доступна новая версия %1. Нажмите, чтобы установить.").arg(version),
+            QSystemTrayIcon::Information, 10000);
+    });
+    QObject::connect(&tray, &QSystemTrayIcon::messageClicked, [&]() {
+        if (updateBalloonShown) window.showPendingUpdate();
+    });
     // singleShot — запустить один раз через 10000мс (10 секунд)
     QTimer::singleShot(10000, updater, [updater]() { updater->check(true); });
 
     // ── Watchdog ──────────────────────────────────────────────────────────────
-    // «Сторожевой пёс» запускается в отдельном потоке и следит за ClipboardManager.
-    // Если буфер завис — автоматически перезапускает мониторинг.
+    // «Сторожевой пёс» раз в 10 секунд проверяет, живо ли окно-слушатель буфера,
+    // и перезапускает мониторинг, если оно пропало. Работает в главном потоке.
     Watchdog watchdog(&clipboard);
-    watchdog.start();  // Запустить фоновый поток
+    watchdog.start();
 
     // ── Главный цикл событий ──────────────────────────────────────────────────
     // app.exec() — запускает Qt Event Loop: бесконечный цикл обработки событий.
@@ -370,7 +390,7 @@ int main(int argc, char *argv[])
     int result = app.exec();
 
     // ── Завершение ────────────────────────────────────────────────────────────
-    watchdog.stop();  // Останавливаем сторожевого пса (ждём завершения потока)
+    watchdog.stop();
     // ClipboardManager, HotkeyManager, VideoWatcher — уничтожатся автоматически
     // когда выйдем из main() (локальные переменные удаляются в обратном порядке).
 
@@ -383,9 +403,21 @@ int main(int argc, char *argv[])
 
     if (AppSettings::get().restartRequested()) {
         AppSettings::get().setRestartRequested(false);  // Сбрасываем флаг
-        // startDetached — запустить процесс независимо от текущего (не дочерний).
-        // applicationFilePath() — полный путь к текущему .exe.
-        QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
+        // Освобождаем горячие клавиши и буфер ДО запуска новой копии — иначе
+        // она могла стартовать раньше, чем мы их отпустим, и показать ложное
+        // «клавиша занята другой программой».
+        hotkey.stop();
+        clipboard.stop();
+        if (AdminMode::isElevated() && !AppSettings::get().runAsAdmin()) {
+            // Режим администратора выключили — новая копия должна стартовать
+            // как обычный пользователь (дочерний процесс унаследовал бы права админа)
+            AdminMode::launchAsUser();
+        } else {
+            // startDetached — запустить процесс независимо от текущего (не дочерний).
+            // applicationFilePath() — полный путь к текущему .exe.
+            // Обычная копия при включённом режиме сама перезапустится через Планировщик.
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
+        }
     }
 
     return result;  // 0 = нормальное завершение

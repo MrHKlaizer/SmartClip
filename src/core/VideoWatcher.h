@@ -39,17 +39,23 @@ public:
     // и родительский объект Qt (для автоматической очистки памяти).
     explicit VideoWatcher(Database *db, QObject *parent = nullptr);
 
-    // Начать слежение за папкой по указанному пути.
-    // Сразу сканирует папку чтобы запомнить уже существующие файлы
+    // Начать слежение за папками (видео и аудио).
+    // Сразу сканирует их, чтобы запомнить уже существующие файлы
     // (они не будут добавляться в историю повторно при следующем старте).
-    void start(const QString &folderPath);
+    void start(const QStringList &folders);
 
     // Остановить слежение — отписываемся от уведомлений файловой системы.
     void stop();
 
-    // Изменить наблюдаемую папку на лету (без перезапуска программы).
-    // Пользователь может выбрать другую папку в настройках.
-    void setFolder(const QString &folderPath);
+    // Изменить наблюдаемые папки на лету (без перезапуска программы).
+    void setFolders(const QStringList &folders);
+
+    // Стандартные папки: клипы Xbox Game Bar, «Записи экрана», «Звукозаписи»
+    static QStringList defaultFolders();
+    // Папки, выбранные в настройках (не выбирал — стандартные)
+    static QStringList configuredFolders();
+    // Видео или аудио ли это (по расширению); isAudio — что именно
+    static bool isMediaFile(const QString &path, bool *isAudio = nullptr);
 
 // ─── Сигналы ─────────────────────────────────────────────────────────────────
 signals:
@@ -67,16 +73,17 @@ private slots:
 private:
     // Пройтись по папке, найти все видеофайлы и добавить в базу те,
     // которых ещё нет в m_knownFiles.
-    void scanFolder();
+    void scanFolder(const QString &folder);
 
     // ─── Данные ───────────────────────────────────────────────────────────────
     QFileSystemWatcher m_watcher;    // Системный наблюдатель за папкой (не указатель — владеем объектом)
     Database          *m_db;         // База данных — куда сохраняем найденные видео
-    QString            m_folderPath; // Путь к наблюдаемой папке
+    QStringList        m_folders;    // Наблюдаемые папки
     QSet<QString>      m_knownFiles; // Набор путей уже известных файлов — не дублируем их
 
     // Список расширений видеофайлов которые мы ищем: mp4, mkv, avi и т.д.
     // static — одна копия на весь класс (не в каждом объекте).
     // const — значение не меняется после инициализации.
     static const QStringList VIDEO_EXTENSIONS;
+    static const QStringList AUDIO_EXTENSIONS;
 };

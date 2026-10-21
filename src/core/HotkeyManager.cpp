@@ -60,6 +60,11 @@ bool HotkeyManager::start()
     // Сохраняем this в окне — WndProc сможет его получить через GetWindowLongPtr.
     SetWindowLongPtr(m_hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
+    // Повторный запуск exe шлёт нам WM_HOTKEY («покажи окно»). Если SmartClip
+    // работает с правами администратора, Windows по умолчанию не пропускает
+    // сообщения от обычных процессов — разрешаем именно это.
+    ChangeWindowMessageFilterEx(m_hwnd, WM_HOTKEY, MSGFLT_ALLOW, nullptr);
+
     // ── Регистрируем главный хоткей ───────────────────────────────────────────
     QString hkStr = AppSettings::get().mainHotkey();  // "Ctrl+Shift+V" или "Win+C"
     UINT mod = 0, vk = 0;
@@ -68,6 +73,7 @@ bool HotkeyManager::start()
         // Строка не распознана — используем fallback: Ctrl+Shift+V
         mod = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT;
         vk  = 'V';
+        hkStr = QStringLiteral("Ctrl+Shift+V");  // Запоминаем то, что реально работает
         qDebug() << "Не распознан хоткей из настроек, используем Ctrl+Shift+V";
     }
 
@@ -80,12 +86,17 @@ bool HotkeyManager::start()
         installLLHook(vk);
     } else if (!(mod & MOD_WIN) && !RegisterHotKey(m_hwnd, HOTKEY_ID, mod, vk)) {
         // Обычный хоткей (не Win+key) — если не зарегистрировался, значит кто-то занял его.
+        // Раньше здесь возвращали false, и SmartClip молча закрывался при запуске —
+        // со стороны выглядело как «программа не запускается». Теперь продолжаем
+        // работать (окно открывается из трея, хоткеи профилей работают),
+        // а main.cpp покажет предупреждение.
         qDebug() << "RegisterHotKey не удался (код" << GetLastError() << "):" << hkStr;
-        DestroyWindow(m_hwnd);
-        m_hwnd = nullptr;
-        return false;
+        m_mainHotkeyOk = false;
+        return true;
     }
 
+    m_mainHotkeyOk = true;
+    m_currentHotkey = hkStr;
     qDebug() << "HotkeyManager запущен (" << hkStr << ")";
     return true;
 }
@@ -111,24 +122,42 @@ void HotkeyManager::setMainHotkey(const QString &hotkey)
 {
     if (!m_hwnd) return;
 
+    // Сначала проверяем новую строку и только потом снимаем старый хоткей —
+    // иначе при нераспознанной строке SmartClip оставался вообще без хоткея.
+    UINT mod = 0, vk = 0;
+    if (!parseHotkey(hotkey, mod, vk)) {
+        qDebug() << "Не распознан новый хоткей:" << hotkey;
+        if (!m_currentHotkey.isEmpty())
+            AppSettings::get().setMainHotkey(m_currentHotkey);  // Оставляем рабочий
+        emit mainHotkeyFailed(hotkey);
+        return;
+    }
+
     // Снимаем старый хоткей и хук (если был)
     UnregisterHotKey(m_hwnd, HOTKEY_ID);
     removeLLHook();
 
-    UINT mod = 0, vk = 0;
-    if (!parseHotkey(hotkey, mod, vk)) {
-        qDebug() << "Не распознан новый хоткей:" << hotkey;
-        return;
-    }
-
     if (RegisterHotKey(m_hwnd, HOTKEY_ID, mod, vk)) {
         qDebug() << "Основной хоткей перерегистрирован:" << hotkey;
+        m_mainHotkeyOk = true;
+        m_currentHotkey = hotkey;
     } else if (mod & MOD_WIN) {
         // Win+key — RegisterHotKey не удался, переходим на LL-хук
         qDebug() << "RegisterHotKey не удался, используем LL hook для Win+key:" << hotkey;
         installLLHook(vk);
+        m_mainHotkeyOk = true;
+        m_currentHotkey = hotkey;
     } else {
+        // Новая комбинация занята другой программой. Раньше в этом случае
+        // старый хоткей уже был снят, и SmartClip оставался вообще без хоткея.
+        // Теперь возвращаем прежний и сообщаем пользователю.
         qDebug() << "RegisterHotKey не удался (код" << GetLastError() << "):" << hotkey;
+        const QString previous = m_currentHotkey;
+        if (!previous.isEmpty() && previous != hotkey) {
+            AppSettings::get().setMainHotkey(previous);
+            setMainHotkey(previous);
+        }
+        emit mainHotkeyFailed(hotkey);
     }
 }
 
@@ -201,6 +230,18 @@ bool HotkeyManager::parseHotkey(const QString &str, UINT &modifiers, UINT &vk)
             if (ok && n >= 1 && n <= 12) vk = VK_F1 + n - 1;
         }
     }
+    // Буква/цифра без Ctrl/Alt/Shift/Win — отклоняем: такой глобальный хоткей
+    // перехватил бы обычный набор текста во всей системе.
+    const bool isFKey = vk >= VK_F1 && vk <= VK_F12;
+    if (vk != 0 && !isFKey && (modifiers & ~MOD_NOREPEAT) == 0)
+        return false;
+
+    // Ctrl+C / Ctrl+V / Ctrl+X как хоткей — запрещено: SmartClip сам нажимает
+    // Ctrl+V при вставке, и хоткей профиля на Ctrl+V срабатывал бы снова и
+    // снова (бесконечная вставка), а Ctrl+C/X перестали бы копировать везде.
+    if ((modifiers & ~MOD_NOREPEAT) == MOD_CONTROL && (vk == 'C' || vk == 'V' || vk == 'X'))
+        return false;
+
     return vk != 0;  // Успех только если нашли основную клавишу
 }
 
@@ -248,6 +289,14 @@ LRESULT CALLBACK HotkeyManager::LLKeyboardProc(int code, WPARAM wParam, LPARAM l
         // Инжектированные события игнорируем — они наши собственные.
         if (!injected && (vk == VK_LWIN || vk == VK_RWIN)) {
             s_winDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+        } else {
+            // При каждом событии (не Win) синхронизируем с реальным состоянием клавиши.
+            // GetAsyncKeyState отражает физическое состояние железа — в отличие от s_winDown
+            // которое может "залипнуть" в true после блокировки экрана / спящего режима.
+            // Именно это вызывало баг: V без Win → срабатывал как Win+V.
+            const bool realWin = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0
+                              || (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+            if (!realWin) s_winDown = false;
         }
 
         // Проверяем: нажата ли наша целевая клавиша вместе с Win?
