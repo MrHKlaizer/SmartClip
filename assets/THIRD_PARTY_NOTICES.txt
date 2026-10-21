@@ -1,0 +1,15 @@
+SmartClip uses the following open-source components.
+
+Qt 6 (Qt Widgets, Qt Sql, Qt Network, Qt Multimedia)
+  License: GNU Lesser General Public License v3 (LGPL-3.0)
+  Source and license: https://www.qt.io/download-open-source
+  The Qt libraries are shipped as separate DLL files and can be replaced.
+
+FFmpeg (avcodec, avformat, avutil, swresample, swscale) — audio and video playback
+  License: GNU Lesser General Public License v2.1 or later (LGPL-2.1+)
+  Source and license: https://ffmpeg.org/legal.html , https://ffmpeg.org/download.html
+  The FFmpeg libraries are the builds shipped with Qt 6 and are used as separate
+  DLL files (dynamic linking); they can be replaced with compatible builds.
+
+SQLite — history database (via Qt Sql)
+  License: public domain — https://www.sqlite.org/copyright.html

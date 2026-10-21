@@ -28,6 +28,7 @@
 #include <QPointer>
 #include <QCoreApplication>
 #include <functional>
+#include <QVariant>
 
 namespace Thumbs {
 
@@ -98,23 +99,36 @@ inline QImage load(const QString &path, QSize px)
     return img;
 }
 
-// Загрузить превью в фоне; done вызывается в основном потоке, только если
-// ctx (карточка) ещё жив. Одновременно — не больше двух картинок.
+// Фоновый пул для превью: одновременно — не больше двух
+inline QThreadPool *pool()
+{
+    static QThreadPool *p = []() {
+        auto *tp = new QThreadPool(qApp);
+        tp->setMaxThreadCount(2);
+        return tp;
+    }();
+    return p;
+}
+
+// Сделать work в фоне; done — в основном потоке, только если ctx (карточка) ещё жив
+inline void runAsync(QObject *ctx, std::function<QVariant()> work,
+                     std::function<void(const QVariant &)> done)
+{
+    QPointer<QObject> guard(ctx);
+    pool()->start([work, guard, done]() {
+        const QVariant result = work();
+        QMetaObject::invokeMethod(qApp, [guard, done, result]() {
+            if (guard) done(result);
+        }, Qt::QueuedConnection);
+    });
+}
+
+// Загрузить превью картинки в фоне
 inline void loadAsync(const QString &path, QSize px, QObject *ctx,
                       std::function<void(const QImage &)> done)
 {
-    static QThreadPool *pool = []() {
-        auto *p = new QThreadPool(qApp);
-        p->setMaxThreadCount(2);
-        return p;
-    }();
-    QPointer<QObject> guard(ctx);
-    pool->start([path, px, guard, done]() {
-        const QImage img = load(path, px);
-        QMetaObject::invokeMethod(qApp, [guard, done, img]() {
-            if (guard) done(img);
-        }, Qt::QueuedConnection);
-    });
+    runAsync(ctx, [path, px]() { return QVariant(load(path, px)); },
+             [done](const QVariant &v) { done(v.value<QImage>()); });
 }
 
 } // namespace Thumbs

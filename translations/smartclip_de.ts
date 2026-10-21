@@ -1532,4 +1532,28 @@ Jetzt neu starten?</translation>
         <translation>Das neueste GitHub-Release enthält keine Installationsdatei.</translation>
     </message>
 </context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Воспроизведение</source>
+        <translation>Wiedergabe</translation>
+    </message>
+    <message>
+        <source>Открыть в плеере</source>
+        <translation>Im Player öffnen</translation>
+    </message>
+    <message>
+        <source>SmartClip не может воспроизвести этот файл.
+Открыть в стандартном плеере?</source>
+        <translation>SmartClip kann diese Datei nicht abspielen.
+Im Standardplayer öffnen?</translation>
+    </message>
+</context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <source>Видео и аудио воспроизводятся с помощью &lt;a style='color:#9cc8ff' href='https://ffmpeg.org'&gt;FFmpeg&lt;/a&gt; (LGPL), интерфейс — &lt;a style='color:#9cc8ff' href='https://www.qt.io'&gt;Qt&lt;/a&gt; (LGPL). Подробнее — в файле THIRD_PARTY_NOTICES.txt в папке программы.</source>
+        <translation>Video und Audio werden mit &lt;a style='color:#9cc8ff' href='https://ffmpeg.org'&gt;FFmpeg&lt;/a&gt; (LGPL) abgespielt, die Oberfläche nutzt &lt;a style='color:#9cc8ff' href='https://www.qt.io'&gt;Qt&lt;/a&gt; (LGPL). Details stehen in THIRD_PARTY_NOTICES.txt im Programmordner.</translation>
+    </message>
+</context>
 </TS>
