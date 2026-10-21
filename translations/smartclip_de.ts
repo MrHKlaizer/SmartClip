@@ -649,6 +649,26 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
         <source>По умолчанию</source>
         <translation>Standard</translation>
     </message>
+    <message>
+        <source>Прокрутка</source>
+        <translation>Scrollen</translation>
+    </message>
+    <message>
+        <source>Плавная, с инерцией и мягким краем</source>
+        <translation>Flüssig, mit Trägheit und weichem Rand</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: эффекты карточек и темы оформления.</source>
+        <translation>Demnächst: Karteneffekte und Designs.</translation>
+    </message>
+    <message>
+        <source>Вкладки и разделы</source>
+        <translation>Tabs &amp; Bereiche</translation>
+    </message>
+    <message>
+        <source>Выделение переезжает, раздел выезжает с проявлением</source>
+        <translation>Markierung gleitet, Bereich gleitet herein</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1009,12 +1029,74 @@ Verlauf neu laden um Änderungen zu sehen.</translation>
         <translation>Die Datei „%1“ ist größer als 50 MB und wird nicht gesendet.</translation>
     </message>
     <message>
-        <source>Дедупликация — без повторов (повторно скопированный текст поднимается наверх)</source>
-        <translation>Duplikate vermeiden — erneut kopierter Text wandert nach oben</translation>
-    </message>
-    <message>
         <source>Опишите подробнее — ещё минимум %1 симв.</source>
         <translation>Bitte genauer beschreiben — noch mindestens %1 Zeichen.</translation>
+    </message>
+    <message>
+        <source>Без повторов — повторно скопированное поднимается наверх</source>
+        <translation>Keine Duplikate — erneut Kopiertes wandert nach oben</translation>
+    </message>
+    <message>
+        <source>Система</source>
+        <translation>System</translation>
+    </message>
+    <message>
+        <source>История</source>
+        <translation>Verlauf</translation>
+    </message>
+    <message>
+        <source>Закрепы</source>
+        <translation>Pins</translation>
+    </message>
+    <message>
+        <source>Экспорт и импорт</source>
+        <translation>Export &amp; Import</translation>
+    </message>
+    <message>
+        <source>Дополнительно</source>
+        <translation>Erweitert</translation>
+    </message>
+    <message>
+        <source>О программе</source>
+        <translation>Über</translation>
+    </message>
+    <message>
+        <source>сейчас: %1</source>
+        <translation>aktuell: %1</translation>
+    </message>
+    <message>
+        <source>Максимум текстов:</source>
+        <translation>Max. Texte:</translation>
+    </message>
+    <message>
+        <source>Максимум картинок:</source>
+        <translation>Max. Bilder:</translation>
+    </message>
+    <message>
+        <source>Тексты и картинки хранятся раздельно: одни больше не вытесняют другие.
+При превышении удаляются самые старые записи этого вида.</source>
+        <translation>Texte und Bilder werden getrennt gespeichert: das eine verdrängt nicht mehr das andere.
+Bei Überschreitung werden die ältesten Einträge dieser Art gelöscht.</translation>
+    </message>
+    <message>
+        <source>Работать в окнах администратора</source>
+        <translation>In Administrator-Fenstern arbeiten</translation>
+    </message>
+    <message>
+        <source>SmartClip будет запускаться с правами администратора, чтобы горячая клавиша и вставка работали в программах, открытых от имени администратора (например, в терминале). Windows один раз спросит разрешение.</source>
+        <translation>SmartClip startet mit Administratorrechten, damit Tastenkürzel und Einfügen in Programmen funktionieren, die als Administrator laufen (z. B. ein Terminal). Windows fragt einmalig nach der Erlaubnis.</translation>
+    </message>
+    <message>
+        <source>Нужна учётная запись администратора Windows.</source>
+        <translation>Erfordert ein Windows-Administratorkonto.</translation>
+    </message>
+    <message>
+        <source>Окна администратора</source>
+        <translation>Administrator-Fenster</translation>
+    </message>
+    <message>
+        <source>Не удалось включить: Windows не дала разрешение.</source>
+        <translation>Aktivierung fehlgeschlagen: Windows hat die Erlaubnis nicht erteilt.</translation>
     </message>
 </context>
 <context>

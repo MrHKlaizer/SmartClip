@@ -60,6 +60,11 @@ bool HotkeyManager::start()
     // Сохраняем this в окне — WndProc сможет его получить через GetWindowLongPtr.
     SetWindowLongPtr(m_hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
+    // Повторный запуск exe шлёт нам WM_HOTKEY («покажи окно»). Если SmartClip
+    // работает с правами администратора, Windows по умолчанию не пропускает
+    // сообщения от обычных процессов — разрешаем именно это.
+    ChangeWindowMessageFilterEx(m_hwnd, WM_HOTKEY, MSGFLT_ALLOW, nullptr);
+
     // ── Регистрируем главный хоткей ───────────────────────────────────────────
     QString hkStr = AppSettings::get().mainHotkey();  // "Ctrl+Shift+V" или "Win+C"
     UINT mod = 0, vk = 0;

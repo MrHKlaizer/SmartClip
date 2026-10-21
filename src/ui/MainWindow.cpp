@@ -35,6 +35,7 @@
 #include "ImageViewer.h"        // Полноэкранный просмотр картинок
 #include "HotkeyEdit.h"         // Поле захвата горячих клавиш
 #include "Anim.h"               // Плавные анимации 2.0 (меню, окна)
+#include "SmoothScroll.h"       // Плавная прокрутка колонок (этап 3)
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
 #include "core/Database.h"      // SQLite CRUD
 #include "core/AppSettings.h"   // Синглтон настроек
@@ -68,6 +69,7 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QSlider>          // Ползунок скорости анимаций (окно «Оформление»)
+#include <QPropertyAnimation> // Переезд «пилюли» вкладок
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDesktopServices>
@@ -244,11 +246,18 @@ public:
     QWidget *body() { return m_body; }
 
 protected:
-    // Диалог «выпрыгивает» из центра с пружинкой (см. Anim.h)
+    // Диалог «выпрыгивает» из центра и уходит обратно (см. Anim.h)
     void showEvent(QShowEvent *e) override
     {
         QDialog::showEvent(e);
-        Anim::dialogIn(this);
+        m_anim->onShow();
+    }
+    void done(int r) override
+    {
+        if (!m_anim->handleDone([self = QPointer<AppDialog>(this), r]() {
+                if (self) self->QDialog::done(r);
+            }))
+            QDialog::done(r);
     }
 
     void paintEvent(QPaintEvent *) override {
@@ -278,6 +287,7 @@ private:
     QLabel          *m_titleLabel = nullptr;
     QAbstractButton *m_closeBtn   = nullptr;
     QPoint           m_drag;
+    Anim::DialogAnimator *m_anim = new Anim::DialogAnimator(this);
 };
 
 // Ввод строки в нашем стиле — замена QInputDialog::getText
@@ -562,6 +572,57 @@ protected:
     }
 };
 
+// ─── ViewPill — «пилюля» активной вкладки (История / Закрепы) ─────────────────
+// Светящаяся рамка поверх активной кнопки. При переключении вкладки плавно
+// переезжает на другую кнопку с пружинкой (вид «Вкладки и разделы» в 🖌).
+// Клики проходят сквозь неё к кнопкам.
+class ViewPill : public QWidget
+{
+public:
+    explicit ViewPill(QWidget *parent) : QWidget(parent)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        m_anim.setTargetObject(this);
+        m_anim.setPropertyName("geometry");
+    }
+
+    // Переместить на кнопку btn (с анимацией, если разрешено)
+    void moveTo(QWidget *btn, bool animate)
+    {
+        const QRect to = btn->geometry();
+        if (to.isEmpty()) return;
+        show();
+        raise();
+        m_anim.stop();
+        if (!animate || !Anim::enabled(Anim::Kind::Tabs) || geometry().isEmpty()) {
+            setGeometry(to);
+            return;
+        }
+        QEasingCurve spring(QEasingCurve::OutBack);
+        spring.setOvershoot(1.3);
+        m_anim.setEasingCurve(spring);
+        m_anim.setDuration(Anim::ms(Anim::Kind::Tabs, 340));
+        m_anim.setStartValue(geometry());
+        m_anim.setEndValue(to);
+        m_anim.start();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), 8, 8);
+        p.fillPath(path, QColor(160, 200, 255, 22));
+        p.setPen(QPen(QColor(160, 200, 255, 170), 1.5));
+        p.drawPath(path);
+    }
+
+private:
+    QPropertyAnimation m_anim;
+};
+
 // Тень для кнопок и строки поиска — те же параметры что у карточек
 static void applyBtnShadow(QWidget *w)
 {
@@ -829,9 +890,20 @@ MainWindow::MainWindow(Database *db, QWidget *parent)
     setObjectName("mainWindow");
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_ShowWithoutActivating);  // Не отбираем фокус при показе
     setupLayout();
 
     m_imageViewer = new ImageViewer(this);
+
+    // Клик мимо (в другую программу или на рабочий стол), пока поверх SmartClip
+    // открыто окно (настройки, диалог) или меню: закрываем всё — окно, меню и
+    // сам SmartClip, каждое со своей анимацией. Раньше в этом случае ничего
+    // не закрывалось: «уходило» неактивным окно настроек, а не главное.
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState st) {
+        if (st != Qt::ApplicationInactive || !isVisible()) return;
+        // Проверяем на следующем шаге, когда активное окно уже сменилось
+        QTimer::singleShot(0, this, [this]() { closeAllOnDeactivate(); });
+    });
 }
 
 
@@ -933,6 +1005,13 @@ void MainWindow::setupLayout()
 
     topLayout->addWidget(m_historyBtn);
     topLayout->addWidget(m_pinsBtn);
+
+    // «Пилюля» активной вкладки — переезжает между История и Закрепы.
+    // Следим за кнопками: если они сдвинулись/изменили размер (раскладка,
+    // масштаб) — ставим «пилюлю» на место без анимации.
+    m_viewPill = new ViewPill(m_topPanel);
+    m_historyBtn->installEventFilter(this);
+    m_pinsBtn->installEventFilter(this);
     topLayout->addStretch();
     topLayout->addWidget(m_editBtn);
     topLayout->addWidget(m_designBtn);
@@ -1006,6 +1085,19 @@ void MainWindow::setupLayout()
     m_rightLayout->setSpacing(12);
     rightScroll->setWidget(rightContent);
 
+    // Плавная прокрутка с инерцией и мягким краем (в «Классике» — обычная)
+    m_leftScroller  = new SmoothScroller(m_leftScroll);
+    m_rightScroller = new SmoothScroller(m_rightScroll);
+
+    // Долистали почти до конца колонки — подгружаем следующую порцию истории.
+    // rangeChanged — на случай, когда первая порция не заполнила колонку целиком.
+    for (QScrollArea *area : {m_leftScroll, m_rightScroll}) {
+        connect(area->verticalScrollBar(), &QScrollBar::valueChanged, this,
+                [this, area]() { maybeLoadMore(area); });
+        connect(area->verticalScrollBar(), &QScrollBar::rangeChanged, this,
+                [this, area]() { QTimer::singleShot(0, this, [this, area]() { maybeLoadMore(area); }); });
+    }
+
     middleLayout->addWidget(leftScroll);
     middleLayout->addWidget(centerSpacer);
     middleLayout->addWidget(rightScroll);
@@ -1020,6 +1112,7 @@ void MainWindow::setupLayout()
     applyBtnShadow(searchBar);
     m_searchEdit = searchBar->edit();
     m_searchEdit->setObjectName("searchEdit");
+    m_searchEdit->installEventFilter(this);  // Клик — забрать фокус (окно без активации)
     m_searchEdit->setPlaceholderText(tr("Поиск по тексту..."));
     bottomLayout->addWidget(searchBar);
 
@@ -1083,168 +1176,205 @@ void MainWindow::loadHistory(bool textsOnly)
         ++m_loadGeneration;
         m_pendingImages.clear();
         clearLayout(m_rightLayout);
+        m_mediaOffset = 0;
+        m_mediaDone   = false;
     }
     clearLayout(m_leftLayout);
+    m_textOffset = 0;
+    m_textsDone  = false;
 
-    // ── Фаза 1: тексты — мгновенно ─────────────────────────────────────────────
-    // Без поиска — 40 последних. С поиском — ищем по всей истории и показываем
-    // первые 40 совпадений. Огромные тексты (логи на мегабайты) проверяем только
-    // по первым 20 000 символам, чтобы поиск не подвешивал окно.
+    // Поиск — по ВСЕЙ истории. Совпадения находим один раз, а показываем
+    // порциями (как и без поиска). Огромные тексты (логи на мегабайты)
+    // проверяем только по первым 20 000 символам, чтобы поиск не подвешивал окно.
     const QString query = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
-    QList<HistoryItem> texts;
-    if (query.isEmpty()) {
-        texts = m_db->getHistoryByType("text", 40, 0);
-    } else {
-        const int limit = qMax(AppSettings::get().maxHistoryRecords(), 40);
-        for (const HistoryItem &h : m_db->getHistoryByType("text", limit, 0)) {
+    m_searchResults.clear();
+    m_searching = !query.isEmpty();
+    if (m_searching) {
+        const int all = qMax(AppSettings::get().maxTexts(), 40);
+        for (const HistoryItem &h : m_db->getHistoryPage({"text"}, all, 0,
+                                                         m_sortOrder == SortOrder::DateAsc)) {
             // Точное вхождение ищем по 20 000 символам (быстро), а нечёткий
-            // поиск (Левенштейн по каждому слову — дорого) только по первым
-            // 2 000 — иначе на большой истории окно подвисало при наборе
+            // поиск (Левенштейн по каждому слову — дорого) только по первым 2 000
             const QString head = h.content.left(20000);
-            if (head.contains(query, Qt::CaseInsensitive) ||
-                fuzzyMatch(head.left(2000), query)) {
-                texts.append(h);
-                if (texts.size() >= 40) break;
-            }
+            if (head.contains(query, Qt::CaseInsensitive) || fuzzyMatch(head.left(2000), query))
+                m_searchResults.append(h);
         }
     }
 
-    // Применяем сортировку (БД всегда возвращает DESC, при ASC просто разворачиваем)
-    if (m_sortOrder == SortOrder::DateAsc)
-        std::reverse(texts.begin(), texts.end());
-    for (const HistoryItem &entry : texts) {
-        ClickableCard *card = new ClickableCard();
-        applyCardShadow(card);
-        card->setWordWrap(true);
-        card->setMaximumWidth(sc(BASE_LEFT) - 36); // даём Qt твёрдую ширину — длинные слова ломаются
-        card->setCardStyle(QColor(20, 20, 32, 245));
-        card->setStyleSheet(QString("color: #f0f0f0; padding: %1; font-size: %2;").arg(spx(8), spx(12)));
+    appendTexts();
+    if (!textsOnly) appendMedia();
+}
 
-        QString display = entry.content;
-        if (display.length() > 300)
-            display = display.left(300) + "...";
-        QString displayWrapped = softWrap(display);
-        card->setText(displayWrapped);
+// ─── Подгрузка при прокрутке ──────────────────────────────────────────────────
+// Сначала показываем TEXT_PAGE текстов и MEDIA_PAGE картинок/видео; когда
+// колонку долистали почти до конца — добавляем следующую порцию.
 
-        card->setProperty("fullText",    entry.content);
-        card->setProperty("displayText", displayWrapped);
-        card->setProperty("itemId",      entry.id);
-
-        QString fullContent = entry.content;
-        connect(card, &ClickableCard::clicked, this, [this, fullContent]() {
-            pasteText(fullContent);
-        });
-
-        // Правый клик — контекстное меню (Закрепить / Удалить)
-        int textId = entry.id;
-        card->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(card, &QWidget::customContextMenuRequested, this,
-                [this, textId, fullContent, card](const QPoint &pos) {
-            showTextContextMenu(textId, fullContent, card, card->mapToGlobal(pos));
-        });
-
-        m_leftLayout->addWidget(card);
+void MainWindow::appendTexts()
+{
+    if (m_textsDone) return;
+    QList<HistoryItem> page;
+    if (m_searching) {
+        page = m_searchResults.mid(m_textOffset, TEXT_PAGE);
+    } else {
+        page = m_db->getHistoryPage({"text"}, TEXT_PAGE, m_textOffset,
+                                    m_sortOrder == SortOrder::DateAsc);
     }
+    m_textOffset += page.size();
+    if (page.size() < TEXT_PAGE) m_textsDone = true;
+    for (const HistoryItem &entry : page)
+        addTextCard(entry);
+}
 
-    if (textsOnly) return;  // Картинки и видео при поиске не перестраиваем
+void MainWindow::appendMedia()
+{
+    if (m_mediaDone) return;
+    const QList<HistoryItem> page = m_db->getHistoryPage({"image", "video"}, MEDIA_PAGE, m_mediaOffset,
+                                                         m_sortOrder == SortOrder::DateAsc);
+    m_mediaOffset += page.size();
+    if (page.size() < MEDIA_PAGE) m_mediaDone = true;
 
-    // ── Фаза 2: картинки — сначала заглушки, потом ленивая загрузка ───────────
-    QList<HistoryItem> images = m_db->getHistoryByType("image", 40, 0);
-
-    if (m_sortOrder == SortOrder::DateAsc)
-        std::reverse(images.begin(), images.end());
-    for (const HistoryItem &entry : images) {
-        ClickableCard *card = new ClickableCard();
-        applyCardShadow(card);
-        card->setFixedSize(sc(BASE_LEFT) - 36, sc(120));
-        card->setAlignment(Qt::AlignCenter);
-        // Серая заглушка — отображается мгновенно, до загрузки реального файла
-        card->setCardStyle(QColor(20, 20, 32, 245));
-        card->setStyleSheet(QString("color: rgba(255,255,255,60); font-size: %1;").arg(spx(20)));
-        card->setText("");  // нейтральный плейсхолдер
-
-        card->setProperty("filepath", entry.filepath);
-        card->setProperty("itemId", entry.id);
-
-        QString fp = entry.filepath;
-        connect(card, &ClickableCard::clicked, this, [this, fp]() {
-            pasteImage(fp);
-        });
-
-        // Правый клик — контекстное меню (Просмотреть / Закрепить / Удалить)
-        int imgId = entry.id;
-        card->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(card, &QWidget::customContextMenuRequested, this,
-                [this, imgId, fp, card](const QPoint &pos) {
-            showImageContextMenu(imgId, fp, card, card->mapToGlobal(pos));
-        });
-
-        m_rightLayout->addWidget(card);
-
-        // Добавляем в очередь ленивой загрузки
-        m_pendingImages.append({QPointer<QLabel>(card), fp});
+    const bool loaderIdle = m_pendingImages.isEmpty();
+    for (const HistoryItem &entry : page) {
+        if (entry.type == "video") addVideoCard(entry);
+        else                       addImageCard(entry);
     }
-
-    // ── Фаза 3: видео из папки мониторинга ─────────────────────────────────────
-    QList<HistoryItem> videos = m_db->getHistoryByType("video", 40, 0);
-    if (m_sortOrder == SortOrder::DateAsc)
-        std::reverse(videos.begin(), videos.end());
-
-    for (const HistoryItem &entry : videos) {
-        ClickableCard *card = new ClickableCard();
-        applyCardShadow(card);
-        card->setFixedSize(sc(BASE_RIGHT) - 36, sc(72));
-        card->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        card->setWordWrap(true);
-        card->setCardStyle(QColor(10, 20, 48, 245));
-        card->setStyleSheet(QString("color: #aaccff; padding: %1; font-size: %2;").arg(spx(8), spx(12)));
-
-        QString name = entry.content.isEmpty()
-            ? QFileInfo(entry.filepath).fileName()
-            : entry.content;
-        if (name.length() > 50) name = name.left(47) + "...";
-        card->setText(QString("🎬  %1").arg(name));
-        card->setProperty("pinName", name);
-
-        QString fp = entry.filepath;
-        connect(card, &ClickableCard::clicked, this, [this, fp]() {
-            pasteFile(fp);
-        });
-
-        int vidId = entry.id;
-        card->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(card, &QWidget::customContextMenuRequested, this,
-                [this, vidId, fp, card](const QPoint &pos) {
-            RoundedMenu menu(this);
-            menu.addAction(tr("📌  Закрепить"), [this, fp]() {
-                bool ok = false;
-                QString name = QInputDialog::getText(
-                    this, tr("Закрепить видео"), tr("Название:"),
-                    QLineEdit::Normal, QFileInfo(fp).baseName(), &ok);
-                if (!ok || name.trimmed().isEmpty()) return;
-                QString folder = "";
-                if (!AppSettings::get().pinsNoFolder()) {
-                    bool cancelled = false;
-                    folder = askFolder(cancelled);
-                    if (cancelled) return;
-                }
-                m_db->addPin(folder, name.trimmed(), "video", "", fp);
-            });
-            menu.addSeparator();
-            menu.addAction(tr("🗑  Удалить"), [this, vidId, card]() {
-                deleteCard(vidId, card);
-            });
-            menu.exec(card->mapToGlobal(pos));
-        });
-
-        m_rightLayout->addWidget(card);
-    }
-
-    // Запускаем ленивую загрузку (отдаём управление в event loop после каждого файла)
-    if (!m_pendingImages.isEmpty()) {
-        int gen = m_loadGeneration;
+    // Запускаем ленивую загрузку картинок (если она ещё не идёт)
+    if (loaderIdle && !m_pendingImages.isEmpty()) {
+        const int gen = m_loadGeneration;
         QTimer::singleShot(0, this, [this, gen]() { loadNextImage(gen); });
     }
+}
+
+// Долистали почти до конца колонки — подгружаем следующую порцию
+void MainWindow::maybeLoadMore(QScrollArea *area)
+{
+    if (m_viewMode != ViewMode::History) return;  // В закрепах подгрузки нет
+    QScrollBar *sb = area->verticalScrollBar();
+    const int nearEnd = area->viewport()->height();  // «Почти» = в пределах одного экрана колонки
+    if (sb->maximum() - sb->value() > nearEnd) return;
+    if (area == m_leftScroll)       appendTexts();
+    else if (area == m_rightScroll) appendMedia();
+}
+
+void MainWindow::addTextCard(const HistoryItem &entry)
+{
+    ClickableCard *card = new ClickableCard();
+    applyCardShadow(card);
+    card->setWordWrap(true);
+    card->setMaximumWidth(sc(BASE_LEFT) - 36); // даём Qt твёрдую ширину — длинные слова ломаются
+    card->setCardStyle(QColor(20, 20, 32, 245));
+    card->setStyleSheet(QString("color: #f0f0f0; padding: %1; font-size: %2;").arg(spx(8), spx(12)));
+
+    QString display = entry.content;
+    if (display.length() > 300)
+        display = display.left(300) + "...";
+    QString displayWrapped = softWrap(display);
+    card->setText(displayWrapped);
+
+    card->setProperty("fullText",    entry.content);
+    card->setProperty("displayText", displayWrapped);
+    card->setProperty("itemId",      entry.id);
+
+    QString fullContent = entry.content;
+    connect(card, &ClickableCard::clicked, this, [this, fullContent]() {
+        pasteText(fullContent);
+    });
+
+    // Правый клик — контекстное меню (Закрепить / Удалить)
+    int textId = entry.id;
+    card->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(card, &QWidget::customContextMenuRequested, this,
+            [this, textId, fullContent, card](const QPoint &pos) {
+        showTextContextMenu(textId, fullContent, card, card->mapToGlobal(pos));
+    });
+
+    m_leftLayout->addWidget(card);
+    // Подсветка поиска для подгруженных карточек
+    if (m_searching) applyHighlight(card, m_searchEdit->text());
+}
+
+void MainWindow::addImageCard(const HistoryItem &entry)
+{
+    ClickableCard *card = new ClickableCard();
+    applyCardShadow(card);
+    card->setFixedSize(sc(BASE_LEFT) - 36, sc(120));
+    card->setAlignment(Qt::AlignCenter);
+    // Серая заглушка — отображается мгновенно, до загрузки реального файла
+    card->setCardStyle(QColor(20, 20, 32, 245));
+    card->setStyleSheet(QString("color: rgba(255,255,255,60); font-size: %1;").arg(spx(20)));
+    card->setText("");  // нейтральный плейсхолдер
+
+    card->setProperty("filepath", entry.filepath);
+    card->setProperty("itemId", entry.id);
+
+    QString fp = entry.filepath;
+    connect(card, &ClickableCard::clicked, this, [this, fp]() {
+        pasteImage(fp);
+    });
+
+    // Правый клик — контекстное меню (Просмотреть / Закрепить / Удалить)
+    int imgId = entry.id;
+    card->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(card, &QWidget::customContextMenuRequested, this,
+            [this, imgId, fp, card](const QPoint &pos) {
+        showImageContextMenu(imgId, fp, card, card->mapToGlobal(pos));
+    });
+
+    m_rightLayout->addWidget(card);
+
+    // Добавляем в очередь ленивой загрузки
+    m_pendingImages.append({QPointer<QLabel>(card), fp});
+}
+
+void MainWindow::addVideoCard(const HistoryItem &entry)
+{
+    ClickableCard *card = new ClickableCard();
+    applyCardShadow(card);
+    card->setFixedSize(sc(BASE_RIGHT) - 36, sc(72));
+    card->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    card->setWordWrap(true);
+    card->setCardStyle(QColor(10, 20, 48, 245));
+    card->setStyleSheet(QString("color: #aaccff; padding: %1; font-size: %2;").arg(spx(8), spx(12)));
+
+    QString name = entry.content.isEmpty()
+        ? QFileInfo(entry.filepath).fileName()
+        : entry.content;
+    if (name.length() > 50) name = name.left(47) + "...";
+    card->setText(QString("🎬  %1").arg(name));
+    card->setProperty("pinName", name);
+
+    QString fp = entry.filepath;
+    connect(card, &ClickableCard::clicked, this, [this, fp]() {
+        pasteFile(fp);
+    });
+
+    int vidId = entry.id;
+    card->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(card, &QWidget::customContextMenuRequested, this,
+            [this, vidId, fp, card](const QPoint &pos) {
+        RoundedMenu menu(this);
+        menu.addAction(tr("📌  Закрепить"), [this, fp]() {
+            bool ok = false;
+            QString name = QInputDialog::getText(
+                this, tr("Закрепить видео"), tr("Название:"),
+                QLineEdit::Normal, QFileInfo(fp).baseName(), &ok);
+            if (!ok || name.trimmed().isEmpty()) return;
+            QString folder = "";
+            if (!AppSettings::get().pinsNoFolder()) {
+                bool cancelled = false;
+                folder = askFolder(cancelled);
+                if (cancelled) return;
+            }
+            m_db->addPin(folder, name.trimmed(), "video", "", fp);
+        });
+        menu.addSeparator();
+        menu.addAction(tr("🗑  Удалить"), [this, vidId, card]() {
+            deleteCard(vidId, card);
+        });
+        menu.exec(card->mapToGlobal(pos));
+    });
+
+    m_rightLayout->addWidget(card);
 }
 
 // ─── loadNextImage ────────────────────────────────────────────────────────────
@@ -1313,9 +1443,17 @@ void MainWindow::showWindow()
     // (Без анимаций — наоборот, обязательно полная видимость: после ухода
     //  окно остаётся прозрачным, а «Классику» могли включить уже после этого.)
     setWindowOpacity(Anim::enabled(Anim::Kind::WindowOpen) ? 0.0 : 1.0);
+    // Без активации: фокус остаётся у программы пользователя (см. MainWindow.h)
     show();
-    raise();
-    activateWindow();
+    {
+        // WS_EX_NOACTIVATE — клик по окну не делает его активным (иначе поле
+        // переименования в Проводнике и т.п. закрывалось от потери фокуса).
+        // Поиск фокус забирает сам — см. activateForInput().
+        HWND h = reinterpret_cast<HWND>(winId());
+        SetWindowLongPtrW(h, GWL_EXSTYLE, GetWindowLongPtrW(h, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
+        SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+    installInputHooks();
 
 
     // Обновляем данные если нужно
@@ -1392,6 +1530,11 @@ QList<Anim::Piece> MainWindow::buildOpenPieces()
             const QRect r(w->mapTo(this, QPoint(0, 0)), w->size());
             if (r.intersects(view)) cards << r;
         }
+        // Пустая колонка — один кусок на всю высоту (тёмный фон тоже должен ехать)
+        if (cards.isEmpty()) {
+            add(QRect(x0, colTop, x1 - x0, colBot - colTop), QPointF(dir * 110, 0), 0.10, 0.92);
+            return;
+        }
         for (int i = 0; i < cards.size(); ++i) {
             const int y0 = (i == 0) ? colTop : (cards[i - 1].bottom() + cards[i].top()) / 2;
             const int y1 = (i == cards.size() - 1) ? colBot
@@ -1400,8 +1543,13 @@ QList<Anim::Piece> MainWindow::buildOpenPieces()
             add(QRect(x0, y0, x1 - x0, y1 - y0), QPointF(dir * 110, 0), delay, 0.92);
         }
     };
-    column(m_leftLayout,  m_leftScroll,  0, m_leftScroll->geometry().right() + 1, -1.0);
-    column(m_rightLayout, m_rightScroll, m_rightScroll->geometry().left(), W, +1.0);
+    // Ширина колонок — с запасом под «Тёмный фон за колонками»: он рисуется
+    // на 18px шире колонки (см. paintEvent). Раньше куски резались по ширине
+    // колонки — фон ехал узким, а в конце «расширялся» до полной ширины.
+    const int leftX1  = qMax(m_leftScroll->geometry().right() + 1, sc(BASE_LEFT) + 18);
+    const int rightX0 = qMin(m_rightScroll->geometry().left(), W - sc(BASE_RIGHT) - 18);
+    column(m_leftLayout,  m_leftScroll,  0, leftX1, -1.0);
+    column(m_rightLayout, m_rightScroll, rightX0, W, +1.0);
 
     return pcs;
 }
@@ -1421,6 +1569,7 @@ void MainWindow::hideAnimated()
     // делаем полностью прозрачным (мгновенно; полностью прозрачное окно Windows
     // пропускает клики насквозь), а настоящий hide() — когда анимация доиграла.
     m_hidePending = true;
+    removeInputHooks();  // Окно уходит — клавиши сразу снова идут в программу пользователя
     const int seq = ++m_hideSeq;
     auto hideNow = [this, seq]() {
         if (seq == m_hideSeq && m_hidePending) {
@@ -1557,32 +1706,230 @@ bool MainWindow::isInteractiveArea(const QPoint &pos) const
     return true;
 }
 
-// ─── Симуляция Ctrl+V ─────────────────────────────────────────────────────────
-// Перед Ctrl+V «отпускаем» Shift/Alt/Win, если пользователь их ещё держит.
+// ─── Симуляция вставки ────────────────────────────────────────────────────────
+// Терминалы, где Ctrl+V не вставляет (отправляет символ ^V): Git Bash (mintty),
+// PuTTY/KiTTY, ConEmu. Во всех них вставка — Shift+Insert.
+static bool pastesWithShiftInsert(HWND fg)
+{
+    wchar_t cls[64] = {};
+    GetClassNameW(GetAncestor(fg, GA_ROOT), cls, 64);
+    for (const wchar_t *c : {L"mintty", L"PuTTY", L"KiTTY", L"VirtualConsoleClass"})
+        if (wcscmp(cls, c) == 0) return true;
+    return false;
+}
+
+// Перед вставкой «отпускаем» лишние модификаторы, если пользователь их ещё держит.
 // Иначе хоткей профиля Ctrl+Shift+1 превращал вставку в Ctrl+Shift+V
 // (в Chrome/Word это «вставить без форматирования», в других программах —
 // вообще другое действие), а Alt+F2 — в Ctrl+Alt+V.
-static void sendCtrlV()
+static void sendPaste()
 {
-    INPUT inputs[10] = {};
+    const bool shiftIns = pastesWithShiftInsert(GetForegroundWindow());
+    const WORD mod = shiftIns ? VK_SHIFT : VK_CONTROL;
+    const WORD key = shiftIns ? VK_INSERT : 'V';
+
+    INPUT inputs[12] = {};
     int n = 0;
-    auto key = [&](WORD vk, bool up) {
+    auto press = [&](WORD vk, bool up) {
         inputs[n].type       = INPUT_KEYBOARD;
         inputs[n].ki.wVk     = vk;
+        // Скан-код нужен удалённому рабочему столу, виртуальным машинам, играм
+        // и части Java-программ: они смотрят на него, а не на код клавиши
+        inputs[n].ki.wScan   = WORD(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
         inputs[n].ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+        if (vk == VK_INSERT || vk == VK_LWIN || vk == VK_RWIN)
+            inputs[n].ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
         ++n;
     };
-    // Ctrl нажимаем ПЕРВЫМ, а уже потом отпускаем Alt/Win: одиночное
-    // нажатие-отпускание Alt открывает меню программы (как F10), а Win — Пуск,
-    // и тогда Ctrl+V уходит в меню вместо вставки.
-    key(VK_CONTROL, false);  // нажать Ctrl
-    for (WORD vk : {WORD(VK_SHIFT), WORD(VK_MENU), WORD(VK_LWIN), WORD(VK_RWIN)})
-        if (GetAsyncKeyState(vk) & 0x8000)
-            key(vk, true);
-    key('V', false);         // нажать V
-    key('V', true);          // отпустить V
-    key(VK_CONTROL, true);   // отпустить Ctrl
+    // Модификатор вставки нажимаем ПЕРВЫМ, а уже потом отпускаем Alt/Win:
+    // одиночное нажатие-отпускание Alt открывает меню программы (как F10),
+    // а Win — Пуск, и тогда вставка уходит в меню.
+    press(mod, false);
+    for (WORD vk : {WORD(VK_CONTROL), WORD(VK_SHIFT), WORD(VK_MENU), WORD(VK_LWIN), WORD(VK_RWIN)})
+        if (vk != mod && (GetAsyncKeyState(vk) & 0x8000))
+            press(vk, true);
+    press(key, false);
+    press(key, true);
+    press(mod, true);
     SendInput(n, inputs, sizeof(INPUT));
+}
+
+// ─── Окно без захвата фокуса: глобальные хуки ────────────────────────────────
+// Пока SmartClip на экране, фокус остаётся у программы пользователя. Поэтому
+// клавиши и клики мимо нам нужно ловить самим (см. MainWindow.h).
+namespace {
+MainWindow   *s_hookOwner = nullptr;
+HHOOK         s_kbHook    = nullptr;
+HHOOK         s_mouseHook = nullptr;
+HWINEVENTHOOK s_fgHook    = nullptr;
+
+bool isOwnWindow(HWND h)
+{
+    DWORD pid = 0;
+    if (h) GetWindowThreadProcessId(h, &pid);
+    return pid == GetCurrentProcessId();
+}
+
+bool weAreForeground() { return isOwnWindow(GetForegroundWindow()); }
+
+// Клавиши, пока мы без фокуса. Раньше всё напечатанное при открытом SmartClip
+// шло в его поиск — так и оставляем: первая же клавиша забирает фокус и
+// попадает в поиск, а не в программу под нами (Delete в Проводнике удалил бы файл).
+LRESULT CALLBACK keyboardHook(int code, WPARAM wp, LPARAM lp)
+{
+    if (code == HC_ACTION && s_hookOwner && (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
+        const auto *kb = reinterpret_cast<KBDLLHOOKSTRUCT *>(lp);
+        const UINT vk = kb->vkCode;
+        auto held = [](int k) { return (GetAsyncKeyState(k) & 0x8000) != 0; };
+        const bool modifier = vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT
+                           || vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL
+                           || vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU
+                           || vk == VK_LWIN || vk == VK_RWIN || vk == VK_CAPITAL;
+        // Сочетания с Ctrl/Alt/Win (горячие клавиши, Alt+Tab) не трогаем
+        if (!(kb->flags & LLKHF_INJECTED) && !modifier && !weAreForeground()
+            && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_LWIN) && !held(VK_RWIN)) {
+            const unsigned scan = kb->scanCode;
+            const bool ext = (kb->flags & LLKHF_EXTENDED) != 0;
+            QMetaObject::invokeMethod(s_hookOwner, [vk, scan, ext]() {
+                if (s_hookOwner) s_hookOwner->onHookKey(vk, scan, ext);
+            }, Qt::QueuedConnection);
+            return 1;  // Клавишу «съели» — программа под нами её не получит
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
+// Любой клик: решаем на следующем шаге цикла событий, был ли он мимо SmartClip
+LRESULT CALLBACK mouseHook(int code, WPARAM wp, LPARAM lp)
+{
+    if (code == HC_ACTION && s_hookOwner
+        && (wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN || wp == WM_MBUTTONDOWN)) {
+        QMetaObject::invokeMethod(s_hookOwner, []() {
+            if (s_hookOwner) s_hookOwner->onGlobalClick();
+        }, Qt::QueuedConnection);
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
+// Сменилось активное окно (Alt+Tab, клик по панели задач и т.п.)
+void CALLBACK foregroundHook(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD)
+{
+    if (!s_hookOwner) return;
+    const quintptr h = reinterpret_cast<quintptr>(hwnd);
+    QMetaObject::invokeMethod(s_hookOwner, [h]() {
+        if (s_hookOwner) s_hookOwner->onForegroundChanged(h);
+    }, Qt::QueuedConnection);
+}
+
+// Куда можно вставлять. Панель задач (SmartClip открыли из трея) и сам
+// SmartClip — некуда: тогда только кладём в буфер обмена.
+bool isPasteTarget(HWND h)
+{
+    if (!h || !IsWindow(h) || isOwnWindow(h)) return false;
+    wchar_t cls[64] = {};
+    GetClassNameW(GetAncestor(h, GA_ROOT), cls, 64);
+    for (const wchar_t *c : {L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd",
+                             L"NotifyIconOverflowWindow", L"TopLevelWindowForOverflowXamlIsland"})
+        if (wcscmp(cls, c) == 0) return false;
+    return true;
+}
+} // namespace
+
+void MainWindow::installInputHooks()
+{
+    s_hookOwner = this;
+    if (!s_kbHook)
+        s_kbHook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboardHook, GetModuleHandleW(nullptr), 0);
+    if (!s_mouseHook)
+        s_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, mouseHook, GetModuleHandleW(nullptr), 0);
+    if (!s_fgHook)
+        s_fgHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
+                                   foregroundHook, 0, 0, WINEVENT_OUTOFCONTEXT);
+}
+
+void MainWindow::removeInputHooks()
+{
+    s_hookOwner = nullptr;
+    if (s_kbHook)    { UnhookWindowsHookEx(s_kbHook);    s_kbHook = nullptr; }
+    if (s_mouseHook) { UnhookWindowsHookEx(s_mouseHook); s_mouseHook = nullptr; }
+    if (s_fgHook)    { UnhookWinEvent(s_fgHook);         s_fgHook = nullptr; }
+}
+
+// Забрать фокус. Windows разрешает SetForegroundWindow только процессу, от
+// которого пришёл последний ввод, — поэтому сначала «нажимаем» несуществующую
+// клавишу 0x88 (её никто не обрабатывает), и последним вводом становимся мы.
+void MainWindow::activateForInput()
+{
+    if (weAreForeground()) return;
+    INPUT in[2] = {};
+    in[0].type = in[1].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = in[1].ki.wVk = 0x88;
+    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, in, sizeof(INPUT));
+    SetForegroundWindow(reinterpret_cast<HWND>(winId()));
+    activateWindow();
+    if (m_searchEdit && m_searchEdit->isVisible() && !(m_imageViewer && m_imageViewer->isVisible()))
+        m_searchEdit->setFocus(Qt::OtherFocusReason);
+}
+
+void MainWindow::onHookKey(unsigned vk, unsigned scan, bool extended)
+{
+    if (!isOpen()) return;
+    if (vk == VK_ESCAPE) {
+        // Как Esc в окне: сначала закрываем просмотр картинки
+        if (m_imageViewer && m_imageViewer->isVisible()) m_imageViewer->hide();
+        else hideAnimated();
+        return;
+    }
+    // Забираем фокус и «нажимаем» клавишу ещё раз — теперь она придёт к нам
+    activateForInput();
+    if (!weAreForeground()) return;
+    INPUT in[2] = {};
+    for (int i = 0; i < 2; ++i) {
+        in[i].type       = INPUT_KEYBOARD;
+        in[i].ki.wVk     = WORD(vk);
+        in[i].ki.wScan   = WORD(scan);
+        in[i].ki.dwFlags = (extended ? KEYEVENTF_EXTENDEDKEY : 0) | (i ? KEYEVENTF_KEYUP : 0);
+    }
+    SendInput(2, in, sizeof(INPUT));
+}
+
+void MainWindow::onGlobalClick()
+{
+    // Окно активно — клики мимо отследит WM_ACTIVATE, как и раньше
+    if (!isOpen() || weAreForeground()) return;
+    POINT pt;
+    GetCursorPos(&pt);
+    // Прозрачный центр SmartClip клики пропускает, и WindowFromPoint вернёт
+    // окно под нами — значит, клик мимо
+    if (isOwnWindow(GetAncestor(WindowFromPoint(pt), GA_ROOT))) return;
+    if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
+    hideAnimated();
+}
+
+void MainWindow::onForegroundChanged(quintptr hwnd)
+{
+    HWND h = reinterpret_cast<HWND>(hwnd);
+    if (!isOpen() || !h || isOwnWindow(h)) return;
+    // Фокус вернулся в программу, где работал пользователь (например, закрыли
+    // наш диалог) — это не повод закрываться
+    HWND prev = reinterpret_cast<HWND>(m_prevFocusHwnd);
+    if (prev && GetAncestor(h, GA_ROOT) == GetAncestor(prev, GA_ROOT)) return;
+    closeAllOnDeactivate();
+}
+
+// Спрятаться и вставить в окно, где работал пользователь
+void MainWindow::finishPaste()
+{
+    HWND target = reinterpret_cast<HWND>(m_prevFocusHwnd);
+    const bool wasActive = weAreForeground();
+    hide();
+    if (!isPasteTarget(target)) return;  // Вставлять некуда — данные уже в буфере обмена
+    // Если пользователь печатал в поиске, фокус у нас — возвращаем его.
+    // Иначе фокус и так у той программы: просто вставляем.
+    if (wasActive)
+        SetForegroundWindow(target);
+    QTimer::singleShot(wasActive ? 150 : 60, &sendPaste);
 }
 
 void MainWindow::pasteText(const QString &text)
@@ -1593,15 +1940,8 @@ void MainWindow::pasteText(const QString &text)
     // 2. Кладём текст в системный буфер обмена
     QApplication::clipboard()->setText(text);
 
-    // 3. Возвращаем фокус окну, которое было активным ДО SmartClip
-    //    (делаем это синхронно, пока наш процесс ещё является foreground-процессом)
-    HWND target = reinterpret_cast<HWND>(m_prevFocusHwnd);
-    hide();
-    if (target && IsWindow(target))
-        SetForegroundWindow(target);
-
-    // 4. Ждём 150мс пока фокус успеет перейти, затем симулируем Ctrl+V
-    QTimer::singleShot(150, &sendCtrlV);
+    // 3. Прячемся и вставляем в окно, где работал пользователь
+    finishPaste();
 }
 
 void MainWindow::pasteImage(const QString &filepath)
@@ -1619,12 +1959,7 @@ void MainWindow::pasteImage(const QString &filepath)
     // Qt сам конвертирует QPixmap в нужный формат буфера
     QApplication::clipboard()->setPixmap(pixmap);
 
-    HWND target = reinterpret_cast<HWND>(m_prevFocusHwnd);
-    hide();
-    if (target && IsWindow(target))
-        SetForegroundWindow(target);
-
-    QTimer::singleShot(150, &sendCtrlV);
+    finishPaste();
 }
 
 void MainWindow::pasteFile(const QString &filepath)
@@ -1665,12 +2000,7 @@ void MainWindow::pasteFile(const QString &filepath)
         return;
     }
 
-    HWND target = reinterpret_cast<HWND>(m_prevFocusHwnd);
-    hide();
-    if (target && IsWindow(target))
-        SetForegroundWindow(target);
-
-    QTimer::singleShot(150, &sendCtrlV);
+    finishPaste();
 }
 
 void MainWindow::importVideo()
@@ -1815,6 +2145,11 @@ void MainWindow::deleteCard(int id, QLabel *card)
 
         if (layout)
             layout->removeWidget(card);
+
+        // Запись ушла из БД — следующая порция начинается на одну раньше,
+        // иначе при подгрузке одна запись пропустится
+        if (layout == m_leftLayout && !m_searching && m_textOffset > 0) --m_textOffset;
+        if (layout == m_rightLayout && m_mediaOffset > 0)              --m_mediaOffset;
 
         card->deleteLater();
     }
@@ -2202,6 +2537,9 @@ void MainWindow::switchView(ViewMode mode)
     // Обновляем активную вкладку через SmartButton::setActiveState
     m_historyBtn->setActiveState(mode == ViewMode::History);
     m_pinsBtn->setActiveState(   mode == ViewMode::Pins);
+    // «Пилюля» переезжает на новую вкладку
+    if (m_viewPill)
+        static_cast<ViewPill*>(m_viewPill)->moveTo(mode == ViewMode::History ? m_historyBtn : m_pinsBtn, true);
 
     // Меняем плейсхолдер и сбрасываем поиск при смене режима
     if (m_searchEdit) {
@@ -3080,7 +3418,7 @@ void MainWindow::pasteTextSilent(const QString &text)
     emit pasteRequested();
     QApplication::clipboard()->setText(text);
 
-    QTimer::singleShot(150, &sendCtrlV);
+    QTimer::singleShot(150, &sendPaste);
 }
 
 void MainWindow::showProfilesMenu()
@@ -3444,7 +3782,7 @@ void MainWindow::showAppearanceSettings()
     }
 
     auto *soonLbl = new QLabel(
-        tr("Скоро здесь: прокрутка, эффекты карточек и темы оформления."), dlg.body());
+        tr("Скоро здесь: эффекты карточек и темы оформления."), dlg.body());
     soonLbl->setWordWrap(true);
     soonLbl->setStyleSheet(hintCss);
     vl->addWidget(soonLbl);
@@ -3618,6 +3956,17 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
         return false;
     }
 
+    // Клик по SmartClip не забирает фокус у программы пользователя — кроме
+    // клика в поле ввода (поиск): туда нужно печатать
+    if (msg->message == WM_MOUSEACTIVATE) {
+        QWidget *w = QApplication::widgetAt(QCursor::pos());
+        bool input = false;
+        for (; w && w != this; w = w->parentWidget())
+            if (qobject_cast<QLineEdit*>(w) || qobject_cast<QTextEdit*>(w)) { input = true; break; }
+        *result = input ? MA_ACTIVATE : MA_NOACTIVATE;
+        return true;
+    }
+
     if (msg->message == WM_ACTIVATE) {
         if (LOWORD(msg->wParam) == WA_INACTIVE) {
             // lParam — хэндл окна которое ЗАХВАТИТ фокус
@@ -3635,9 +3984,61 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
     return QWidget::nativeEvent(eventType, message, result);
 }
 
+// ─── closeAllOnDeactivate ────────────────────────────────────────────────────
+// SmartClip потерял фокус, пока поверх него было открыто окно/меню.
+void MainWindow::closeAllOnDeactivate()
+{
+    if (!isVisible()) return;
+    // Фокус ушёл в окно нашего же процесса (например, системное окно выбора
+    // файла или папки) — это не «клик мимо», ничего не закрываем
+    DWORD pid = 0;
+    if (HWND fg = GetForegroundWindow())
+        GetWindowThreadProcessId(fg, &pid);
+    if (pid == GetCurrentProcessId()) return;
+
+    // Открытые окна поверх SmartClip — сверху вниз
+    QList<QPointer<QDialog>> dialogs;
+    for (QWidget *w : QApplication::topLevelWidgets())
+        if (auto *d = qobject_cast<QDialog*>(w))
+            if (d->isVisible() && d->isModal()) {
+                if (d->property("keepOnDeactivate").toBool()) return;  // Например, идёт обновление
+                dialogs.prepend(d);
+            }
+
+    // Закрыли наш диалог, и Windows вернула фокус программе, где работал
+    // пользователь: окно SmartClip остаётся открытым (клики мимо ловит onGlobalClick)
+    HWND prev = reinterpret_cast<HWND>(m_prevFocusHwnd);
+    if (dialogs.isEmpty() && !QApplication::activePopupWidget() && prev
+        && GetAncestor(GetForegroundWindow(), GA_ROOT) == GetAncestor(prev, GA_ROOT))
+        return;
+
+    if (QWidget *popup = QApplication::activePopupWidget())
+        popup->close();                       // Меню
+    for (const QPointer<QDialog> &d : dialogs)
+        if (d) d->reject();                   // Окна — каждое со своей анимацией ухода
+    hideAnimated();                           // И сам SmartClip
+}
+
+// Кнопки История/Закрепы сдвинулись или изменили размер — «пилюля» за ними
+bool MainWindow::eventFilter(QObject *obj, QEvent *event)
+{
+    // Клик в поиск — забираем фокус, чтобы туда можно было печатать
+    if (obj == m_searchEdit && event->type() == QEvent::MouseButtonPress)
+        activateForInput();
+
+    if ((obj == m_historyBtn || obj == m_pinsBtn) && m_viewPill &&
+        (event->type() == QEvent::Move || event->type() == QEvent::Resize)) {
+        SmartButton *active = (m_viewMode == ViewMode::History) ? m_historyBtn : m_pinsBtn;
+        if (obj == active)
+            static_cast<ViewPill*>(m_viewPill)->moveTo(active, false);
+    }
+    return QWidget::eventFilter(obj, event);
+}
+
 void MainWindow::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
+    removeInputHooks();
     // Окно спрятано без анимации ухода (вставка по клику на карточку) —
     // убираем пустую сцену. Прозрачное окно поверх экрана в полноэкранной
     // игре может снижать FPS, держать его без дела нельзя.
@@ -3746,6 +4147,8 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
     // ── Диалог "доступно обновление" ──────────────────────────────────────────
     AppDialog dlg(this);
     dlg.setWindowTitle(tr("Обновление SmartClip"));
+    // Случайный клик мимо не должен обрывать скачивание обновления
+    dlg.setProperty("keepOnDeactivate", true);
     dlg.setMinimumWidth(420);
 
     // Кладём всё прямо в dlg.body() — AppDialog уже создал его внутри

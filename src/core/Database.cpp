@@ -63,6 +63,7 @@ bool Database::init()
 
     // Добавляем новые колонки в существующую БД при обновлении версии SmartClip
     migrateIfNeeded();
+    migrateHistoryLimits();  // Общий лимит → раздельные (без потери данных)
 
     // Автоочистка: удаляем записи старше N дней (если настроена)
     int days = AppSettings::get().autocleanDays();
@@ -349,46 +350,99 @@ void Database::autocleanByDays(int days)
 }
 
 // ─── Обрезка истории до лимита ────────────────────────────────────────────────
-// Вызывается после каждого addHistory. Удаляет самые старые записи если превышен лимит.
+// Вызывается после каждого addHistory. Лимиты раздельные: тексты — свой,
+// картинки и видео — свой. Удаляются самые старые записи того вида, который
+// превысил лимит (раньше лимит был общим, и тексты вытесняли картинки).
 void Database::trimHistory()
 {
-    const int MAX_HISTORY = AppSettings::get().maxHistoryRecords();
+    trimType("type = 'text'", AppSettings::get().maxTexts());
+    trimType("type IN ('image', 'video')", AppSettings::get().maxImages());
+}
 
-    // COUNT(*) — количество строк в таблице
+// Обрезать записи, подходящие под условие where, до limit самых новых
+void Database::trimType(const QString &where, int limit)
+{
     QSqlQuery countQuery;
-    countQuery.exec("SELECT COUNT(*) FROM history");
-    countQuery.next();
-    int count = countQuery.value(0).toInt();
+    countQuery.exec("SELECT COUNT(*) FROM history WHERE " + where);
+    const int count = countQuery.next() ? countQuery.value(0).toInt() : 0;
+    if (count <= limit) return;
+    const int toDelete = count - limit;
 
-    if (count > MAX_HISTORY) {
-        int toDelete = count - MAX_HISTORY;
+    // Сначала запоминаем файлы картинок у удаляемых записей — иначе
+    // строки из БД пропадут, а .png останутся на диске навсегда.
+    const QString oldest = "SELECT id FROM history WHERE " + where + " ORDER BY id ASC LIMIT :n";
+    QStringList paths;
+    QSqlQuery fpQuery;
+    fpQuery.prepare("SELECT filepath FROM history WHERE filepath != '' AND id IN (" + oldest + ")");
+    fpQuery.bindValue(":n", toDelete);
+    fpQuery.exec();
+    while (fpQuery.next())
+        paths << fpQuery.value(0).toString();
 
-        // Сначала запоминаем файлы картинок у удаляемых записей — иначе
-        // строки из БД пропадут, а .png останутся на диске навсегда.
-        QStringList paths;
-        QSqlQuery fpQuery;
-        fpQuery.prepare(
-            "SELECT filepath FROM history WHERE filepath != '' AND id IN "
-            "(SELECT id FROM history ORDER BY id ASC LIMIT :n)"
-        );
-        fpQuery.bindValue(":n", toDelete);
-        fpQuery.exec();
-        while (fpQuery.next())
-            paths << fpQuery.value(0).toString();
+    QSqlQuery deleteQuery;
+    deleteQuery.prepare("DELETE FROM history WHERE id IN (" + oldest + ")");
+    deleteQuery.bindValue(":n", toDelete);
+    deleteQuery.exec();
+    qDebug() << "Удалено старых записей (" << where << "):" << toDelete;
 
-        // Удаляем toDelete самых старых записей (с наименьшим id)
-        QSqlQuery deleteQuery;
-        deleteQuery.prepare(
-            "DELETE FROM history WHERE id IN "
-            "(SELECT id FROM history ORDER BY id ASC LIMIT :n)"
-        );
-        deleteQuery.bindValue(":n", toDelete);
-        deleteQuery.exec();
-        qDebug() << "Удалено старых записей:" << toDelete;
+    for (const QString &fp : paths)
+        removeFileIfUnused(fp);
+}
 
-        for (const QString &fp : paths)
-            removeFileIfUnused(fp);
+// ─── Миграция лимитов истории (общий → раздельные) ───────────────────────────
+// До 2.0 был один общий лимит (history/maxRecords, по умолчанию 150).
+// Чтобы после обновления НИЧЕГО не удалилось:
+//  • лимит меняли вручную → оба новых лимита = старому значению;
+//  • не меняли, но история уже есть → оба = 150 (старое значение по умолчанию);
+//  • новая установка (история пустая) → 40 текстов и 20 картинок.
+void Database::migrateHistoryLimits()
+{
+    auto &cfg = AppSettings::get();
+    if (cfg.has("history/maxTexts") && cfg.has("history/maxImages")) return;
+
+    int texts = 40, images = 20;
+    if (cfg.has("history/maxRecords")) {
+        texts = images = cfg.legacyMaxRecords();
+    } else if (countHistory() > 0) {
+        texts = images = 150;
     }
+    if (!cfg.has("history/maxTexts"))  cfg.setMaxTexts(texts);
+    if (!cfg.has("history/maxImages")) cfg.setMaxImages(images);
+    qDebug() << "Лимиты истории: тексты" << cfg.maxTexts() << ", картинки" << cfg.maxImages();
+}
+
+// ─── Страница истории для подгрузки при прокрутке ────────────────────────────
+// types — какие виды ("text" или "image","video"), asc — старые сначала.
+QList<HistoryItem> Database::getHistoryPage(const QStringList &types, int limit, int offset, bool asc)
+{
+    QList<HistoryItem> items;
+    QStringList quoted;
+    for (const QString &t : types) {
+        QString esc = t; esc.replace("'", "''");
+        quoted << "'" + esc + "'";
+    }
+    QSqlQuery query;
+    query.prepare(QString(
+        "SELECT id, type, content, filepath, created_at, app_name FROM history "
+        "WHERE type IN (%1) ORDER BY id %2 LIMIT :limit OFFSET :offset")
+        .arg(quoted.join(','), asc ? "ASC" : "DESC"));
+    query.bindValue(":limit",  limit);
+    query.bindValue(":offset", offset);
+    if (!query.exec()) {
+        qDebug() << "Ошибка getHistoryPage:" << query.lastError().text();
+        return items;
+    }
+    while (query.next()) {
+        HistoryItem item;
+        item.id        = query.value("id").toInt();
+        item.type      = query.value("type").toString();
+        item.content   = query.value("content").toString();
+        item.filepath  = query.value("filepath").toString();
+        item.createdAt = query.value("created_at").toString();
+        item.appName   = query.value("app_name").toString();
+        items.append(item);
+    }
+    return items;
 }
 
 // ─── Получить историю (с пагинацией) ─────────────────────────────────────────

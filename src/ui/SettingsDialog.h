@@ -23,6 +23,7 @@
 
 // Предварительные объявления — экономят время компиляции:
 // полные заголовки подключаются только в .cpp где реально нужны.
+namespace Anim { class DialogAnimator; }  // Анимации окна (src/ui/Anim.h)
 class Database;    // База данных — для чтения/сохранения профилей и настроек
 class QWidget;     // Базовый класс виджетов Qt
 class QPaintEvent; // Событие перерисовки окна
@@ -68,8 +69,11 @@ signals:
 
 // ─── Обработчики событий ─────────────────────────────────────────────────────
 protected:
-    // Плавное появление окна (анимация 2.0)
+    // Плавное появление окна и уход при закрытии (анимация 2.0)
     void showEvent(QShowEvent *event) override;
+public:
+    void done(int r) override;
+protected:
 
     // Перерисовка фона диалога (тёмная тема, скруглённые углы).
     void paintEvent(QPaintEvent *event) override;
@@ -97,4 +101,6 @@ private:
     QString  m_pendingVersion;         // Номер версии обновления ("1.1.0") или пустая строка.
     QString  m_pendingUrl;             // Ссылка на скачивание установщика.
     QString  m_pendingNotes;           // Текст что нового (из GitHub Release Notes).
+
+    Anim::DialogAnimator *m_anim = nullptr; // Анимации появления/ухода (см. Anim.h)
 };

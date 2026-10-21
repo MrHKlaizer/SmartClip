@@ -113,6 +113,10 @@ public:
     // Получить историю только определённого типа (например только "image").
     QList<HistoryItem> getHistoryByType(const QString &type, int limit, int offset);
 
+    // Страница истории нескольких видов сразу (для подгрузки при прокрутке):
+    // types — например {"image","video"}, asc — старые сначала.
+    QList<HistoryItem> getHistoryPage(const QStringList &types, int limit, int offset, bool asc);
+
     // Удалить одну запись истории по её id.
     bool deleteHistory(int id);
 
@@ -203,6 +207,8 @@ private:
 
     // Вспомогательные методы (внутренние):
     bool createTables();     // Создать таблицы при первом запуске
-    void trimHistory();      // Обрезать историю до максимального лимита (из настроек)
+    void trimHistory();      // Обрезать историю до лимитов (тексты и картинки — раздельно)
+    void trimType(const QString &where, int limit);  // Обрезать один вид записей
+    void migrateHistoryLimits();  // Общий лимит (до 2.0) → раздельные, без потери данных
     void migrateIfNeeded();  // Добавить новые колонки в уже существующую БД (обновление схемы)
 };

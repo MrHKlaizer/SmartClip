@@ -19,12 +19,15 @@
 
 #include <QWidget>
 #include <QApplication>
+#include <QLayout>
+#include <QCoreApplication>
 #include <QPainter>
 #include <QPointer>
 #include <QVariantAnimation>
 #include <QEasingCurve>
 #include <QList>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <functional>
 #include <QtMath>
 #include <QScreen>
@@ -45,7 +48,7 @@ inline bool systemAllows()
 // ─── Виды анимаций ───────────────────────────────────────────────────────────
 // У каждого вида — свой стиль («Новый» / «Классика») и своя скорость
 // (окно «Оформление», кнопка 🖌). Новый вид = новая строка в Kind и в kinds().
-enum class Kind { Menu, Dialog, WindowOpen, WindowClose };
+enum class Kind { Menu, Dialog, WindowOpen, WindowClose, Scroll, Tabs };
 
 struct KindInfo {
     Kind        kind;
@@ -65,6 +68,10 @@ inline const QList<KindInfo> &kinds()
           QT_TRANSLATE_NOOP("MainWindow", "Панели съезжаются с краёв, карточки — лесенкой") },
         { Kind::WindowClose, "close",  QT_TRANSLATE_NOOP("MainWindow", "Закрытие SmartClip"),
           QT_TRANSLATE_NOOP("MainWindow", "Карточки разъезжаются обратной лесенкой") },
+        { Kind::Scroll,      "scroll", QT_TRANSLATE_NOOP("MainWindow", "Прокрутка"),
+          QT_TRANSLATE_NOOP("MainWindow", "Плавная, с инерцией и мягким краем") },
+        { Kind::Tabs,        "tabs",   QT_TRANSLATE_NOOP("MainWindow", "Вкладки и разделы"),
+          QT_TRANSLATE_NOOP("MainWindow", "Выделение переезжает, раздел выезжает с проявлением") },
     };
     return list;
 }
@@ -127,23 +134,24 @@ public:
         setWindowFlag(Qt::WindowTransparentForInput);  // Даже пустая сцена не мешает кликам
 
         m_snapshot = target->grab();
-        // Сцена чуть больше окна — чтобы было куда «перелетать» пружинкой, —
-        // но НЕ выходит за пределы монитора окна. Иначе выезжающие с краёв
-        // части были видны на соседних мониторах.
-        m_targetPos = target->pos();
-        const QRect g(m_targetPos, target->size());
-        const int margin = 60;
-        QRect area = g.adjusted(-margin, -margin, margin, margin);
-        if (QScreen *scr = target->screen())
-            area = area.intersected(scr->geometry());
-        setGeometry(area);
+        placeOver(target);
+
+        // Окно спрятали или удалили, пока сцена ждала ухода (пустая) — убираем
+        // её, чтобы прозрачное окно не висело поверх экрана без дела
+        target->installEventFilter(this);
+        QObject::connect(target, &QObject::destroyed, this, [this]() { if (m_idle) close(); });
 
         m_anim.setDuration(durationMs);
         m_anim.setStartValue(reverse ? 1.0 : 0.0);
         m_anim.setEndValue(reverse ? 0.0 : 1.0);
         QObject::connect(&m_anim, &QVariantAnimation::valueChanged, this, [this]() {
             // Окно закрыли раньше, чем доиграла анимация появления — уходим
-            if (!m_reverse && (!m_target || !m_target->isVisible())) { finish(); return; }
+            if (!m_reverse && (!m_target || !m_target->isVisible())) {
+                // Меню закрыли, пока оно ещё разворачивалось — сворачиваем обратно
+                if (m_outOnHideMs > 0) { reverseNow(); return; }
+                finish();
+                return;
+            }
             update();
         });
         QObject::connect(&m_anim, &QVariantAnimation::finished, this, [this]() { finish(); });
@@ -162,12 +170,17 @@ public:
     bool isPlaying() const { return !m_done; }
     bool isIdle() const { return m_idle; }
 
+    // Уход сразу, как только окно спрячут (для меню: Qt прячет меню сам,
+    // перехватить закрытие заранее нельзя). ms — длительность ухода.
+    void setOutOnHide(int ms) { m_outOnHideMs = ms; }
+
     // Уход на уже показанной (пустой) сцене: новый снимок окна, куски задом
     // наперёд. onFirstFrame — когда кадр нарисован (тогда можно прятать окно).
     void replayOut(const QList<Piece> &pieces, int durationMs, std::function<void()> onFirstFrame)
     {
         if (!m_target) { if (onFirstFrame) onFirstFrame(); return; }
         m_snapshot = m_target->grab();
+        placeOver(m_target);  // Окно могли перетащить, пока оно было открыто
         m_pieces   = pieces;
         m_reverse  = true;
         m_done     = false;
@@ -214,10 +227,34 @@ public:
     void start()
     {
         show();
+        raise();  // Поверх всего — в том числе поверх главного окна SmartClip
         m_anim.start();
     }
 
 protected:
+    bool eventFilter(QObject *obj, QEvent *e) override
+    {
+        if (obj == m_target && e->type() == QEvent::Hide && m_idle) {
+            if (m_outOnHideMs > 0 && !m_snapshot.isNull()) {
+                // Меню: само окно Qt прячет мгновенно (по клику на пункт или
+                // мимо), а сцена уже на экране — сразу проигрываем уход по
+                // сохранённому снимку. Без пустого кадра и без задержки клика.
+                m_idle    = false;
+                m_reverse = true;
+                m_done    = false;
+                m_anim.stop();
+                m_anim.setStartValue(1.0);
+                m_anim.setEndValue(0.0);
+                m_anim.setDuration(m_outOnHideMs);
+                m_anim.start();
+                repaint();
+            } else {
+                abortNow();
+            }
+        }
+        return false;
+    }
+
     void paintEvent(QPaintEvent *) override
     {
         if (m_idle) return;  // Пустая прозрачная сцена (ждёт ухода)
@@ -265,6 +302,20 @@ protected:
     }
 
 private:
+    // Поставить сцену над окном: чуть больше окна — чтобы было куда «перелетать»
+    // пружинкой, — но НЕ за пределами его монитора (иначе выезжающие с краёв
+    // части были видны на соседних мониторах)
+    void placeOver(QWidget *target)
+    {
+        m_targetPos = target->pos();
+        const QRect g(m_targetPos, target->size());
+        const int margin = 60;
+        QRect area = g.adjusted(-margin, -margin, margin, margin);
+        if (QScreen *scr = target->screen())
+            area = area.intersected(scr->geometry());
+        if (geometry() != area) setGeometry(area);
+    }
+
     void finish()
     {
         if (m_done) return;
@@ -282,7 +333,8 @@ private:
         if (m_keepAlive && !m_reverse && m_target && m_target->isVisible()) {
             // Появление закончилось — сцена остаётся пустой и ждёт ухода
             m_idle = true;
-            m_snapshot = QPixmap();  // Освобождаем память снимка
+            if (m_outOnHideMs <= 0)
+                m_snapshot = QPixmap();  // Освобождаем память снимка (меню он ещё нужен)
             update();
             return;
         }
@@ -309,6 +361,7 @@ private:
     bool              m_reverse = false;
     bool              m_keepAlive = false;
     bool              m_idle = false;
+    int               m_outOnHideMs = 0;
     std::function<void()> m_onFirstFrame;
     std::function<void()> m_onFinished;
     QPoint            m_targetPos;  // Где на экране стоит настоящее окно
@@ -345,25 +398,123 @@ inline SnapshotOverlay *playOut(Kind kind, QWidget *w, const QList<Piece> &piece
 // Меню разворачивается сверху вниз, как шторка, с лёгкой пружинкой
 inline void menuIn(QWidget *menu)
 {
-    Piece pc;
-    pc.src        = menu->rect();
-    pc.anchor     = QPointF(menu->width() / 2.0, 0);
-    pc.fromScaleX = 0.92;
-    pc.fromScaleY = 0.35;
-    pc.fromOffset = QPointF(0, -6);
-    playIn(Kind::Menu, menu, {pc}, 260, 1.15);
+    if (!enabled(Kind::Menu)) { menu->setWindowOpacity(1.0); return; }
+    // Сцену создаём на шаг ПОЗЖЕ, когда меню уже реально на экране. Если
+    // создать её прямо в showEvent (до показа меню), Windows при показе меню
+    // поднимает его «хозяина» — главное окно SmartClip — НАД сценой, и под
+    // меню «Профили»/сортировки (там колонка с карточками) анимацию не видно.
+    // Меню пока прозрачное — задержки не видно.
+    menu->setWindowOpacity(0.0);
+    QPointer<QWidget> guard(menu);
+    QTimer::singleShot(0, menu, [guard]() {
+        if (!guard || !guard->isVisible()) return;
+        Piece pc;
+        pc.src        = guard->rect();
+        pc.anchor     = QPointF(guard->width() / 2.0, 0);
+        pc.fromScaleX = 0.92;
+        pc.fromScaleY = 0.35;
+        pc.fromOffset = QPointF(0, -6);
+        // Сцена остаётся (пустой) — при закрытии меню сворачивается шторкой обратно
+        if (SnapshotOverlay *ov = playIn(Kind::Menu, guard, {pc}, 260, 1.15, /*keepAlive=*/true))
+            ov->setOutOnHide(ms(Kind::Menu, 150));
+    });
 }
 
-// Диалог выпрыгивает из центра: зум 82% → 100% с перелётом
-inline void dialogIn(QWidget *dlg)
+// ─── Анимации диалога: появление и уход ──────────────────────────────────────
+// Появление: окно выпрыгивает из центра (зум 82% → 100% с перелётом).
+// Уход: то же задом наперёд, в ~1.7 раза быстрее (крестик, «Отмена»,
+// «Сохранить», Esc, клик мимо окна).
+//
+// Как подключить к своему QDialog:
+//   showEvent(): QDialog::showEvent(e); m_anim->onShow();
+//   done(r):     if (!m_anim->handleDone([self = QPointer<Me>(this), r] {
+//                        if (self) self->QDialog::done(r); }))
+//                    QDialog::done(r);
+class DialogAnimator : public QObject
 {
-    Piece pc;
-    pc.src        = dlg->rect();
-    pc.anchor     = QPointF(dlg->width() / 2.0, dlg->height() / 2.0);
-    pc.fromScaleX = 0.82;
-    pc.fromScaleY = 0.82;
-    pc.fromOffset = QPointF(0, 18);
-    playIn(Kind::Dialog, dlg, {pc}, 340, 1.4);
-}
+public:
+    explicit DialogAnimator(QWidget *dlg) : QObject(dlg), m_dlg(dlg)
+    {
+        dlg->installEventFilter(this);
+        m_start.setSingleShot(true);
+        connect(&m_start, &QTimer::timeout, this, [this]() { startIn(); });
+    }
+
+    void onShow()
+    {
+        m_closing = false;
+        if (!enabled(Kind::Dialog)) { m_dlg->setWindowOpacity(1.0); return; }
+        // Старт откладываем, пока окно не получит ОКОНЧАТЕЛЬНЫЙ размер.
+        // В момент showEvent он ещё не финальный: Qt доводит раскладку позже,
+        // а если окно открывается на мониторе с другим масштабом — ещё и
+        // пересчитывает размер под этот монитор (~100мс). Снимок, снятый
+        // раньше, был «сжатым», и окно потом «расправлялось».
+        // Ждём, пока размер перестанет меняться (не дольше 0.3с); окно
+        // в это время прозрачное, ожидания не видно.
+        m_dlg->setWindowOpacity(0.0);
+        m_waiting = true;
+        m_waitClock.start();
+        m_start.start(40);
+    }
+
+    // Окно закрывают. true — уход с анимацией начат (reallyDone будет вызван
+    // сам, когда сцена перекроет окно), false — закрывайте сразу.
+    bool handleDone(std::function<void()> reallyDone)
+    {
+        if (m_closing) return true;  // Уже уходим — повторный вызов игнорируем
+        if (!enabled(Kind::Dialog) || !m_dlg || !m_dlg->isVisible()) return false;
+
+        // Ещё играет появление — разворачиваем его, окно и так прозрачное
+        if (m_ov && m_ov->isPlaying() && !m_ov->isReverse()) {
+            m_closing = true;
+            m_ov->reverseNow();
+            reallyDone();
+            return true;
+        }
+        // Сцена от появления ждёт — уход стартует мгновенно
+        if (m_ov && m_ov->isIdle()) {
+            m_closing = true;
+            m_ov->replayOut({piece()}, ms(Kind::Dialog, 200), reallyDone);
+            return true;
+        }
+        return false;
+    }
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *e) override
+    {
+        // Размер ещё меняется — ждём дальше (но не бесконечно)
+        if (obj == m_dlg && e->type() == QEvent::Resize && m_waiting && m_waitClock.elapsed() < 300)
+            m_start.start(40);
+        return false;
+    }
+
+private:
+    void startIn()
+    {
+        m_waiting = false;
+        if (!m_dlg || !m_dlg->isVisible() || m_closing) return;
+        if (m_dlg->layout()) m_dlg->layout()->activate();
+        m_ov = playIn(Kind::Dialog, m_dlg, {piece()}, 340, 1.4, /*keepAlive=*/true);
+    }
+
+    Piece piece() const
+    {
+        Piece pc;
+        pc.src        = m_dlg->rect();
+        pc.anchor     = QPointF(m_dlg->width() / 2.0, m_dlg->height() / 2.0);
+        pc.fromScaleX = 0.82;
+        pc.fromScaleY = 0.82;
+        pc.fromOffset = QPointF(0, 18);
+        return pc;
+    }
+
+    QPointer<QWidget>         m_dlg;
+    QPointer<SnapshotOverlay> m_ov;
+    bool                      m_closing = false;
+    bool                      m_waiting = false;  // Ждём окончательного размера окна
+    QTimer                    m_start;            // Старт появления (после «успокоения» размера)
+    QElapsedTimer             m_waitClock;
+};
 
 } // namespace Anim

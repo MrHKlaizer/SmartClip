@@ -63,6 +63,13 @@ public:
     void setAutostart(bool b)
         { m_s.setValue("system/autostart", b); m_s.sync(); }
 
+    // Работать с правами администратора (через задачу Планировщика, см. AdminMode.h),
+    // чтобы Win+V и вставка работали в окнах, открытых от администратора.
+    bool runAsAdmin() const
+        { return m_s.value("system/runAsAdmin", false).toBool(); }
+    void setRunAsAdmin(bool b)
+        { m_s.setValue("system/runAsAdmin", b); m_s.sync(); }
+
     // Язык интерфейса: "en", "de", "ua". По умолчанию: "en".
     QString language() const
         { return m_s.value("system/language", "en").toString(); }
@@ -78,12 +85,26 @@ public:
 
     // ─── Настройки истории (раздел [history]) ─────────────────────────────────
 
-    // Максимальное количество записей в истории. По умолчанию: 150.
-    // При превышении — самые старые записи автоматически удаляются.
-    int maxHistoryRecords() const
+    // Лимиты истории — ОТДЕЛЬНО для текстов и для картинок (картинки занимают
+    // много места, тексты почти нисколько, общий лимит был неудобен: одни
+    // вытесняли другие). При превышении самые старые записи этого вида удаляются.
+    // Видео из папки записей экрана считаются вместе с картинками.
+    // Начальные значения ставит Database::init() (миграция со старого общего
+    // лимита history/maxRecords) — см. migrateHistoryLimits().
+    int maxTexts() const
+        { return qMax(10, m_s.value("history/maxTexts", 40).toInt()); }
+    void setMaxTexts(int n)
+        { m_s.setValue("history/maxTexts", n); m_s.sync(); }
+    int maxImages() const
+        { return qMax(5, m_s.value("history/maxImages", 20).toInt()); }
+    void setMaxImages(int n)
+        { m_s.setValue("history/maxImages", n); m_s.sync(); }
+
+    // Есть ли ключ в настройках (для миграции)
+    bool has(const QString &key) const { return m_s.contains(key); }
+    // Старый общий лимит (до 2.0): по умолчанию был 150
+    int legacyMaxRecords() const
         { return m_s.value("history/maxRecords", 150).toInt(); }
-    void setMaxHistoryRecords(int n)
-        { m_s.setValue("history/maxRecords", n); m_s.sync(); }
 
     // Автоочистка: удалять записи старше N дней. 0 = выключена.
     int autocleanDays() const

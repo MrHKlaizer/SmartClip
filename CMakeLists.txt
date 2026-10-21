@@ -60,7 +60,9 @@ set(SOURCES
     src/core/BugReporter.h
     src/core/BugReporter.cpp
     src/core/Backup.h
+    src/core/AdminMode.h
     src/core/Backup.cpp
+    src/core/AdminMode.cpp
     src/core/VideoWatcher.h
     src/core/VideoWatcher.cpp
     src/ui/MainWindow.h
@@ -68,6 +70,8 @@ set(SOURCES
     src/ui/ClickableCard.h
     src/ui/SmartButton.h
     src/ui/Anim.h
+    src/ui/SmoothScroll.h
+    src/ui/NavTabs.h
     src/ui/HotkeyEdit.h
     src/ui/ImageViewer.h
     src/ui/ImageViewer.cpp
@@ -103,6 +107,8 @@ target_link_libraries(SmartClip PRIVATE
 target_link_libraries(SmartClip PRIVATE
     user32
     dwmapi
+    advapi32
+    shell32
 )
 
 # ── Установщик ───────────────────────────────────────────────────────────────

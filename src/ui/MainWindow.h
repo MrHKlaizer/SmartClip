@@ -34,6 +34,7 @@
 #include <QPushButton>   // Кнопки
 #include <QPixmap>       // Изображение в видеопамяти
 #include <QSet>          // Множество уникальных значений (выбранные пины)
+#include "core/Database.h" // HistoryItem
 #include "SmartButton.h" // Наша кастомная кнопка с ручной отрисовкой
 
 // Предварительные объявления — нам нужны только указатели:
@@ -85,6 +86,16 @@ public slots:
     // Открыть диалог для найденного обновления (клик по уведомлению в трее).
     void showPendingUpdate();
 
+    // ─── Окно без захвата фокуса ─────────────────────────────────────────────
+    // SmartClip открывается, не отбирая фокус у программы, где работает
+    // пользователь, — иначе поля, которые закрываются при потере фокуса
+    // (переименование файла и т.п.), закрывались, и вставлять было некуда.
+    // Фокус берём, только когда пользователь начинает печатать или кликает в поиск.
+    // Эти методы вызывают глобальные хуки клавиатуры/мыши (MainWindow.cpp).
+    void onHookKey(unsigned vk, unsigned scan, bool extended); // Клавиша, пока мы без фокуса
+    void onGlobalClick();                                      // Клик где угодно на экране
+    void onForegroundChanged(quintptr hwnd);                   // Сменилось активное окно
+
     // Показать диалог скачивания обновления БЕЗ проверки major/minor.
     // Вызывается кнопкой «Обновить» из плашки в настройках — пользователь
     // уже явно попросил обновление, фильтровать patch-версии нельзя.
@@ -107,6 +118,9 @@ signals:
 
 // ─── Переопределённые методы QWidget ─────────────────────────────────────────
 protected:
+    // Следим за кнопками История/Закрепы, чтобы «пилюля» стояла на месте
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
     // Обработка нативных Windows-сообщений (WM_ACTIVATE, WM_NCHITTEST и т.д.)
     // Нужен для реализации «исчезания при потере фокуса» и кастомного хиттестинга.
     bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
@@ -166,6 +180,13 @@ private:
     // ─── Загрузка и отображение данных ───────────────────────────────────────
     void setupLayout();                     // Создать все виджеты и лейауты (вызывается в конструкторе)
     void loadHistory(bool textsOnly = false); // Загрузить историю из БД (textsOnly — только тексты, для поиска)
+    // Подгрузка истории порциями при прокрутке
+    void appendTexts();                      // Следующие TEXT_PAGE текстов
+    void appendMedia();                      // Следующие MEDIA_PAGE картинок/видео
+    void maybeLoadMore(class QScrollArea *area); // Долистали почти до конца — подгрузить
+    void addTextCard(const HistoryItem &entry);
+    void addImageCard(const HistoryItem &entry);
+    void addVideoCard(const HistoryItem &entry);
     void loadPins(bool allFolders = false); // Загрузить закрепы (всей папки или всех сразу)
     void loadFolderBar();                   // Перестроить полосу папок (вкладки папок в режиме Pins)
     void filterHistory(const QString &query);  // Фильтровать историю по тексту поиска
@@ -189,6 +210,7 @@ private:
     void showProfilesMenu();    // Выпадающее меню со списком профилей
     void showProfileManager();  // Диалог создания/редактирования/удаления профилей
     void showAppearanceSettings(); // Окно «Оформление» (кнопка 🖌): стиль и скорость анимаций
+    void closeAllOnDeactivate();   // Клик мимо при открытом окне/меню — закрыть всё
     QList<Anim::Piece> buildOpenPieces(); // Куски окна для анимации сборки/ухода
 
     // ─── Настройки ───────────────────────────────────────────────────────────
@@ -221,9 +243,20 @@ private:
     // ─── Данные ───────────────────────────────────────────────────────────────
     Database    *m_db;                   // База данных SmartClip
     QPointer<Anim::SnapshotOverlay> m_overlay; // Текущая сцена анимации окна (появление/уход)
+    class SmoothScroller *m_leftScroller  = nullptr; // Плавная прокрутка левой колонки
+    class SmoothScroller *m_rightScroller = nullptr; // ...и правой
     bool         m_hidePending = false;  // Уход начался, окно спрячется через пару кадров
     int          m_hideSeq     = 0;      // Счётчик: отменяет устаревшее отложенное скрытие
     bool         m_historyDirty = true;  // true = история устарела, нужно перезагрузить при показе
+    // Подгрузка истории порциями: сколько уже показано и всё ли закончилось
+    static constexpr int TEXT_PAGE  = 40;   // Текстов за раз
+    static constexpr int MEDIA_PAGE = 20;   // Картинок/видео за раз
+    int          m_textOffset  = 0;
+    int          m_mediaOffset = 0;
+    bool         m_textsDone   = false;
+    bool         m_mediaDone   = false;
+    bool         m_searching   = false;     // Идёт поиск — тексты берём из m_searchResults
+    QList<HistoryItem> m_searchResults;     // Все совпадения поиска (показываются порциями)
     class QTimer *m_searchTimer = nullptr; // Задержка поиска по истории (не искать на каждую букву)
     ImageViewer *m_imageViewer  = nullptr; // Полноэкранный просмотрщик (создаётся при первом использовании)
 
@@ -252,6 +285,11 @@ private:
     // quintptr — беззнаковое целое размером с указатель (32 или 64 бит).
     quintptr m_prevFocusHwnd = 0;
 
+    void activateForInput();   // Забрать фокус (пользователь начал печатать / кликнул в поиск)
+    void installInputHooks();  // Хуки клавиатуры/мыши/смены окна — пока окно на экране
+    void removeInputHooks();
+    void finishPaste();        // Спрятаться и вставить (Ctrl+V) в окно, где работал пользователь
+
     // ─── Виджеты интерфейса ───────────────────────────────────────────────────
     QVBoxLayout *m_leftLayout;           // Лейаут левой колонки (карточки)
     QVBoxLayout *m_rightLayout;          // Лейаут правой колонки
@@ -268,6 +306,7 @@ private:
     SmartButton *m_editBtn     = nullptr; // Кнопка мультивыбора (только в режиме Закрепов)
     SmartButton *m_profilesBtn = nullptr; // Кнопка «Профили»
     SmartButton *m_designBtn   = nullptr; // Кнопка 🖌 — оформление и анимации
+    QWidget     *m_viewPill    = nullptr; // «Пилюля» активной вкладки История/Закрепы
     SmartButton *m_sortBtn     = nullptr; // Кнопка сортировки
     SmartButton *m_clearBtn    = nullptr; // Кнопка очистки истории
     SmartButton *m_settingsBtn = nullptr; // Кнопка настроек (шестерёнка)

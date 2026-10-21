@@ -126,7 +126,8 @@ QJsonObject exportAll(Database *db)
     auto &s = AppSettings::get();
     QJsonObject cfg;
     cfg["mainHotkey"]      = s.mainHotkey();
-    cfg["maxRecords"]      = s.maxHistoryRecords();
+    cfg["maxTexts"]        = s.maxTexts();
+    cfg["maxImages"]       = s.maxImages();
     cfg["autocleanDays"]   = s.autocleanDays();
     cfg["saveImages"]      = s.saveImages();
     cfg["deduplication"]   = s.deduplication();
@@ -275,7 +276,13 @@ ImportResult importFromFile(Database *db, const QString &path)
     if (root.contains("settings")) {
         const QJsonObject cfg = root["settings"].toObject();
         auto &s = AppSettings::get();
-        if (cfg.contains("maxRecords"))      s.setMaxHistoryRecords(cfg["maxRecords"].toInt());
+        // Старые бэкапы (до 2.0): общий лимит → оба раздельных
+        if (cfg.contains("maxRecords")) {
+            s.setMaxTexts(cfg["maxRecords"].toInt());
+            s.setMaxImages(cfg["maxRecords"].toInt());
+        }
+        if (cfg.contains("maxTexts"))        s.setMaxTexts(cfg["maxTexts"].toInt());
+        if (cfg.contains("maxImages"))       s.setMaxImages(cfg["maxImages"].toInt());
         if (cfg.contains("autocleanDays"))   s.setAutocleanDays(cfg["autocleanDays"].toInt());
         if (cfg.contains("saveImages"))      s.setSaveImages(cfg["saveImages"].toBool());
         if (cfg.contains("deduplication"))   s.setDeduplication(cfg["deduplication"].toBool());

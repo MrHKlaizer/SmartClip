@@ -649,6 +649,26 @@
         <source>По умолчанию</source>
         <translation>За замовчуванням</translation>
     </message>
+    <message>
+        <source>Прокрутка</source>
+        <translation>Прокрутка</translation>
+    </message>
+    <message>
+        <source>Плавная, с инерцией и мягким краем</source>
+        <translation>Плавна, з інерцією та м’яким краєм</translation>
+    </message>
+    <message>
+        <source>Скоро здесь: эффекты карточек и темы оформления.</source>
+        <translation>Незабаром тут: ефекти карток і теми оформлення.</translation>
+    </message>
+    <message>
+        <source>Вкладки и разделы</source>
+        <translation>Вкладки та розділи</translation>
+    </message>
+    <message>
+        <source>Выделение переезжает, раздел выезжает с проявлением</source>
+        <translation>Виділення переїжджає, розділ виїжджає з проявленням</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>
@@ -1009,12 +1029,74 @@
         <translation>Файл «%1» більший за 50 МБ і не буде надісланий.</translation>
     </message>
     <message>
-        <source>Дедупликация — без повторов (повторно скопированный текст поднимается наверх)</source>
-        <translation>Дедуплікація — без повторів (повторно скопійований текст піднімається вгору)</translation>
-    </message>
-    <message>
         <source>Опишите подробнее — ещё минимум %1 симв.</source>
         <translation>Опишіть детальніше — ще щонайменше %1 симв.</translation>
+    </message>
+    <message>
+        <source>Без повторов — повторно скопированное поднимается наверх</source>
+        <translation>Без повторів — повторно скопійоване піднімається вгору</translation>
+    </message>
+    <message>
+        <source>Система</source>
+        <translation>Система</translation>
+    </message>
+    <message>
+        <source>История</source>
+        <translation>Історія</translation>
+    </message>
+    <message>
+        <source>Закрепы</source>
+        <translation>Закріплені</translation>
+    </message>
+    <message>
+        <source>Экспорт и импорт</source>
+        <translation>Експорт та імпорт</translation>
+    </message>
+    <message>
+        <source>Дополнительно</source>
+        <translation>Додатково</translation>
+    </message>
+    <message>
+        <source>О программе</source>
+        <translation>Про програму</translation>
+    </message>
+    <message>
+        <source>сейчас: %1</source>
+        <translation>зараз: %1</translation>
+    </message>
+    <message>
+        <source>Максимум текстов:</source>
+        <translation>Максимум текстів:</translation>
+    </message>
+    <message>
+        <source>Максимум картинок:</source>
+        <translation>Максимум картинок:</translation>
+    </message>
+    <message>
+        <source>Тексты и картинки хранятся раздельно: одни больше не вытесняют другие.
+При превышении удаляются самые старые записи этого вида.</source>
+        <translation>Тексти й картинки зберігаються окремо: одні більше не витісняють інші.
+При перевищенні видаляються найстаріші записи цього виду.</translation>
+    </message>
+    <message>
+        <source>Работать в окнах администратора</source>
+        <translation>Працювати у вікнах адміністратора</translation>
+    </message>
+    <message>
+        <source>SmartClip будет запускаться с правами администратора, чтобы горячая клавиша и вставка работали в программах, открытых от имени администратора (например, в терминале). Windows один раз спросит разрешение.</source>
+        <translation>SmartClip запускатиметься з правами адміністратора, щоб гаряча клавіша та вставка працювали в програмах, відкритих від імені адміністратора (наприклад, у терміналі). Windows один раз спитає дозвіл.</translation>
+    </message>
+    <message>
+        <source>Нужна учётная запись администратора Windows.</source>
+        <translation>Потрібен обліковий запис адміністратора Windows.</translation>
+    </message>
+    <message>
+        <source>Окна администратора</source>
+        <translation>Вікна адміністратора</translation>
+    </message>
+    <message>
+        <source>Не удалось включить: Windows не дала разрешение.</source>
+        <translation>Не вдалося увімкнути: Windows не надала дозвіл.</translation>
     </message>
 </context>
 <context>

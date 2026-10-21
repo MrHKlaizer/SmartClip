@@ -38,6 +38,7 @@
 #include "core/VideoWatcher.h"     // Мониторинг папки с видеозаписями
 #include "core/UpdateChecker.h"    // Проверка обновлений на GitHub
 #include "core/Backup.h"           // Автобэкап закрепов/профилей в JSON
+#include "core/AdminMode.h"        // Работа в окнах администратора
 #include "ui/MainWindow.h"         // Главное окно SmartClip
 
 // ─── Точка входа ─────────────────────────────────────────────────────────────
@@ -46,6 +47,26 @@
 // argv — массив строк-аргументов (argv[0] = путь к .exe)
 int main(int argc, char *argv[])
 {
+    // ── Режим «Работать в окнах администратора» (см. core/AdminMode.h) ───────
+    bool launchedByTask = false;
+    for (int i = 1; i < argc; ++i) {
+        // Нас запустили с правами админа только чтобы создать задачу Планировщика
+        if (qstrcmp(argv[i], AdminMode::ARG_CREATE_TASK) == 0)
+            return AdminMode::createTask() ? 0 : 1;
+        if (qstrcmp(argv[i], AdminMode::ARG_ELEVATED) == 0)
+            launchedByTask = true;
+    }
+    // Обычный запуск при включённой настройке: просим Планировщик запустить
+    // SmartClip с правами администратора, а сами выходим. Если SmartClip уже
+    // работает — не трогаем Планировщик, ниже просто покажем его окно.
+    // launchedByTask — защита от зацикливания, если права так и не повысились.
+    if (!launchedByTask && !AdminMode::isElevated() && AppSettings::get().runAsAdmin()) {
+        HANDLE running = OpenMutexW(SYNCHRONIZE, FALSE, L"SmartClipSingleInstance");
+        if (running) CloseHandle(running);
+        else if (AdminMode::runTask()) return 0;
+        // Задачи нет (удалили вручную) — работаем как обычно, без прав админа
+    }
+
     // ── Защита от двойного запуска ────────────────────────────────────────────
     // Если SmartClip уже запущен (автозапуск + ручной старт) — второй экземпляр
     // сразу выходит. Без этого оба процесса пишут в одну БД → каждая копия
@@ -386,9 +407,16 @@ int main(int argc, char *argv[])
         // «клавиша занята другой программой».
         hotkey.stop();
         clipboard.stop();
-        // startDetached — запустить процесс независимо от текущего (не дочерний).
-        // applicationFilePath() — полный путь к текущему .exe.
-        QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
+        if (AdminMode::isElevated() && !AppSettings::get().runAsAdmin()) {
+            // Режим администратора выключили — новая копия должна стартовать
+            // как обычный пользователь (дочерний процесс унаследовал бы права админа)
+            AdminMode::launchAsUser();
+        } else {
+            // startDetached — запустить процесс независимо от текущего (не дочерний).
+            // applicationFilePath() — полный путь к текущему .exe.
+            // Обычная копия при включённом режиме сама перезапустится через Планировщик.
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
+        }
     }
 
     return result;  // 0 = нормальное завершение

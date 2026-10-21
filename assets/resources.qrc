@@ -3,6 +3,10 @@
     <file alias="check_off.svg">icons/check_off.svg</file>
     <file alias="check_on.svg">icons/check_on.svg</file>
     <file alias="smartclip.ico">icons/smartclip.ico</file>
+    <file alias="chevron_down.png">icons/chevron_down.png</file>
+    <file alias="chevron_down@2x.png">icons/chevron_down@2x.png</file>
+    <file alias="chevron_up.png">icons/chevron_up.png</file>
+    <file alias="chevron_up@2x.png">icons/chevron_up@2x.png</file>
   </qresource>
   <qresource prefix="/">
     <file alias="theme.qss">theme.qss</file>

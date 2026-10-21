@@ -586,6 +586,25 @@ static void launchAsUser(const std::wstring& exe, const std::wstring& dir) {
         ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, dir.c_str(), SW_SHOW);
 }
 
+// Удалить задачу Планировщика «SmartClip Admin» (настройка «Работать в окнах
+// администратора», см. src/core/AdminMode.cpp). Нет задачи — schtasks просто вернёт ошибку.
+static void deleteAdminTask() {
+    wchar_t sysDir[MAX_PATH];
+    GetSystemDirectoryW(sysDir, MAX_PATH);
+    std::wstring cmd = L"\"" + std::wstring(sysDir) + L"\\schtasks.exe\" /delete /tn \"SmartClip Admin\" /f";
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+    if (CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                       nullptr, nullptr, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, 10000);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  Самоудаление через .bat (для деинсталлятора)
 // ═══════════════════════════════════════════════════════════════
@@ -799,6 +818,7 @@ static void doUninstall() {
     // ── Удаляем записи реестра ────────────────────────────────
     regDeleteVal(HKEY_CURRENT_USER, REG_RUN_KEY, APP_NAME);
     enableWinV();
+    deleteAdminTask();
     SHDeleteKeyW(HKEY_LOCAL_MACHINE, REG_UNINSTALL_KEY);
 
     // ── Спрашиваем про Explorer ДО запуска batch ──────────────
