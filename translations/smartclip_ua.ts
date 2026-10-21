@@ -677,6 +677,26 @@
         <source>Картинка вырастает из карточки, при закрытии — обратно</source>
         <translation>Картинка виростає з картки, при закритті — назад</translation>
     </message>
+    <message>
+        <source>Дуга</source>
+        <translation>Дуга</translation>
+    </message>
+    <message>
+        <source>Плавная</source>
+        <translation>Плавна</translation>
+    </message>
+    <message>
+        <source>«Дуга» — колонки выгибаются к центру, «Плавная» — без дуги</source>
+        <translation>«Дуга» — колонки вигинаються до центру, «Плавна» — без дуги</translation>
+    </message>
+    <message>
+        <source>«Дуга» — крайние карточки уходят по дуге, под мышью выдвигаются; «Плавная» — без этого</source>
+        <translation>«Дуга» — крайні картки йдуть по дузі, під мишею висуваються; «Плавна» — без цього</translation>
+    </message>
+    <message>
+        <source>Наверх</source>
+        <translation>Нагору</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>

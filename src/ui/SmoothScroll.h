@@ -42,6 +42,34 @@ public:
     // Текущая скорость прокрутки (px/с) — пригодится эффектам карточек (этап 4)
     qreal velocity() const { return m_velocity; }
 
+    // Сразу встать на позицию, прервав плавную прокрутку (переключение
+    // История/Закрепы — недоигранная прокрутка увела бы список обратно)
+    void jumpTo(int value)
+    {
+        m_timer.stop();
+        m_velocity = 0;
+        QScrollBar *sb = m_area->verticalScrollBar();
+        sb->setValue(value);
+        m_pos = m_target = sb->value();
+        if (QWidget *content = m_area->widget())
+            content->move(content->x(), -sb->value());
+    }
+
+    // Плавно доехать до позиции (кнопка «наверх»). В «Классике» — сразу.
+    void scrollTo(qreal target)
+    {
+        QScrollBar *sb = m_area->verticalScrollBar();
+        if (!Anim::enabled(Anim::Kind::Scroll)) { sb->setValue(qRound(target)); return; }
+        if (!m_timer.isActive()) {
+            m_pos = sb->value();
+            m_clock.start();
+            m_lastTick = 0;
+        }
+        m_target = qBound<qreal>(sb->minimum(), target, sb->maximum());
+        m_lastWheel.start();
+        m_timer.start();
+    }
+
 protected:
     bool eventFilter(QObject *obj, QEvent *e) override
     {

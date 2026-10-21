@@ -677,6 +677,26 @@ Turn on: Settings → Accessibility → Visual effects → Animation effects.</t
         <source>Картинка вырастает из карточки, при закрытии — обратно</source>
         <translation>The image grows out of its card and flies back on close</translation>
     </message>
+    <message>
+        <source>Дуга</source>
+        <translation>Arc</translation>
+    </message>
+    <message>
+        <source>Плавная</source>
+        <translation>Smooth</translation>
+    </message>
+    <message>
+        <source>«Дуга» — колонки выгибаются к центру, «Плавная» — без дуги</source>
+        <translation>“Arc” — columns bend toward the center, “Smooth” — without the arc</translation>
+    </message>
+    <message>
+        <source>«Дуга» — крайние карточки уходят по дуге, под мышью выдвигаются; «Плавная» — без этого</source>
+        <translation>“Arc” — edge cards curve away, hovered cards slide out; “Smooth” — without that</translation>
+    </message>
+    <message>
+        <source>Наверх</source>
+        <translation>Back to top</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>

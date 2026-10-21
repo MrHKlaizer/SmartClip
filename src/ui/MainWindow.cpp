@@ -36,6 +36,9 @@
 #include "HotkeyEdit.h"         // Поле захвата горячих клавиш
 #include "Anim.h"               // Плавные анимации 2.0 (меню, окна)
 #include "SmoothScroll.h"       // Плавная прокрутка колонок (этап 3)
+#include "CardArc.h"           // Прокрутка «Дуга» (этап 4)
+#include "CardShadow.h"        // Быстрая тень карточек
+#include "ScrollTopButton.h"   // Кнопка «наверх» в колонках
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
 #include "core/Database.h"      // SQLite CRUD
 #include "core/AppSettings.h"   // Синглтон настроек
@@ -171,11 +174,9 @@ static QPixmap shellThumbnail(const QString &filepath, int w, int h)
 // blurRadius=40 даёт мягкую размытую тень, offset(0,8) смещает вниз.
 static void applyCardShadow(QWidget *w)
 {
-    auto *fx = new QGraphicsDropShadowEffect(w);
-    fx->setBlurRadius(40);
-    fx->setOffset(0, 8);
-    fx->setColor(QColor(0, 0, 0, 240));
-    w->setGraphicsEffect(fx);
+    // Своя тень (см. CardShadow.h): размытие считается один раз, а не каждый
+    // кадр — плавная прокрутка и «Дуга» не тормозят
+    w->setGraphicsEffect(new CardShadowEffect(w));
 }
 
 // Кнопка-крестик: рисует ✕ через QPainter, прижатый к правому краю
@@ -1042,7 +1043,8 @@ void MainWindow::setupLayout()
     // Левая колонка — тексты и аудио
     m_leftScroll = new QScrollArea(this);
     m_leftScroll->setObjectName("leftScroll");
-    m_leftScroll->setFixedWidth(sc(BASE_LEFT));
+    // Шире на запас к центру: выдвинутая мышью карточка не должна обрезаться краем колонки
+    m_leftScroll->setFixedWidth(sc(BASE_LEFT) + sc(ARC_AMP));
     m_leftScroll->setWidgetResizable(true);
     m_leftScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     // Полосу прокрутки не показываем (листать — колёсиком/тачпадом): она
@@ -1053,9 +1055,11 @@ void MainWindow::setupLayout()
     QScrollArea *leftScroll = m_leftScroll;
     QWidget *leftContent = new QWidget();
     leftContent->setStyleSheet("background-color: transparent;");
-    m_leftLayout = new QVBoxLayout(leftContent);
+    auto *leftArcLayout = new ArcColumnLayout(leftContent);
+    m_leftLayout = leftArcLayout;
     m_leftLayout->setAlignment(Qt::AlignTop);
-    m_leftLayout->setContentsMargins(14, 8, 14, 24); // увеличено для тени (blurRadius=40)
+    // Справа — запас под выдвинутую мышью карточку (она едет к центру экрана)
+    m_leftLayout->setContentsMargins(14, 8, 14 + sc(ARC_AMP), 24); // увеличено для тени (blurRadius=40)
     m_leftLayout->setSpacing(12);
     leftScroll->setWidget(leftContent);
 
@@ -1068,7 +1072,7 @@ void MainWindow::setupLayout()
     // Правая колонка — картинки и видео
     m_rightScroll = new QScrollArea(this);
     m_rightScroll->setObjectName("rightScroll");
-    m_rightScroll->setFixedWidth(sc(BASE_RIGHT));
+    m_rightScroll->setFixedWidth(sc(BASE_RIGHT) + sc(ARC_AMP));
     m_rightScroll->setWidgetResizable(true);
     m_rightScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     // Полосу прокрутки не показываем (листать — колёсиком/тачпадом): она
@@ -1079,15 +1083,28 @@ void MainWindow::setupLayout()
     QScrollArea *rightScroll = m_rightScroll;
     QWidget *rightContent = new QWidget();
     rightContent->setStyleSheet("background-color: transparent;");
-    m_rightLayout = new QVBoxLayout(rightContent);
+    auto *rightArcLayout = new ArcColumnLayout(rightContent);
+    m_rightLayout = rightArcLayout;
     m_rightLayout->setAlignment(Qt::AlignTop);
-    m_rightLayout->setContentsMargins(14, 8, 14, 24); // увеличено для тени (blurRadius=40)
+    // Слева — запас под выдвинутую мышью карточку
+    m_rightLayout->setContentsMargins(14 + sc(ARC_AMP), 8, 14, 24); // увеличено для тени (blurRadius=40)
     m_rightLayout->setSpacing(12);
     rightScroll->setWidget(rightContent);
 
     // Плавная прокрутка с инерцией и мягким краем (в «Классике» — обычная)
     m_leftScroller  = new SmoothScroller(m_leftScroll);
     m_rightScroller = new SmoothScroller(m_rightScroll);
+
+    // «Дуга»: крайние карточки уходят по дуге наружу, под мышью — выдвигаются к центру
+    // Тексты разной высоты уходят «по доле за краем», фото — ровной дугой
+    m_leftArc  = new CardArc(m_leftScroll,  leftArcLayout,  +1, sc(90),  sc(12), true);
+    m_rightArc = new CardArc(m_rightScroll, rightArcLayout, -1, sc(110), sc(12), false);
+
+    // Кнопка «наверх» — вверху колонки по центру карточек, когда пролистали ~10 карточек
+    new ScrollTopButton(m_leftScroll, m_leftLayout, 14 + (sc(BASE_LEFT) - 36) / 2, sc(38),
+                        [this]() { m_leftScroller->scrollTo(0); });
+    new ScrollTopButton(m_rightScroll, m_rightLayout, 14 + sc(ARC_AMP) + (sc(BASE_RIGHT) - 36) / 2,
+                        sc(38), [this]() { m_rightScroller->scrollTo(0); });
 
     // Долистали почти до конца колонки — подгружаем следующую порцию истории.
     // rangeChanged — на случай, когда первая порция не заполнила колонку целиком.
@@ -1838,6 +1855,9 @@ bool isPasteTarget(HWND h)
 
 void MainWindow::installInputHooks()
 {
+    // Окно, которое не показывается на экране (снимки для проверки), не должно
+    // перехватывать клавиатуру и мышь пользователя
+    if (testAttribute(Qt::WA_DontShowOnScreen)) return;
     s_hookOwner = this;
     if (!s_kbHook)
         s_kbHook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboardHook, GetModuleHandleW(nullptr), 0);
@@ -2534,6 +2554,13 @@ QString MainWindow::askFolder(bool &cancelled)
 
 void MainWindow::switchView(ViewMode mode)
 {
+    // Уходим из Истории в Закрепы — запоминаем, где остановились в Истории
+    // (сколько карточек подгружено и где прокрутка), чтобы вернуть туда же
+    if (m_viewMode == ViewMode::History && mode == ViewMode::Pins) {
+        m_histPos = { m_leftScroll->verticalScrollBar()->value(),
+                      m_rightScroll->verticalScrollBar()->value(),
+                      m_textOffset, m_mediaOffset, true };
+    }
     m_viewMode = mode;
 
     // Обновляем активную вкладку через SmartButton::setActiveState
@@ -2564,12 +2591,38 @@ void MainWindow::switchView(ViewMode mode)
     if (mode == ViewMode::History) {
         m_foldersBar->hide();
         loadHistory();
+        restoreHistoryPos();
     } else {
         m_currentFolder = ""; // при каждом переходе сбрасываем на "Все"
         m_foldersBar->show();
         loadFolderBar();
         loadPins();
+        // Закрепы — всегда с начала (раньше оставалась прокрутка Истории,
+        // и Закрепы открывались сразу в самом низу)
+        m_leftScroller->jumpTo(0);
+        m_rightScroller->jumpTo(0);
     }
+}
+
+// Вернуться в Истории туда, где остановились перед переходом в Закрепы:
+// догружаем столько же карточек и ставим прокрутку на прежнее место
+void MainWindow::restoreHistoryPos()
+{
+    if (!m_histPos.valid) return;
+    const HistoryPos pos = m_histPos;
+    m_histPos.valid = false;
+    while (!m_textsDone && m_textOffset < pos.texts) appendTexts();
+    while (!m_mediaDone && m_mediaOffset < pos.media) appendMedia();
+    // Карточки раскладываются отложенно — раскладываем сейчас, иначе полоса
+    // прокрутки ещё «короткая» и позиция обрежется
+    for (QVBoxLayout *lay : {m_leftLayout, m_rightLayout})
+        for (int i = 0; i < lay->count(); ++i)
+            if (QWidget *w = lay->itemAt(i)->widget())
+                if (!w->testAttribute(Qt::WA_WState_ExplicitShowHide)) w->show();
+    for (int i = 0; i < 3; ++i)
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+    m_leftScroller->jumpTo(pos.left);
+    m_rightScroller->jumpTo(pos.right);
 }
 
 // toggleEditMode — включает/выключает режим мультивыбора закрепов.
@@ -3728,10 +3781,19 @@ void MainWindow::showAppearanceSettings()
         auto *hint = new QLabel(tr(info.hint), dlg.body());
         hint->setStyleSheet(hintCss);
 
+        // Данные пункта: "on" / "off", у прокрутки — "arc" / "smooth" / "off"
         auto *style = new QComboBox(dlg.body());
-        style->addItem(tr("Новый"), true);
-        style->addItem(tr("Классика"), false);
-        style->setCurrentIndex(AppSettings::get().animOn(key) ? 0 : 1);
+        if (info.kind == Anim::Kind::Scroll) {
+            style->addItem(tr("Дуга"), QStringLiteral("arc"));
+            style->addItem(tr("Плавная"), QStringLiteral("smooth"));
+        } else {
+            style->addItem(tr("Новый"), QStringLiteral("on"));
+        }
+        style->addItem(tr("Классика"), QStringLiteral("off"));
+        const QString cur = !AppSettings::get().animOn(key) ? QStringLiteral("off")
+                          : info.kind == Anim::Kind::Scroll ? AppSettings::get().scrollStyle()
+                                                            : QStringLiteral("on");
+        style->setCurrentIndex(qMax(0, style->findData(cur)));
         style->setStyleSheet(comboCss);
         style->setFixedWidth(120);
 
@@ -3753,7 +3815,7 @@ void MainWindow::showAppearanceSettings()
 
         // Скорость имеет смысл только для нового стиля
         auto sync = [style, speed, speedLbl]() {
-            const bool on = style->currentData().toBool();
+            const bool on = style->currentData().toString() != QLatin1String("off");
             speed->setEnabled(on);
             speedLbl->setEnabled(on);
         };
@@ -3822,9 +3884,15 @@ void MainWindow::showAppearanceSettings()
     if (dlg.exec() != QDialog::Accepted) return;
 
     for (const Row &row : rows) {
-        AppSettings::get().setAnimOn(row.key, row.style->currentData().toBool());
+        const QString v = row.style->currentData().toString();
+        AppSettings::get().setAnimOn(row.key, v != QLatin1String("off"));
+        if (v == QLatin1String("arc") || v == QLatin1String("smooth"))
+            AppSettings::get().setScrollStyle(v);
         AppSettings::get().setAnimSpeed(row.key, row.speed->value());
     }
+    // Дугу включили или выключили — колонки перестраиваются сразу
+    if (m_leftArc)  m_leftArc->refresh();
+    if (m_rightArc) m_rightArc->refresh();
 }
 
 void MainWindow::editPin(int id, const QString &content, QLabel *card)

@@ -69,7 +69,7 @@ inline const QList<KindInfo> &kinds()
         { Kind::WindowClose, "close",  QT_TRANSLATE_NOOP("MainWindow", "Закрытие SmartClip"),
           QT_TRANSLATE_NOOP("MainWindow", "Карточки разъезжаются обратной лесенкой") },
         { Kind::Scroll,      "scroll", QT_TRANSLATE_NOOP("MainWindow", "Прокрутка"),
-          QT_TRANSLATE_NOOP("MainWindow", "Плавная, с инерцией и мягким краем") },
+          QT_TRANSLATE_NOOP("MainWindow", "«Дуга» — крайние карточки уходят по дуге, под мышью выдвигаются; «Плавная» — без этого") },
         { Kind::Tabs,        "tabs",   QT_TRANSLATE_NOOP("MainWindow", "Вкладки и разделы"),
           QT_TRANSLATE_NOOP("MainWindow", "Выделение переезжает, раздел выезжает с проявлением") },
         { Kind::Viewer,      "viewer", QT_TRANSLATE_NOOP("MainWindow", "Просмотр картинок"),
@@ -89,6 +89,12 @@ inline QString key(Kind k)
 inline bool enabled(Kind k)
 {
     return systemAllows() && AppSettings::get().animOn(key(k));
+}
+
+// Стиль прокрутки: "arc" (дуга) или "smooth" (плавная без дуги)
+inline QString scrollStyle()
+{
+    return AppSettings::get().scrollStyle();
 }
 
 // Длительность с учётом скорости этого вида: base — длительность при 100%

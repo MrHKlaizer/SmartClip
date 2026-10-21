@@ -190,6 +190,13 @@ public:
     void setAnimOn(const QString &kind, bool b)
         { m_s.setValue("anim/" + kind + "/on", b); m_s.sync(); }
 
+    // Стиль прокрутки колонок (когда прокрутка не «Классика»):
+    // "arc" — дуга-барабан, "smooth" — просто плавная. По умолчанию — дуга.
+    QString scrollStyle() const
+        { return m_s.value("anim/scroll/style", "arc").toString(); }
+    void setScrollStyle(const QString &s)
+        { m_s.setValue("anim/scroll/style", s); m_s.sync(); }
+
     // Скорость этого вида в процентах: 100 = обычная, 200 = в 2 раза быстрее,
     // 50 = в 2 раза медленнее. Допустимо 50–200.
     int animSpeed(const QString &kind) const

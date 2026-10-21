@@ -677,6 +677,26 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
         <source>Картинка вырастает из карточки, при закрытии — обратно</source>
         <translation>Das Bild wächst aus seiner Karte und kehrt beim Schließen zurück</translation>
     </message>
+    <message>
+        <source>Дуга</source>
+        <translation>Bogen</translation>
+    </message>
+    <message>
+        <source>Плавная</source>
+        <translation>Weich</translation>
+    </message>
+    <message>
+        <source>«Дуга» — колонки выгибаются к центру, «Плавная» — без дуги</source>
+        <translation>„Bogen“ — Spalten wölben sich zur Mitte, „Weich“ — ohne Bogen</translation>
+    </message>
+    <message>
+        <source>«Дуга» — крайние карточки уходят по дуге, под мышью выдвигаются; «Плавная» — без этого</source>
+        <translation>„Bogen“ — Randkarten gleiten im Bogen weg, unter der Maus fahren sie heraus; „Weich“ — ohne das</translation>
+    </message>
+    <message>
+        <source>Наверх</source>
+        <translation>Nach oben</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialog</name>

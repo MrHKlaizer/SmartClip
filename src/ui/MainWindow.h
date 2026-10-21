@@ -187,6 +187,7 @@ private:
     void addTextCard(const HistoryItem &entry);
     void addImageCard(const HistoryItem &entry);
     void addVideoCard(const HistoryItem &entry);
+    void restoreHistoryPos();                // Вернуть Историю туда, где остановились
     void loadPins(bool allFolders = false); // Загрузить закрепы (всей папки или всех сразу)
     void loadFolderBar();                   // Перестроить полосу папок (вкладки папок в режиме Pins)
     void filterHistory(const QString &query);  // Фильтровать историю по тексту поиска
@@ -245,6 +246,8 @@ private:
     QPointer<Anim::SnapshotOverlay> m_overlay; // Текущая сцена анимации окна (появление/уход)
     class SmoothScroller *m_leftScroller  = nullptr; // Плавная прокрутка левой колонки
     class SmoothScroller *m_rightScroller = nullptr; // ...и правой
+    class CardArc        *m_leftArc  = nullptr;      // Прокрутка «Дуга» левой колонки
+    class CardArc        *m_rightArc = nullptr;      // ...и правой
     bool         m_hidePending = false;  // Уход начался, окно спрячется через пару кадров
     int          m_hideSeq     = 0;      // Счётчик: отменяет устаревшее отложенное скрытие
     bool         m_historyDirty = true;  // true = история устарела, нужно перезагрузить при показе
@@ -256,6 +259,9 @@ private:
     bool         m_textsDone   = false;
     bool         m_mediaDone   = false;
     bool         m_searching   = false;     // Идёт поиск — тексты берём из m_searchResults
+    // Где остановились в Истории перед переходом в Закрепы
+    struct HistoryPos { int left = 0, right = 0, texts = 0, media = 0; bool valid = false; };
+    HistoryPos   m_histPos;
     QList<HistoryItem> m_searchResults;     // Все совпадения поиска (показываются порциями)
     class QTimer *m_searchTimer = nullptr; // Задержка поиска по истории (не искать на каждую букву)
     ImageViewer *m_imageViewer  = nullptr; // Полноэкранный просмотрщик (создаётся при первом использовании)
@@ -319,4 +325,5 @@ private:
     static constexpr int BASE_BOT   = 54;  // Высота нижней панели, px
     static constexpr int BASE_LEFT  = 300; // Ширина левой колонки, px
     static constexpr int BASE_RIGHT = 300; // Ширина правой колонки, px
+    static constexpr int ARC_AMP    = 26;  // Запас колонки к центру под выдвинутую мышью карточку, px
 };

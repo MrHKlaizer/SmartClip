@@ -71,6 +71,9 @@ set(SOURCES
     src/ui/SmartButton.h
     src/ui/Anim.h
     src/ui/SmoothScroll.h
+    src/ui/CardArc.h
+    src/ui/CardShadow.h
+    src/ui/ScrollTopButton.h
     src/ui/NavTabs.h
     src/ui/HotkeyEdit.h
     src/ui/ImageViewer.h
