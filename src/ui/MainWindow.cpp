@@ -1946,6 +1946,10 @@ void MainWindow::showWindow()
                         w->show();
         for (int i = 0; i < 3; ++i)
             QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        // Дуга — заново под текущий размер окна и прокрутку (иначе карточки,
+        // расставленные, пока окно было скрыто, могли остаться сдвинутыми)
+        if (m_leftArc)  m_leftArc->refresh();
+        if (m_rightArc) m_rightArc->refresh();
 
         // Сцену оставляем жить после появления, только если закрытие тоже
         // анимированное — тогда уход стартует мгновенно на готовой сцене

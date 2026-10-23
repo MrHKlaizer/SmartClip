@@ -303,6 +303,13 @@ private:
             if (!baseV.isValid()) continue;
             const QPoint base = baseV.toPoint();
             if (!m_reflow && (base.y() + push > bandBottom || base.y() + push + w->height() < bandTop)) {
+                // ...но и не оставляем её сдвинутой дугой: за краем она сразу
+                // встаёт ровно на своё место (её не видно — это ничего не стоит).
+                // Иначе карточка, ушедшая за край в «дуговом» положении, могла
+                // вернуться в середину колонки сдвинутой вбок.
+                const QPoint flat(base.x(), qRound(base.y() + push));
+                if (w->pos() != flat) w->move(flat);
+                if (CardShadowEffect *fx = fxOf(w)) fx->setLook(1.0, 1.0);
                 push += GROW * m_hover.value(w, 0.0) * w->height();
                 continue;
             }
