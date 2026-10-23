@@ -371,25 +371,101 @@ static void killProcessByName(const wchar_t* exeName) {
     Sleep(200);  // Даём Windows отпустить хэндлы файлов
 }
 
-static void restartExplorer() {
-    // Посылаем WM_QUIT в окно панели задач — Explorer сам себя перезапустит
-    // без прав администратора (в отличие от ShellExecuteW из elevated процесса)
-    HWND hTray = FindWindowW(L"Shell_TrayWnd", nullptr);
-    if (hTray) {
-        PostMessageW(hTray, WM_QUIT, 0, 0);
-        Sleep(1500);
-    } else {
-        killProcessByName(L"explorer.exe");
-        Sleep(800);
+// ── Перезапуск Проводника ───────────────────────────────────────
+// Было: Проводнику посылали «закройся», а потом запускали explorer.exe сами —
+// из установщика, а он работает С ПРАВАМИ АДМИНИСТРАТОРА. Проводник, запущенный
+// от администратора, не становится рабочим столом: ни обоев, ни панели задач,
+// тёмный экран до перезагрузки. Сам после «закройся» Windows его не поднимает.
+// Стало: заранее берём «пропуск» обычного пользователя у работающего Проводника
+// и новый Проводник запускаем с ним — как обычный пользователь.
+
+// Копия токена (прав) работающего Проводника — обычного пользователя, не админа
+static HANDLE shellUserToken(DWORD* pidOut) {
+    HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!tray) return nullptr;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(tray, &pid);
+    if (!pid) return nullptr;
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) return nullptr;
+    HANDLE tok = nullptr, prim = nullptr;
+    if (OpenProcessToken(proc, TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY, &tok)) {
+        DuplicateTokenEx(tok, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY |
+                              TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID,
+                         nullptr, SecurityImpersonation, TokenPrimary, &prim);
+        CloseHandle(tok);
+    }
+    CloseHandle(proc);
+    if (pidOut) *pidOut = pid;
+    return prim;
+}
+
+// Запустить программу от имени обычного пользователя (токен Проводника)
+static bool startAsShellUser(HANDLE token, const std::wstring& exe, const std::wstring& args, bool hiddenWait) {
+    std::wstring cmd = L"\"" + exe + L"\"" + (args.empty() ? std::wstring() : L" " + args);
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    wchar_t desktop[] = L"winsta0\\default";
+    si.lpDesktop = desktop;
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = hiddenWait ? SW_HIDE : SW_SHOWNORMAL;
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcessWithTokenW(token, 0, nullptr, buf.data(), hiddenWait ? CREATE_NO_WINDOW : 0,
+                                 nullptr, nullptr, &si, &pi))
+        return false;
+    if (hiddenWait) WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+static bool waitForTaskbar(int ms) {
+    for (int t = 0; t < ms; t += 200) {
+        if (FindWindowW(L"Shell_TrayWnd", nullptr)) return true;
+        Sleep(200);
+    }
+    return false;
+}
+
+// true — Проводник перезапущен; false — не трогали (Win+V заработает после перезагрузки)
+static bool restartExplorer() {
+    DWORD pid = 0;
+    HANDLE token = shellUserToken(&pid);
+    wchar_t sysDir[MAX_PATH];
+    GetSystemDirectoryW(sysDir, MAX_PATH);
+    // Проверяем ЗАРАНЕЕ, что запуск от имени пользователя работает (безобидной
+    // командой). Не работает — Проводник вообще не трогаем: лучше Win+V после
+    // перезагрузки, чем тёмный экран.
+    if (!token || !startAsShellUser(token, std::wstring(sysDir) + L"\\cmd.exe", L"/c exit", true)) {
+        if (token) CloseHandle(token);
+        return false;
     }
 
-    // Если Explorer не перезапустился сам — запускаем вручную через полный путь
-    if (!FindWindowW(L"Shell_TrayWnd", nullptr)) {
-        wchar_t winDir[MAX_PATH];
-        GetWindowsDirectoryW(winDir, MAX_PATH);
-        std::wstring exp = std::wstring(winDir) + L"\\explorer.exe";
-        ShellExecuteW(nullptr, nullptr, exp.c_str(), nullptr, nullptr, SW_SHOW);
+    // Закрываем Проводник по-хорошему; не закрылся за 6 с — принудительно
+    HANDLE proc = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, pid);
+    if (HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr))
+        PostMessageW(tray, WM_QUIT, 0, 0);
+    if (proc) {
+        if (WaitForSingleObject(proc, 6000) == WAIT_TIMEOUT) {
+            TerminateProcess(proc, 1);
+            WaitForSingleObject(proc, 3000);
+        }
+        CloseHandle(proc);
     }
+
+    // Иногда Windows поднимает его сама; нет — запускаем как обычный пользователь
+    bool ok = waitForTaskbar(2000);
+    wchar_t winDir[MAX_PATH];
+    GetWindowsDirectoryW(winDir, MAX_PATH);
+    const std::wstring explorer = std::wstring(winDir) + L"\\explorer.exe";
+    for (int attempt = 0; !ok && attempt < 2; ++attempt) {
+        startAsShellUser(token, explorer, std::wstring(), false);
+        ok = waitForTaskbar(10000);
+    }
+    CloseHandle(token);
+    return ok;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -793,7 +869,12 @@ static void doInstall(bool updateMode) {
             L"To make Win+V open SmartClip instead of the default clipboard,\n"
             L"Explorer needs to be restarted.\n\n"
             L"Restart Explorer now?");
-        if (restarted) restartExplorer();
+        if (restarted && !restartExplorer())
+            MessageBoxW(nullptr,
+                        L"Explorer could not be restarted safely, so it was left as is.\n\n"
+                        L"Win+V will open SmartClip after you restart the computer\n"
+                        L"(or sign out and back in).",
+                        APP_NAME, MB_OK | MB_ICONINFORMATION);
     }
 
     // Запускаем SmartClip (как обычный пользователь, не админ)

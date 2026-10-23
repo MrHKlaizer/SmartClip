@@ -235,7 +235,12 @@ static QImage fileThumbWork(const QString &filepath, QSize px)
                                               nullptr, IID_PPV_ARGS(&factory))) && factory) {
         HBITMAP hBmp = nullptr;
         const SIZE sz = { px.width(), px.height() };
-        if (SUCCEEDED(factory->GetImage(sz, SIIGBF_BIGGERSIZEOK, &hBmp)) && hBmp) {
+        // Картинкам и видео — превью, остальному — ЗНАЧОК программы: «миниатюра»
+        // документа Word у Windows — пустой белый лист, а значок — с буквой W
+        const QString cat = Files::category(filepath);
+        const SIIGBF flags = (cat == QLatin1String("image") || cat == QLatin1String("video"))
+                                 ? SIIGBF_BIGGERSIZEOK : (SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK);
+        if (SUCCEEDED(factory->GetImage(sz, flags, &hBmp)) && hBmp) {
             BITMAP bm = {};
             if (GetObject(hBmp, sizeof(bm), &bm) && bm.bmWidth > 0 && bm.bmHeight > 0) {
                 BITMAPINFOHEADER bi = {};
@@ -249,14 +254,22 @@ static QImage fileThumbWork(const QString &filepath, QSize px)
                 HDC dc = GetDC(nullptr);
                 GetDIBits(dc, hBmp, 0, bm.bmHeight, img.bits(), reinterpret_cast<BITMAPINFO *>(&bi), DIB_RGB_COLORS);
                 ReleaseDC(nullptr, dc);
-                // Есть прозрачность (значок) — сохраняем её
-                bool alpha = false;
-                for (int y = 0; y < img.height() && !alpha; ++y) {
+                // Прозрачность: значки приходят с ней, миниатюры фото — без неё
+                // (альфа вся 0). И бывает два вида прозрачности: «умноженная» и
+                // обычная — если цвет ярче своей прозрачности, это обычная.
+                // Раньше всё читалось как «умноженная», и края значков светились
+                // (зелёная кайма у ZIP, красная у PDF).
+                bool alpha = false, straight = false;
+                for (int y = 0; y < img.height(); ++y) {
                     const QRgb *line = reinterpret_cast<const QRgb *>(img.constScanLine(y));
-                    for (int x = 0; x < img.width(); ++x)
-                        if (qAlpha(line[x]) != 0) { alpha = true; break; }
+                    for (int x = 0; x < img.width(); ++x) {
+                        const int a = qAlpha(line[x]);
+                        if (a != 0) alpha = true;
+                        if (qRed(line[x]) > a || qGreen(line[x]) > a || qBlue(line[x]) > a) straight = true;
+                    }
                 }
-                if (alpha) img.reinterpretAsFormat(QImage::Format_ARGB32_Premultiplied);
+                if (alpha)
+                    img.reinterpretAsFormat(straight ? QImage::Format_ARGB32 : QImage::Format_ARGB32_Premultiplied);
             }
             DeleteObject(hBmp);
         }
