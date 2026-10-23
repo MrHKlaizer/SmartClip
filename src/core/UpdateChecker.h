@@ -97,5 +97,5 @@ private:
     // Вспомогательный метод: конвертирует строку версии в целое число для сравнения.
     // Пример: "1.2.3" → 1*1000000 + 2*1000 + 3 = 1002003
     // Так легко сравнивать: если remote > local — есть обновление.
-    static int versionToInt(const QString &ver);
+    static qint64 versionToInt(const QString &ver);
 };

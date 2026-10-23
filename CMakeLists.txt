@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 #  в «Программы и компоненты» и в имя файла релиза (make_release.bat).
 # ════════════════════════════════════════════════════════════════════════════
 #  Формат: «2.0» для больших версий, «2.0.1» для мелких правок.
-project(SmartClip VERSION 2.2.2 LANGUAGES CXX)
+project(SmartClip VERSION 2.2.3 LANGUAGES CXX)
 
 add_compile_definitions(SMARTCLIP_VERSION="${PROJECT_VERSION}")
 file(WRITE "${CMAKE_BINARY_DIR}/version.txt" "${PROJECT_VERSION}")

@@ -236,7 +236,7 @@ void UpdateChecker::handleRelease(const QJsonObject &obj)
     }
 
     // ── Сравниваем версии ─────────────────────────────────────────────────
-    // versionToInt("1.2.3") → 1002003
+    // versionToInt("2.2.3") → 2002003000 (см. versionToInt)
     // Если число на GitHub > нашего → есть обновление.
     if (versionToInt(version) > versionToInt(QStringLiteral(APP_VERSION))) {
         emit updateAvailable(version, downloadUrl, releaseNotes, sha256);
@@ -249,8 +249,9 @@ void UpdateChecker::handleRelease(const QJsonObject &obj)
 // ─── Большое или мелкое обновление ───────────────────────────────────────────
 bool UpdateChecker::isMajorUpdate(const QString &newVersion)
 {
-    // versionToInt: 2.0.1 → 2000001; деление на 1000 отбрасывает третье число
-    return versionToInt(newVersion) / 1000 > versionToInt(QStringLiteral(APP_VERSION)) / 1000;
+    // versionToInt: 2.0.1 → 2000001000; деление на 1 000 000 оставляет только
+    // первые два числа (2.0) — большое обновление, если поменялись они
+    return versionToInt(newVersion) / 1000000 > versionToInt(QStringLiteral(APP_VERSION)) / 1000000;
 }
 
 // ─── Описание на нужном языке ────────────────────────────────────────────────
@@ -294,20 +295,17 @@ QString UpdateChecker::localizedNotes(const QString &body, const QString &lang)
 }
 
 // ─── Конвертация версии в число ───────────────────────────────────────────────
-// Превращает строку "1.2.3" в целое число 1002003.
-// Так удобно сравнивать версии одним оператором >.
-// Алгоритм: берём по одной части через split('.') и накапливаем:
-//   "" → 0
-//   "1" → 0*1000 + 1 = 1
-//   "1.2" → 1*1000 + 2 = 1002
-//   "1.2.3" → 1002*1000 + 3 = 1002003
-int UpdateChecker::versionToInt(const QString &ver)
+// Превращает строку версии в одно число, чтобы сравнивать оператором >.
+// Четыре части (MAJOR.MINOR.PATCH.FIX), по 1000 на каждую:
+//   "2.2.3"   → 2 002 003 000
+//   "2.2.3.1" → 2 002 003 001  (мелкий фикс после 2.2.3 — тоже «новее»)
+// Недостающие части — нули: "1.1" = 1.1.0.0, а не «меньше, чем 1.0.0».
+// (До 2.2.3 считались только три части, и 2.2.2.1 казалась бы равной 2.2.2.)
+qint64 UpdateChecker::versionToInt(const QString &ver)
 {
-    const QStringList parts = ver.split('.');  // ["1", "2", "3"]
-    int result = 0;
-    // Всегда ровно 3 части (MAJOR.MINOR.PATCH): недостающие считаем нулями,
-    // иначе "1.1" дало бы 1001 и оказалось бы «меньше» чем "1.0.0" = 1000000.
-    for (int i = 0; i < 3; ++i)
+    const QStringList parts = ver.split('.');  // ["2", "2", "3", "1"]
+    qint64 result = 0;
+    for (int i = 0; i < 4; ++i)
         result = result * 1000 + parts.value(i).toInt();
     return result;
 }
