@@ -267,8 +267,11 @@ int main(int argc, char *argv[])
             // приходилось ещё раз). Открыто окно настроек/диалог — как раньше.
             QScreen *cursorScreen = QGuiApplication::screenAt(QCursor::pos());
             if (cursorScreen && cursorScreen != window.screen() && !QApplication::activeModalWidget()) {
-                window.hide();        // С прошлого монитора — сразу
-                window.showWindow();  // На мониторе с мышью — с обычной анимацией
+                window.hide();  // С прошлого монитора — сразу
+                // На мониторе с мышью — с обычной анимацией, на следующем шаге,
+                // когда окно уже точно спрятано (иначе оно мелькало целиком,
+                // а анимация открытия играла поверх)
+                QTimer::singleShot(0, &window, [&window]() { if (!window.isOpen()) window.showWindow(); });
                 return;
             }
             // Закрываем модальный диалог если открыт (Настройки, диалог обновления...).

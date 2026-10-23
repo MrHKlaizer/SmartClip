@@ -1831,4 +1831,11 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <translation>🗂  До вкладки</translation>
     </message>
 </context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <source>Инфо</source>
+        <translation>Інфо</translation>
+    </message>
+</context>
 </TS>
