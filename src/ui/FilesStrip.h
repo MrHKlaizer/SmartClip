@@ -175,6 +175,8 @@ public:
         m_tick.setTimerType(Qt::PreciseTimer);
         m_tick.setInterval(6);
         connect(&m_tick, &QTimer::timeout, this, [this]() { tick(); });
+        m_growTick.setTimerType(Qt::PreciseTimer);
+        connect(&m_growTick, &QTimer::timeout, this, [this]() { growStep(); });
         // Ушла ли мышь — проверяем курсор сами: над полоской окно прозрачное, и
         // Windows не всегда сообщает об уходе. Небольшой запас по краям и снизу
         // (до поиска): чуть промахнулся — полоска не закрывается.
@@ -289,6 +291,8 @@ public:
         m_tick.stop();
         m_hoverPoll.stop();
         m_t = m_target = 0;
+        m_holdBody = false;
+        m_growTick.stop();
         m_scroll = 0;
         m_hover = -1;
         m_outside = 0;
@@ -502,13 +506,18 @@ protected:
         p.setOpacity(1.0);
 
         if (m_t < 0.4) {
-            // Свёрнута — маленькие значки в ряд справа от заголовка (тают при раскрытии)
+            // Свёрнута — маленькие значки в ряд после заголовка, слева направо,
+            // как читаешь: самый свежий — первый (тают при раскрытии)
             const int sz = s(22), gap = s(5);
-            int x = width() - s(12) - sz;
-            const int minX = s(190);
+            const int maxX = width() - s(12);
+            int x = s(190);
             p.setOpacity(1.0 - m_t / 0.4);
-            for (int i = 0; i < m_items.size() && x >= minX; ++i, x -= sz + gap)
+            for (int i = 0; i < m_items.size() && x + sz <= maxX; ++i, x += sz + gap)
                 drawThumb(p, m_items[i], QRect(x, (s(HeadH) - sz) / 2, sz, sz), s(4));
+            p.setPen(QPen(QColor(255, 255, 255, 22), 1));
+            p.setBrush(QColor(255, 255, 255, 8));
+            for (; x + sz <= maxX; x += sz + gap)  // Пустые места — бледные заглушки
+                p.drawRoundedRect(QRectF(x + 0.5, (s(HeadH) - sz) / 2 + 0.5, sz - 1, sz - 1), s(4), s(4));
             p.setOpacity(1.0);
             if (m_t <= 0.0) return;
         }
@@ -534,15 +543,23 @@ protected:
         const QRect body = bodyRect();
         p.setClipRect(body, Qt::IntersectClip);
         if (m_items.isEmpty()) {
+            drawGhostItems(p, body);  // Пустая вкладка — тоже не пустота, а пустые плитки
             p.setFont(f);
-            p.setPen(QColor(255, 255, 255, 110));
             const QString msg = (m_pinsMode && m_all.isEmpty())
                 ? QApplication::translate("FilesStrip", "Пока нет закреплённых файлов.\n"
                                                         "Закрепить: История → правый клик по файлу внизу → «Закрепить».")
                 : QApplication::translate("FilesStrip", "Ничего не найдено");
-            p.drawText(body.adjusted(s(12), 0, -s(12), 0), Qt::AlignCenter | Qt::TextWordWrap, msg);
+            // Надпись — на тёмной подложке, чтобы читалась поверх заглушек
+            const QRect tr = QFontMetrics(f).boundingRect(body.adjusted(s(24), 0, -s(24), 0),
+                                                          Qt::AlignCenter | Qt::TextWordWrap, msg);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(18, 18, 30, 230));
+            p.drawRoundedRect(QRectF(tr.adjusted(-s(14), -s(8), s(14), s(8))), s(10), s(10));
+            p.setPen(QColor(255, 255, 255, 130));
+            p.drawText(body.adjusted(s(24), 0, -s(24), 0), Qt::AlignCenter | Qt::TextWordWrap, msg);
             return;
         }
+        drawGhostItems(p, body);
         for (int i = 0; i < m_items.size(); ++i) {
             const QRect ir = itemRect(i);
             if (!ir.intersects(body)) continue;
@@ -599,8 +616,13 @@ private:
         // Раскрытие чуть дольше и мягче, сворачивание — не медленнее, но без рывка
         m_duration = qMax(1, int(Anim::ms(Anim::Kind::Menu, on ? 400 : 260) * qAbs(target - m_t)));
         m_outside = 0;
-        if (on) m_hoverPoll.start();
-        else m_hover = -1;
+        if (on) {
+            m_hoverPoll.start();
+            if (!m_holdBody) {  // Открываемся — эту высоту и держим, пока открыты
+                m_holdBody = true;
+                m_shownBody = m_bodyTarget = naturalBody();
+            }
+        } else m_hover = -1;
         if (!Anim::enabled(Anim::Kind::Menu)) { m_t = target; finish(); return; }
         m_clock.restart();
         m_tick.setInterval(Anim::frameMs(this));  // По частоте монитора
@@ -621,8 +643,65 @@ private:
     void finish()
     {
         m_tick.stop();
-        if (m_t <= 0.0) m_scroll = 0;
+        if (m_t <= 0.0) {
+            m_scroll = 0;
+            releaseBody();  // Свернулась — дальше снова по размеру вкладки
+        }
         update();
+    }
+
+    // Подрасти до target (плавно)
+    void growBody(int target)
+    {
+        m_bodyTarget = target;
+        m_growFrom = m_shownBody;
+        m_growClock.restart();
+        m_growDuration = qMax(1, Anim::ms(Anim::Kind::Menu, 220));
+        if (!Anim::enabled(Anim::Kind::Menu)) { m_shownBody = target; update(); return; }
+        m_growTick.setInterval(Anim::frameMs(this));
+        m_growTick.start();
+    }
+
+    void growStep()
+    {
+        const qreal k = qMin(1.0, m_growClock.elapsed() / qreal(m_growDuration));
+        m_shownBody = m_growFrom + (m_bodyTarget - m_growFrom) * QEasingCurve(QEasingCurve::OutCubic).valueForProgress(k);
+        update();
+        if (k >= 1.0) m_growTick.stop();
+    }
+
+    void releaseBody()
+    {
+        if (!m_holdBody) return;
+        m_holdBody = false;
+        m_growTick.stop();
+        relayout();
+    }
+
+    // Лишнее место (вкладка, где файлов меньше) — бледные пустые плитки,
+    // как фантомные карточки в колонках, а не просто пустота
+    void drawGhostItems(QPainter &p, const QRect &body)
+    {
+        p.save();
+        const qreal base = p.opacity();
+        for (int i = int(m_items.size()); i < int(m_items.size()) + 200; ++i) {
+            const QRect ir = itemRect(i);
+            if (ir.top() >= body.bottom()) break;
+            if (!body.intersects(ir)) continue;
+            p.setOpacity(base * 0.9);
+            p.setPen(QPen(QColor(255, 255, 255, 26), 1));
+            p.setBrush(QColor(255, 255, 255, 9));
+            if (m_view == QLatin1String("list")) {
+                p.drawRoundedRect(QRectF(ir).adjusted(0.5, 0.5, -0.5, -0.5), s(8), s(8));
+            } else {
+                const int tsz = s(56);
+                p.drawRoundedRect(QRectF(ir.center().x() - tsz / 2, ir.top() + s(6), tsz, tsz), s(8), s(8));
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(255, 255, 255, 16));
+                p.drawRoundedRect(QRectF(ir.center().x() - s(28), ir.top() + s(70), s(56), s(6)), s(3), s(3));
+            }
+        }
+        p.restore();
     }
 
     // ── Вкладки ──────────────────────────────────────────────────────────────
@@ -824,14 +903,21 @@ private:
     // ── Раскладка ────────────────────────────────────────────────────────────
     int fullBodyHeight() const
     {
-        if (m_items.isEmpty()) return s(m_pinsMode && m_all.isEmpty() ? 80 : 60);
+        if (m_items.isEmpty()) return m_view == QLatin1String("list") ? s(80) : s(108);  // Ровно ряд заглушек
         if (m_view == QLatin1String("list")) return m_items.size() * s(34) + s(8);
         const int cols = qMax(1, (width() - s(16)) / s(92));
         return int((m_items.size() + cols - 1) / cols) * s(100) + s(8);
     }
     int maxBody() const { return qMax(s(120), qMin(s(MaxBody), m_center.height() * 6 / 10)); }
-    int bodyHeight() const { return qMin(fullBodyHeight(), maxBody()); }
-    int maxScroll() const { return qMax(0, fullBodyHeight() - maxBody()); }
+    // Сколько места нужно файлам открытой вкладки
+    int naturalBody() const { return qMin(fullBodyHeight(), maxBody()); }
+    // Пока полоска открыта, её высота не уменьшается: переключился на вкладку,
+    // где файлов меньше, — полоска не съёживается и вкладки не уезжают из-под
+    // мыши (раньше она от этого сворачивалась). Больше файлов — плавно
+    // подрастает. Свернулась — в следующий раз откроется по размеру вкладки.
+    int bodyHeight() const { return m_holdBody ? qRound(m_shownBody) : naturalBody(); }
+    int geometryBody() const { return m_holdBody ? qMax(m_bodyTarget, naturalBody()) : naturalBody(); }
+    int maxScroll() const { return qMax(0, fullBodyHeight() - bodyHeight()); }
     // Видимая высота сейчас и где начинается видимая часть
     int curH() const { return s(HeadH) + qRound(bodyHeight() * m_t); }
     int top() const { return height() - curH(); }
@@ -878,7 +964,8 @@ private:
         const bool show = (m_pinsMode || (m_enabled && !m_all.isEmpty())) && m_center.width() > s(260);
         if (!show) { hide(); return; }
         const int w = qMin(m_center.width() - s(40), s(720));
-        const int h = s(HeadH) + bodyHeight();  // Размер не меняется во время анимации
+        const int h = s(HeadH) + geometryBody();  // Размер не меняется во время анимации
+        if (m_holdBody && naturalBody() > m_bodyTarget) growBody(naturalBody());
         setGeometry(m_center.center().x() - w / 2, m_center.bottom() - s(6) - h, w, h);
         if (!isVisible()) { QWidget::show(); raise(); }
         update();
@@ -1010,6 +1097,11 @@ private:
     QString m_tabHistory, m_tabPins;  // Открытая вкладка
     int m_tabScroll = 0;
     int m_hoverTab = -1;
+    bool m_holdBody = false;       // Открыта — высоту держим (см. bodyHeight)
+    qreal m_shownBody = 0, m_growFrom = 0;
+    int m_bodyTarget = 0, m_growDuration = 1;
+    QElapsedTimer m_growClock;
+    QTimer m_growTick;
     QList<Files::Entry> m_carry;   // Что в руке: первый — взятый, дальше — добавленные
     QPointer<DragGhost> m_ghost;
     QTimer m_holdTimer;

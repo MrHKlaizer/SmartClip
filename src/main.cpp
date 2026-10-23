@@ -22,7 +22,9 @@
 #include <QFile>              // Работа с файлами
 #include <QProcess>           // Запуск нового процесса (для перезапуска после смены языка)
 #include <QDateTime>          // Дата и время
-#include <QTimer>             // Таймер (для отложенной проверки обновлений)
+#include <QTimer>
+#include <QScreen>             // На каком мониторе окно и мышь
+#include <QCursor>             // Таймер (для отложенной проверки обновлений)
 #include <QRegularExpression> // Регулярные выражения (для масштабирования QSS)
 #include <QIcon>              // Иконка приложения
 #include <QSystemTrayIcon>    // Иконка в системном трее (область уведомлений)
@@ -260,6 +262,15 @@ int main(int argc, char *argv[])
     // Нажатие хоткея: если окно открыто — закрыть, если закрыто — открыть.
     QObject::connect(&hotkey, &HotkeyManager::hotkeyPressed, [&]() {
         if (window.isOpen()) {
+            // Открыт на одном мониторе, а мышь — на другом: не закрываем, а
+            // переносим туда, где мышь (раньше просто закрывался, и нажимать
+            // приходилось ещё раз). Открыто окно настроек/диалог — как раньше.
+            QScreen *cursorScreen = QGuiApplication::screenAt(QCursor::pos());
+            if (cursorScreen && cursorScreen != window.screen() && !QApplication::activeModalWidget()) {
+                window.hide();        // С прошлого монитора — сразу
+                window.showWindow();  // На мониторе с мышью — с обычной анимацией
+                return;
+            }
             // Закрываем модальный диалог если открыт (Настройки, диалог обновления...).
             // activeModalWidget() — возвращает верхнее модальное окно или nullptr.
             if (QWidget *modal = QApplication::activeModalWidget())
