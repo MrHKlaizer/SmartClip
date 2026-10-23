@@ -76,6 +76,7 @@ public:
         SetWindowLongPtrW(h, GWL_EXSTYLE, GetWindowLongPtrW(h, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
         SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         m_clock.start();
+        m_tick.setInterval(Anim::frameMs(this));  // По частоте монитора
         m_tick.start();
         tick();
         refreshControls();
@@ -90,6 +91,7 @@ public:
         m_duration = Anim::enabled(Anim::Kind::Viewer) ? qMax(1, int(Anim::ms(Anim::Kind::Viewer, 220) * m_t)) : 1;
         m_curve = QEasingCurve(QEasingCurve::InOutCubic);
         m_clock.start();
+        m_tick.setInterval(Anim::frameMs(this));  // По частоте монитора
         m_tick.start();
     }
 

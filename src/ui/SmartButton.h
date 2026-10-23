@@ -25,6 +25,8 @@
 // Позволяет точно обрезать область отрисовки → чистые углы без артефактов.
 #include <QPainterPath>
 #include <QFontDatabase>
+#include <QVariantAnimation>
+#include <QEasingCurve>
 
 // ─── Класс SmartButton ────────────────────────────────────────────────────────
 // Полностью кастомная кнопка — Qt не рисует её стандартным способом.
@@ -41,6 +43,20 @@ public:
     {
         setAutoFillBackground(false); // Отключаем автозаполнение фона Qt — рисуем сами
         setCursor(Qt::PointingHandCursor); // Курсор-указатель при наведении (как у ссылки)
+
+        // Нажатие видно: кнопка чуть «вдавливается» (меньше и темнее), а
+        // отпустили — мягко пружинит обратно, на миг чуть больше обычного
+
+        connect(&m_pressAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+            m_press = v.toReal();
+            update();
+        });
+        connect(this, &QPushButton::pressed, this, [this]() { animatePress(1.0, 70, QEasingCurve::OutCubic); });
+        connect(this, &QPushButton::released, this, [this]() {
+            QEasingCurve spring(QEasingCurve::OutBack);
+            spring.setOvershoot(3.0);
+            animatePress(0.0, 260, spring);
+        });
     }
 
     // Установить нормальный стиль кнопки (когда не выбрана/не активна).
@@ -116,6 +132,20 @@ protected:
         QColor bg      = m_active ? m_activeBg   : m_bg;
         QColor textCol = m_active ? m_activeText : m_textColor;
 
+        // Нажата: меньше (до -6%) и темнее; при отскоке m_press < 0 — чуть больше
+        if (m_press != 0.0) {
+            const qreal k = 1.0 - 0.06 * m_press;
+            p.translate(width() / 2.0, height() / 2.0);
+            p.scale(k, k);
+            p.translate(-width() / 2.0, -height() / 2.0);
+            if (m_press > 0) {
+                const int a = bg.alpha();
+                bg = bg.darker(100 + int(45 * m_press));
+                bg.setAlpha(a);
+                textCol.setAlphaF(textCol.alphaF() * (1.0 - 0.2 * m_press));
+            }
+        }
+
         // Рамка чуть ярче при наведении или в активном состоянии
         QColor border  = (hovered || m_active) ? QColor(255, 255, 255, 90)
                                                : QColor(255, 255, 255, 55);
@@ -179,4 +209,16 @@ private:
     QChar  m_glyph;          // Значок вместо текста (пусто = обычный текст)
     int    m_glyphPx = 14;   // Размер значка в пикселях
     bool   m_badge = false;  // Точка-значок в углу (например, есть обновление)
+    qreal  m_press = 0.0;    // Вдавленность: 0 — обычная, 1 — нажата (см. animatePress)
+    QVariantAnimation m_pressAnim;
+
+    void animatePress(qreal to, int ms, const QEasingCurve &curve)
+    {
+        m_pressAnim.stop();
+        m_pressAnim.setStartValue(m_press);
+        m_pressAnim.setEndValue(to);
+        m_pressAnim.setDuration(ms);
+        m_pressAnim.setEasingCurve(curve);
+        m_pressAnim.start();
+    }
 };

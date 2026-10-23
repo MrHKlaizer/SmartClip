@@ -83,6 +83,13 @@ public:
     void setRestartRequested(bool b)
         { m_s.setValue("system/restartRequested", b); m_s.sync(); }
 
+    // Открыть окно сразу после запуска — SmartClip перезапустили из него самого
+    // (язык, масштаб, права, обновление): видно, что перезапуск прошёл
+    bool openOnStart() const
+        { return m_s.value("system/openOnStart", false).toBool(); }
+    void setOpenOnStart(bool b)
+        { m_s.setValue("system/openOnStart", b); m_s.sync(); }
+
     // ─── Настройки истории (раздел [history]) ─────────────────────────────────
 
     // Лимиты истории — ОТДЕЛЬНО для текстов и для картинок (картинки занимают
@@ -266,6 +273,15 @@ public:
         { return qBound(5, m_s.value("files/max", 30).toInt(), 100); }
     void setFilesMax(int n)
         { m_s.setValue("files/max", n); m_s.sync(); }
+
+    // Вкладки полоски файлов в папке закрепов (folder "" — «Все»)
+    QStringList pinFileTabs(const QString &folder) const
+        { return m_s.value(pinTabsKey(folder)).toStringList(); }
+    void setPinFileTabs(const QString &folder, const QStringList &l)
+        { m_s.setValue(pinTabsKey(folder), l); m_s.sync(); }
+    static QString pinTabsKey(const QString &folder)
+        { return "files/pinTabs/" + (folder.isEmpty() ? QStringLiteral("root")
+                                                      : QString::fromLatin1(folder.toUtf8().toHex())); }
 
     // Вид раскрытой полоски: "tiles" — плитки, "list" — список
     QString filesView() const

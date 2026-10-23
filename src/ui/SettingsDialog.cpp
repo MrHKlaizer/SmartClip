@@ -1952,6 +1952,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
                               "Перезапустить сейчас?"))) {
                 // setRestartRequested → main.cpp перезапустит SmartClip через QProcess::startDetached
                 AppSettings::get().setRestartRequested(true);
+                AppSettings::get().setOpenOnStart(true);  // Новая копия сама откроет окно
                 // singleShot(0) — выход из цикла событий после завершения текущего обработчика
                 QTimer::singleShot(0, qApp, &QCoreApplication::quit);
             }
