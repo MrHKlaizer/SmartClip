@@ -190,10 +190,12 @@ void UpdateChecker::fail(const QString &message)
 void UpdateChecker::handleRelease(const QJsonObject &obj)
 {
     // ── Читаем номер версии ────────────────────────────────────────────────
-    // Тег может быть любого формата: "v1.2.3", "SmartClip_Installer_v1.2.3"
-    // Regex вытащит "X.Y.Z" из любого варианта.
+    // Тег может быть любого формата: "v1.2.3", "v2.2.3.1", "SmartClip_Installer_v1.2.3"
+    // Regex вытащит "X.Y", "X.Y.Z" или "X.Y.Z.W" из любого варианта.
+    // (До 2.2.4 брались максимум три числа: из v2.2.3.1 получалось 2.2.3, и
+    //  2.2.3 считала себя актуальной.)
     QString tag = obj[QStringLiteral("tag_name")].toString();
-    QRegularExpression versionRe(QStringLiteral(R"((\d+(?:\.\d+){1,2}))"));  // "1.2" или "1.2.3"
+    QRegularExpression versionRe(QStringLiteral(R"((\d+(?:\.\d+){1,3}))"));
     auto vMatch = versionRe.match(tag);
     QString version = vMatch.hasMatch() ? vMatch.captured(1) : tag;
 

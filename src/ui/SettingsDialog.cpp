@@ -1415,16 +1415,6 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     betaLayout->setContentsMargins(14, 14, 14, 14);
     betaLayout->setSpacing(12);
 
-    // Предупреждение что функции экспериментальные
-    auto *betaHintLabel = new QLabel(
-        tr("⚡ Бета-функции — могут работать нестабильно.\n"
-           "Присылай баги, будем фиксить!"), betaTab);
-    betaHintLabel->setWordWrap(true);
-    betaHintLabel->setStyleSheet(
-        "color:#ffcc44;font-size:11px;"
-        "background:rgba(50,40,10,120);border:1px solid rgba(200,160,0,60);"
-        "border-radius:6px;padding:7px 10px;");
-
     // ── Автозахват записей экрана ─────────────────────────────────────────────
     // VideoWatcher следит за папкой и добавляет новые видео в историю.
     auto *videoGroup  = new QGroupBox(tr("Автозахват записей и аудио"), betaTab);
@@ -1626,7 +1616,6 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     creditsLbl->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
     aboutLayout->addWidget(creditsLbl);
 
-    betaLayout->addWidget(betaHintLabel);
     betaLayout->addWidget(feedbackBtn);
     betaLayout->addWidget(aboutGroup);
     betaLayout->addStretch();
@@ -1759,7 +1748,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     tabs->addTab(filesScroll, tr("Файлы"), QChar(0xE8A5));
     tabs->addTab(ioTab, tr("Экспорт и импорт"), QChar(0xE8B7));
-    tabs->addTab(betaTab, tr("Дополнительно"), QChar(0xE946));
+    tabs->addTab(betaTab, tr("Инфо"), QChar(0xE946));  // О программе, обратная связь, обновления
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Логика экспорта (JSON-файл с закрепами, профилями, настройками)

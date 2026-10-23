@@ -1831,4 +1831,11 @@ To pin: History → right-click a file at the bottom → "Pin".</translation>
         <translation>🗂  Move to tab</translation>
     </message>
 </context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <source>Инфо</source>
+        <translation>Info</translation>
+    </message>
+</context>
 </TS>

@@ -1831,4 +1831,11 @@ Anheften: Verlauf → Rechtsklick auf eine Datei unten → „Anheften“.</tran
         <translation>🗂  In Tab verschieben</translation>
     </message>
 </context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <source>Инфо</source>
+        <translation>Info</translation>
+    </message>
+</context>
 </TS>
