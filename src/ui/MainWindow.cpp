@@ -42,7 +42,11 @@
 #include "DateRuler.h"         // Шкала дат при прокрутке
 #include "MediaCards.h"        // Аудио и видео прямо в карточках (2.1)
 #include "VideoViewer.h"
-#include "FilesStrip.h"       // Большой просмотр видео
+#include "FilesStrip.h"
+#include "DragSqueeze.h"
+#include "GhostCards.h"
+#include "FolderSlide.h"
+#include <QImageReader>       // Большой просмотр видео
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
 #include "core/Database.h"      // SQLite CRUD
 #include "core/AppSettings.h"   // Синглтон настроек
@@ -296,6 +300,15 @@ static Media::VideoSurface *setupVideoCard(QLabel *card, const QString &name, co
 
 // ─── Вспомогательные UI-компоненты ──────────────────────────────────────────
 
+// Колонка с прокруткой, которой можно задать отступ сверху (под полосу папок
+// в Закрепах): карточки при прокрутке уходят под отступ, а не под кнопки папок
+class ColumnScroll : public QScrollArea
+{
+public:
+    using QScrollArea::QScrollArea;
+    using QAbstractScrollArea::setViewportMargins;
+};
+
 // applyCardShadow — тень под карточками-плитками (QGraphicsDropShadowEffect).
 // blurRadius=40 даёт мягкую размытую тень, offset(0,8) смещает вниз.
 static void applyCardShadow(QWidget *w)
@@ -539,6 +552,94 @@ static bool confirmDialog(QWidget *parent,
     QObject::connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
 
     return dlg.exec() == QDialog::Accepted;
+}
+
+// Длительность аудио/видео из свойств файла (как в Проводнике), мс; 0 — нет
+static qint64 mediaDurationMs(const QString &path)
+{
+    qint64 ms = 0;
+    IShellItem2 *item = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(QDir::toNativeSeparators(path).toStdWString().c_str(),
+                                              nullptr, IID_PPV_ARGS(&item))) && item) {
+        static const PROPERTYKEY kDuration = { { 0x64440490, 0x4C8B, 0x11D1, { 0x8B, 0x70, 0x08, 0x00, 0x36, 0xB1, 0x1A, 0x03 } }, 3 };
+        ULONGLONG d = 0;
+        if (SUCCEEDED(item->GetUInt64(kDuration, &d))) ms = qint64(d / 10000);
+        item->Release();
+    }
+    return ms;
+}
+
+// «Свойства» файла из полоски: имя, где лежит, тип, размер, даты и т.п.
+static void fileInfoDialog(QWidget *parent, const QString &path)
+{
+    const QFileInfo fi(path);
+    AppDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Свойства"));
+    dlg.setMinimumWidth(420);
+    auto *vl = new QVBoxLayout(dlg.body());
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(14);
+    auto *grid = new QGridLayout();
+    grid->setHorizontalSpacing(16);
+    grid->setVerticalSpacing(8);
+    int row = 0;
+    auto add = [&](const QString &key, const QString &value) {
+        auto *k = new QLabel(key, dlg.body());
+        k->setStyleSheet("color: rgba(255,255,255,120); font-size: 12px; background: transparent;");
+        k->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        auto *v = new QLabel(value, dlg.body());
+        v->setStyleSheet("color: #e8e8f0; font-size: 12px; background: transparent;");
+        v->setWordWrap(true);
+        v->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        grid->addWidget(k, row, 0);
+        grid->addWidget(v, row, 1);
+        ++row;
+    };
+    const QString cat = Files::category(path);
+    const QString kind = cat == "image"    ? QObject::tr("Картинка")
+                       : cat == "video"    ? QObject::tr("Видео")
+                       : cat == "audio"    ? QObject::tr("Аудио")
+                       : cat == "docs"     ? QObject::tr("Документ")
+                       : cat == "archives" ? QObject::tr("Архив")
+                       : cat == "programs" ? QObject::tr("Программа")
+                                           : QObject::tr("Файл");
+    const QLocale loc;
+    add(QObject::tr("Имя"), fi.fileName());
+    add(QObject::tr("Папка"), QDir::toNativeSeparators(fi.absolutePath()));
+    if (!fi.exists()) {
+        add(QObject::tr("Состояние"), QObject::tr("Файл не найден — его переместили или удалили"));
+    } else {
+        add(QObject::tr("Тип"), fi.suffix().isEmpty() ? kind : kind + "  (." + fi.suffix().toUpper() + ")");
+        add(QObject::tr("Размер"), QObject::tr("%1  (%2 байт)").arg(Files::sizeText(fi.size()),
+                                                                   loc.toString(fi.size())));
+        if (cat == "image") {
+            const QSize sz = QImageReader(path).size();
+            if (sz.isValid()) add(QObject::tr("Разрешение"), QString("%1 × %2").arg(sz.width()).arg(sz.height()));
+        }
+        if (cat == "audio" || cat == "video") {
+            const qint64 ms = mediaDurationMs(path);
+            if (ms > 0) add(QObject::tr("Длительность"), Media::timeText(ms));
+        }
+        if (fi.birthTime().isValid())
+            add(QObject::tr("Создан"), loc.toString(fi.birthTime(), QLocale::ShortFormat));
+        add(QObject::tr("Изменён"), loc.toString(fi.lastModified(), QLocale::ShortFormat));
+    }
+    grid->setColumnStretch(1, 1);
+    vl->addLayout(grid);
+
+    auto *btnRow = new QHBoxLayout();
+    auto *okBtn = new QPushButton(QObject::tr("Закрыть"), dlg.body());
+    okBtn->setStyleSheet(
+        "QPushButton{background:rgba(28,28,44,245);color:rgba(160,200,255,240);"
+        "border:1px solid rgba(120,160,255,160);border-radius:6px;"
+        "padding:5px 18px;font-size:13px;min-width:60px;}"
+        "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}");
+    okBtn->setCursor(Qt::PointingHandCursor);
+    btnRow->addStretch();
+    btnRow->addWidget(okBtn);
+    vl->addLayout(btnRow);
+    QObject::connect(okBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+    dlg.exec();
 }
 
 // Выбор элемента из списка в нашем стиле — замена QInputDialog::getItem
@@ -1038,6 +1139,23 @@ MainWindow::MainWindow(Database *db, QWidget *parent)
         // Проверяем на следующем шаге, когда активное окно уже сменилось
         QTimer::singleShot(0, this, [this]() { closeAllOnDeactivate(); });
     });
+
+    // Подготовить окно заранее, пока оно скрыто (см. prewarm)
+    QTimer::singleShot(1500, this, &MainWindow::prewarm);
+}
+
+// Первое открытие окна было долгим (~0,3 с): Qt один раз готовит оформление
+// всех кнопок и карточек (стили, раскладку). Делаем это заранее, вскоре после
+// запуска, пока окно скрыто, — и первое открытие такое же быстрое, как следующие.
+void MainWindow::prewarm()
+{
+    if (isVisible()) return;
+    if (m_viewMode == ViewMode::History && m_historyDirty) {
+        refreshHistory();
+        m_historyDirty = false;
+    }
+    ensurePolished();  // Стили — у окна и всех его элементов
+    if (layout()) layout()->activate();
 }
 
 
@@ -1164,7 +1282,7 @@ void MainWindow::setupLayout()
     middleLayout->setSpacing(0);
 
     // Левая колонка — тексты и аудио
-    m_leftScroll = new QScrollArea(this);
+    m_leftScroll = new ColumnScroll(this);
     m_leftScroll->setObjectName("leftScroll");
     // Шире на запас к центру: выдвинутая мышью карточка не должна обрезаться краем колонки
     m_leftScroll->setFixedWidth(sc(BASE_LEFT) + sc(ARC_AMP));
@@ -1228,6 +1346,10 @@ void MainWindow::setupLayout()
                         [this]() { m_leftScroller->scrollTo(0); });
     new ScrollTopButton(m_rightScroll, m_rightLayout, 14 + sc(ARC_AMP) + (sc(BASE_RIGHT) - 36) / 2,
                         sc(38), [this]() { m_rightScroller->scrollTo(0); });
+
+    // Пустое место под карточками — бледные «фантомные» карточки до низа экрана
+    new GhostCards(m_leftScroll,  m_leftLayout,  false, m_scale);
+    new GhostCards(m_rightScroll, m_rightLayout, true,  m_scale);
 
     // Шкала дат сбоку колонки — проявляется, пока листаешь
     // (зажать у линии шкалы и вести — быстрая перемотка по всей колонке)
@@ -1297,24 +1419,50 @@ void MainWindow::setupLayout()
     });
 
     mainLayout->addWidget(m_topPanel);
-    mainLayout->addWidget(m_foldersBar);   // скрыта по умолчанию
+    // Полоса папок — не на всю ширину, а только над левой колонкой (до правой):
+    // правая колонка в Закрепах начинается так же высоко, как в Истории.
+    // Левой колонке в Закрепах даём сверху отступ под полосу (см. switchView).
+    m_foldersBar->raise();
+    m_rightScroll->installEventFilter(this);
+    m_topPanel->installEventFilter(this);
     mainLayout->addLayout(middleLayout);
     mainLayout->addWidget(m_bottomPanel);
 
     // ── Свежие файлы — внизу по центру, над поиском (и в Истории, и в Закрепах)
     m_filesStrip = new FilesStrip(this, m_scale, &fileThumbWork);
-    m_filesStrip->onPick = [this](const QString &f) { pasteFile(f); };
-    m_filesStrip->onDropped = [this]() { hideAnimated(); };  // Перетащили в другую программу
-    m_filesStrip->onMenu = [this](const QString &f, const QPoint &globalPos) {
-        RoundedMenu menu(this);
-        menu.addAction(tr("📋  Вставить"), [this, f]() { pasteFile(f); });
-        menu.addAction(tr("Открыть"), [f]() { QDesktopServices::openUrl(QUrl::fromLocalFile(f)); });
-        menu.addAction(tr("📂  Показать в папке"), [f]() {
-            QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(f)});
-        });
-        menu.exec(globalPos);
+    m_filesStrip->onPick = [this](const Files::Entry &e) {
+        if (e.pinId) m_db->touchPin(e.pinId);  // Для «недавних» во вкладке «Все»
+        pasteFile(e.path);
     };
+    m_filesStrip->onMenu = [this](const Files::Entry &e, const QPoint &globalPos) { showFileMenu(e, globalPos); };
+    m_filesStrip->onDragStarted  = [this]() { startFileDragSqueeze(); };
+    m_filesStrip->onAddTab    = [this]() { addFilesTab(); };
+    m_filesStrip->onTabMenu   = [this](const QString &key, const QPoint &g) { showFilesTabMenu(key, g); };
+    m_filesStrip->onMoveToTab = [this](const QList<Files::Entry> &f, const QString &t) { moveFilesToTab(f, t); };
+    m_filesStrip->onDragFinished = [this](bool) { endFileDragSqueeze(); };
     m_centerSpacer->installEventFilter(this);  // Полоска стоит по центру середины окна
+
+    // Импорт видео и аудио — только в Закрепах, маленькие квадратные кнопки
+    // по бокам полоски файлов; добавляют в ТЕКУЩУЮ папку закрепов
+    auto importBtn = [this](const QString &glyph, const QColor &bg, const QColor &fg, const QString &tip) {
+        auto *b = new SmartButton(glyph, this);
+        b->setFixedSize(28, 28);
+        QFont f = font();
+        f.setPixelSize(13);
+        b->setFont(f);
+        b->setBtnStyle(bg, fg, 5);
+        b->setToolTip(tip);
+        applyBtnShadow(b);
+        b->hide();
+        return b;
+    };
+    m_importVideoBtn = importBtn(QStringLiteral("🎬"), QColor(10,20,48,245), QColor(160,200,255,220),
+                                 tr("Импортировать видео в закрепы"));
+    m_importAudioBtn = importBtn(QStringLiteral("🎵"), QColor(32,14,55,245), QColor(210,160,255,220),
+                                 tr("Импортировать аудио в закрепы"));
+    connect(m_importVideoBtn, &QPushButton::clicked, this, &MainWindow::importVideo);
+    connect(m_importAudioBtn, &QPushButton::clicked, this, &MainWindow::importAudio);
+    m_filesStrip->installEventFilter(this);  // Полоска сдвинулась/появилась — кнопки за ней
 }
 
 // ─── loadHistory ─────────────────────────────────────────────────────────────
@@ -1820,10 +1968,12 @@ void MainWindow::showWindow()
 QList<Anim::Piece> MainWindow::buildOpenPieces()
 {
     const int W = width();
-    QRect top = m_topPanel->geometry();
-    if (m_foldersBar->isVisible()) top = top.united(m_foldersBar->geometry());
+    const QRect top = m_topPanel->geometry();
+    // Полоса папок — только над левой колонкой: правая начинается сразу под панелью
+    const QRect fold = m_foldersBar->isVisible() ? m_foldersBar->geometry() : QRect();
     const QRect bottom = m_bottomPanel->geometry();
     const int colTop = top.bottom() + 1;
+    const int leftTop = fold.isEmpty() ? colTop : fold.bottom() + 1;
     const int colBot = bottom.top();
 
     QList<Anim::Piece> pcs;
@@ -1836,12 +1986,20 @@ QList<Anim::Piece> MainWindow::buildOpenPieces()
         pcs << pc;
     };
     add(top,    QPointF(0, -top.height() - 20),    0.00, 0.98);
+    add(fold,   QPointF(0, -fold.bottom() - 20),   0.02, 0.98);
     add(bottom, QPointF(0, bottom.height() + 20),  0.06, 0.98);
+    // Полоска файлов (и кнопки импорта рядом) — уезжает вниз следом за поиском
+    if (m_filesStrip && m_filesStrip->isVisible()) {
+        QRect st = m_filesStrip->visibleRect();
+        if (m_importVideoBtn && m_importVideoBtn->isVisible())
+            st = st.united(m_importVideoBtn->geometry()).united(m_importAudioBtn->geometry());
+        add(st, QPointF(0, height() - st.top() + 20), 0.09, 0.98);
+    }
 
     // Колонку режем на горизонтальные полосы по середине промежутков между
     // карточками: каждая полоса = одна карточка со своей тенью, и полосы не
     // перекрываются (иначе края соседних карточек рисовались бы дважды)
-    auto column = [&](QVBoxLayout *lay, QScrollArea *area, int x0, int x1, qreal dir) {
+    auto column = [&](QVBoxLayout *lay, QScrollArea *area, int x0, int x1, qreal dir, int colTop) {
         const QRect view(area->viewport()->mapTo(this, QPoint(0, 0)), area->viewport()->size());
         QList<QRect> cards;
         for (int i = 0; i < lay->count(); ++i) {
@@ -1868,8 +2026,8 @@ QList<Anim::Piece> MainWindow::buildOpenPieces()
     // колонки — фон ехал узким, а в конце «расширялся» до полной ширины.
     const int leftX1  = qMax(m_leftScroll->geometry().right() + 1, sc(BASE_LEFT) + 18);
     const int rightX0 = qMin(m_rightScroll->geometry().left(), W - sc(BASE_RIGHT) - 18);
-    column(m_leftLayout,  m_leftScroll,  0, leftX1, -1.0);
-    column(m_rightLayout, m_rightScroll, rightX0, W, +1.0);
+    column(m_leftLayout,  m_leftScroll,  0, leftX1, -1.0, leftTop);
+    column(m_rightLayout, m_rightScroll, rightX0, W, +1.0, colTop);
 
     return pcs;
 }
@@ -1889,6 +2047,7 @@ void MainWindow::hideAnimated()
     // делаем полностью прозрачным (мгновенно; полностью прозрачное окно Windows
     // пропускает клики насквозь), а настоящий hide() — когда анимация доиграла.
     m_hidePending = true;
+    dropSqueeze();
     removeInputHooks();  // Окно уходит — клавиши сразу снова идут в программу пользователя
     Media::Playback::get().stop();
     if (m_videoViewer) m_videoViewer->hideNow();
@@ -2281,7 +2440,7 @@ void MainWindow::onHookKey(unsigned vk, unsigned scan, bool extended)
 void MainWindow::onGlobalClick()
 {
     // Окно активно — клики мимо отследит WM_ACTIVATE, как и раньше
-    if (!isOpen() || weAreForeground()) return;
+    if (!isOpen() || weAreForeground() || m_fileDrag) return;
     POINT pt;
     GetCursorPos(&pt);
     // Прозрачный центр SmartClip клики пропускает, и WindowFromPoint вернёт
@@ -2297,7 +2456,7 @@ void MainWindow::onGlobalClick()
 void MainWindow::onForegroundChanged(quintptr hwnd)
 {
     HWND h = reinterpret_cast<HWND>(hwnd);
-    if (!isOpen() || !h || isOwnWindow(h)) return;
+    if (!isOpen() || !h || isOwnWindow(h) || m_fileDrag) return;
     // Фокус вернулся в программу, где работал пользователь (например, закрыли
     // наш диалог) — это не повод закрываться
     HWND prev = reinterpret_cast<HWND>(m_prevFocusHwnd);
@@ -2323,6 +2482,223 @@ void MainWindow::finishPaste()
     if (wasActive)
         SetForegroundWindow(target);
     QTimer::singleShot(wasActive ? 150 : 60, &sendPaste);
+}
+
+// ─── Файлы в полоске внизу ───────────────────────────────────────────────────
+
+// Закреплённые файлы: у папки — свои, во «Все» — из всех папок. Вкладки
+// («полки» внутри папки) — сохранённые плюс те, что записаны у самих файлов.
+void MainWindow::refreshPinnedFiles(bool allFolders)
+{
+    if (!m_filesStrip || m_viewMode != ViewMode::Pins) return;
+    const QList<PinItem> pins = (allFolders || m_currentFolder.isEmpty()) ? m_db->getAllPins()
+                                                                         : m_db->getPins(m_currentFolder);
+    QList<Files::Entry> files;
+    QStringList tabs = pinFileTabs();
+    for (const PinItem &pin : pins) {
+        if (pin.type != "file") continue;
+        files << Files::fromPin(pin.id, pin.name, pin.filepath, pin.content);
+        if (!pin.content.isEmpty() && !tabs.contains(pin.content)) tabs << pin.content;
+    }
+    m_filesStrip->setPinned(files, tabs);
+}
+
+QStringList MainWindow::pinFileTabs() const
+{
+    return AppSettings::get().pinFileTabs(m_currentFolder);
+}
+
+void MainWindow::addFilesTab()
+{
+    if (m_viewMode == ViewMode::Pins) {
+        // Закрепы: новая «полка» в этой папке
+        bool ok = false;
+        const QString name = askText(this, tr("Новая вкладка"), tr("Название:"), QString(), &ok).trimmed();
+        if (!ok || name.isEmpty()) return;
+        QStringList tabs = pinFileTabs();
+        if (!tabs.contains(name)) tabs << name;
+        AppSettings::get().setPinFileTabs(m_currentFolder, tabs);
+        refreshPinnedFiles(!m_searchEdit->text().isEmpty());
+    } else {
+        // История: ещё одна папка, файлы из которой показывать
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Папка с файлами"));
+        if (dir.isEmpty()) return;
+        QStringList folders = Files::configuredFolders();
+        for (const QString &f : folders)
+            if (QDir::cleanPath(f).compare(QDir::cleanPath(dir), Qt::CaseInsensitive) == 0) return;
+        folders << dir;
+        AppSettings::get().setFilesFolders(folders);
+        m_filesStrip->reload();
+    }
+}
+
+void MainWindow::showFilesTabMenu(const QString &key, const QPoint &globalPos)
+{
+    RoundedMenu menu(this);
+    if (m_viewMode == ViewMode::Pins) {
+        menu.addAction(tr("🏷  Переименовать"), [this, key]() {
+            bool ok = false;
+            const QString name = askText(this, tr("Переименовать вкладку"), tr("Название:"), key, &ok).trimmed();
+            if (!ok || name.isEmpty() || name == key) return;
+            QStringList tabs = pinFileTabs();
+            const int i = tabs.indexOf(key);
+            if (i >= 0) tabs[i] = name; else tabs << name;
+            tabs.removeDuplicates();
+            AppSettings::get().setPinFileTabs(m_currentFolder, tabs);
+            for (const PinItem &pin : m_db->getAllPins())
+                if (pin.type == "file" && pin.content == key && (m_currentFolder.isEmpty() || pin.folder == m_currentFolder))
+                    m_db->updatePinContent(pin.id, name);
+            refreshPinnedFiles(!m_searchEdit->text().isEmpty());
+        });
+        menu.addSeparator();
+        menu.addAction(tr("✕  Удалить вкладку"), [this, key]() {
+            // Файлы не удаляются — переезжают во «Все»
+            QStringList tabs = pinFileTabs();
+            tabs.removeAll(key);
+            AppSettings::get().setPinFileTabs(m_currentFolder, tabs);
+            for (const PinItem &pin : m_db->getAllPins())
+                if (pin.type == "file" && pin.content == key && (m_currentFolder.isEmpty() || pin.folder == m_currentFolder))
+                    m_db->updatePinContent(pin.id, QString());
+            refreshPinnedFiles(!m_searchEdit->text().isEmpty());
+        });
+    } else {
+        menu.addAction(tr("📂  Открыть папку"), [key]() { QDesktopServices::openUrl(QUrl::fromLocalFile(key)); });
+        menu.addSeparator();
+        menu.addAction(tr("✕  Убрать вкладку"), [this, key]() {
+            QStringList folders = Files::configuredFolders();
+            for (int i = folders.size() - 1; i >= 0; --i)
+                if (QDir::cleanPath(folders[i]).compare(QDir::cleanPath(key), Qt::CaseInsensitive) == 0)
+                    folders.removeAt(i);
+            AppSettings::get().setFilesFolders(folders);
+            m_filesStrip->reload();
+        });
+    }
+    menu.exec(globalPos);
+}
+
+// Переложить закреплённые файлы на другую вкладку («Все» — key пустой)
+void MainWindow::moveFilesToTab(const QList<Files::Entry> &files, const QString &tab)
+{
+    for (const Files::Entry &e : files)
+        if (e.pinId) m_db->updatePinContent(e.pinId, tab);
+    refreshPinnedFiles(!m_searchEdit->text().isEmpty());
+}
+void MainWindow::showFileMenu(const Files::Entry &e, const QPoint &globalPos)
+{
+    RoundedMenu menu(this);
+    const QString f = e.path;
+    if (!e.missing) {
+        menu.addAction(tr("📋  Вставить"), [this, e]() {
+            if (e.pinId) m_db->touchPin(e.pinId);
+            pasteFile(e.path);
+        });
+        menu.addAction(tr("Открыть"), [f]() { QDesktopServices::openUrl(QUrl::fromLocalFile(f)); });
+        menu.addAction(tr("📂  Показать в папке"), [f]() {
+            QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(f)});
+        });
+    }
+    menu.addAction(tr("ℹ  Свойства"), [this, f]() { fileInfoDialog(this, f); });
+    menu.addSeparator();
+    if (e.pinId) {
+        const int pinId = e.pinId;
+        const QStringList tabs = pinFileTabs();
+        if (!tabs.isEmpty() || !e.group.isEmpty()) {
+            auto *sub = new RoundedMenu(&menu);  // В нашем стиле, как и само меню
+            sub->setTitle(tr("🗂  Во вкладку"));
+            menu.addMenu(sub);
+            const Files::Entry one = e;
+            QStringList all = tabs;
+            if (!e.group.isEmpty() && !all.contains(e.group)) all << e.group;
+            sub->addAction(tr("Все"), [this, one]() { moveFilesToTab({one}, QString()); })->setEnabled(!one.group.isEmpty());
+            for (const QString &t : all)
+                sub->addAction(t, [this, one, t]() { moveFilesToTab({one}, t); })->setEnabled(t != one.group);
+        }
+        menu.addAction(tr("🗑  Открепить"), [this, pinId]() {
+            m_db->deletePin(pinId);  // Сам файл на диске не трогается
+            const QString q = m_searchEdit ? m_searchEdit->text() : QString();
+            loadPins(!q.isEmpty());
+            if (!q.isEmpty()) filterPins(q);
+        });
+    } else {
+        menu.addAction(tr("📌  Закрепить"), [this, f]() { pinFile(f); });
+    }
+    menu.exec(globalPos);
+}
+
+void MainWindow::pinFile(const QString &filepath)
+{
+    QString name = "";
+    if (!AppSettings::get().pinsNoName()) {
+        bool ok = false;
+        name = askText(this, tr("Закрепить файл"), tr("Название:"), QFileInfo(filepath).fileName(), &ok);
+        if (!ok) return;
+        name = name.trimmed();
+        // Без своего названия — показываем имя файла. Именно "" (а не clear()):
+        // пустой QString уходит в базу как NULL, и закреп не сохранялся
+        if (name == QFileInfo(filepath).fileName()) name = QStringLiteral("");
+    }
+    QString folder = "";
+    if (!AppSettings::get().pinsNoFolder()) {
+        bool cancelled = false;
+        folder = askFolder(cancelled);
+        if (cancelled) return;
+    }
+    m_db->addPin(folder, name, "file", "", filepath);
+}
+
+// Понесли файл из полоски: SmartClip не прячется, а прижимается к краям
+// своего монитора (колонки — вбок, панели — вверх и вниз), чтобы не мешать
+// бросить файл в программу под ним.
+void MainWindow::startFileDragSqueeze()
+{
+    m_fileDrag = true;
+    if (auto *old = static_cast<DragSqueeze *>(m_squeeze.data())) old->close();
+    m_filesStrip->collapseNow();
+    const int W = width(), H = height();
+    QList<DragSqueeze::Piece> pcs;
+    auto add = [&](const QRect &r, QPointF off, qreal sx, qreal sy, QPointF anchor) {
+        if (!r.isEmpty()) pcs << DragSqueeze::Piece{r, off, sx, sy, anchor};
+    };
+    const QRect top = m_topPanel->geometry();
+    add(top, QPointF(0, -top.bottom() * 0.62), 1.0, 0.92, QPointF(top.center().x(), 0));
+    if (m_foldersBar->isVisible()) {  // Полоса папок — вверх вместе с панелью
+        const QRect fold = m_foldersBar->geometry();
+        add(fold, QPointF(0, -fold.bottom() * 0.62), 1.0, 0.92, QPointF(fold.center().x(), 0));
+    }
+    const QRect L = m_leftScroll->geometry(), Rr = m_rightScroll->geometry();
+    add(L,  QPointF(-L.right() * 0.62, 0),        0.88, 1.0, QPointF(0, L.center().y()));
+    add(Rr, QPointF((W - Rr.left()) * 0.62, 0),   0.88, 1.0, QPointF(W, Rr.center().y()));
+    const QRect B = m_bottomPanel->geometry();
+    const qreal down = (H - B.top()) * 0.55;
+    add(B, QPointF(0, down), 1.0, 0.92, QPointF(B.center().x(), H));
+    if (m_filesStrip->isVisible()) {
+        // Полоска прижимается вплотную к полю поиска и уезжает вместе с ним
+        QRect S = m_filesStrip->collapsedRect();
+        if (m_importVideoBtn && m_importVideoBtn->isVisible())
+            S = S.united(m_importVideoBtn->geometry()).united(m_importAudioBtn->geometry());
+        add(S, QPointF(0, down + (B.top() - S.bottom()) + sc(2)), 1.0, 0.9, QPointF(S.center().x(), H));
+    }
+    auto *sq = new DragSqueeze(this, pcs);
+    m_squeeze = sq;
+    sq->squeeze();
+}
+
+void MainWindow::dropSqueeze()
+{
+    m_fileDrag = false;
+    if (auto *sq = static_cast<DragSqueeze *>(m_squeeze.data())) {
+        sq->detach();  // Окно прячется — видимость ему не возвращаем
+        sq->close();
+    }
+}
+
+void MainWindow::endFileDragSqueeze()
+{
+    m_fileDrag = false;
+    // Пока несли файл, могли переключиться в другую программу — вставлять туда
+    HWND fg = GetForegroundWindow();
+    if (isPasteTarget(fg)) m_prevFocusHwnd = reinterpret_cast<quintptr>(fg);
+    if (auto *sq = static_cast<DragSqueeze *>(m_squeeze.data())) sq->release();
 }
 
 void MainWindow::pasteText(const QString &text)
@@ -2404,22 +2780,15 @@ void MainWindow::importVideo()
     );
     if (files.isEmpty()) return;
 
+    // В ту папку закрепов, что открыта сейчас (во «Все» — без папки)
     for (const QString &fp : files) {
-        bool ok = false;
-        QString name = QInputDialog::getText(
-            this, tr("Закрепить видео"),
-            tr("Название закрепа:"),
-            QLineEdit::Normal, QFileInfo(fp).baseName(), &ok
-        );
-        if (!ok) continue;
-
-        QString folder = "";
-        if (!AppSettings::get().pinsNoFolder()) {
-            bool cancelled = false;
-            folder = askFolder(cancelled);
-            if (cancelled) continue;
+        QString name = QFileInfo(fp).baseName();
+        if (!AppSettings::get().pinsNoName()) {
+            bool ok = false;
+            name = askText(this, tr("Закрепить видео"), tr("Название закрепа:"), name, &ok);
+            if (!ok) continue;
         }
-        m_db->addPin(folder, name.trimmed(), "video", "", fp);
+        m_db->addPin(m_currentFolder, name.trimmed(), "video", "", fp);
     }
     loadPins();
 }
@@ -2432,22 +2801,15 @@ void MainWindow::importAudio()
     );
     if (files.isEmpty()) return;
 
+    // В ту папку закрепов, что открыта сейчас (во «Все» — без папки)
     for (const QString &fp : files) {
-        bool ok = false;
-        QString name = QInputDialog::getText(
-            this, tr("Закрепить аудио"),
-            tr("Название закрепа:"),
-            QLineEdit::Normal, QFileInfo(fp).baseName(), &ok
-        );
-        if (!ok) continue;
-
-        QString folder = "";
-        if (!AppSettings::get().pinsNoFolder()) {
-            bool cancelled = false;
-            folder = askFolder(cancelled);
-            if (cancelled) continue;
+        QString name = QFileInfo(fp).baseName();
+        if (!AppSettings::get().pinsNoName()) {
+            bool ok = false;
+            name = askText(this, tr("Закрепить аудио"), tr("Название закрепа:"), name, &ok);
+            if (!ok) continue;
         }
-        m_db->addPin(folder, name.trimmed(), "audio", "", fp);
+        m_db->addPin(m_currentFolder, name.trimmed(), "audio", "", fp);
     }
     loadPins();
 }
@@ -2718,11 +3080,21 @@ void MainWindow::loadFolderBar()
         applyBtnShadow(backBtn);
         connect(backBtn, &QPushButton::clicked, this, [this]() {
             int sep = m_currentFolder.lastIndexOf('/');
-            m_currentFolder = (sep >= 0) ? m_currentFolder.left(sep) : "";
-            loadFolderBar();
-            loadPins();
+            goToFolder((sep >= 0) ? m_currentFolder.left(sep) : QString());
         });
         m_foldersLayout->addWidget(backBtn);
+
+        // Глубоко в папках — «домой»: сразу к корню закрепов
+        if (m_currentFolder.contains('/')) {
+            SmartButton *homeBtn = new SmartButton(QString(), m_foldersBar);
+            homeBtn->setIconGlyph(QChar(0xE80F), 12);  // Домик
+            homeBtn->setBtnStyle(QColor(20,20,32,242), QColor(255,255,255,150), 5);
+            homeBtn->setFixedSize(FH, FH);
+            homeBtn->setToolTip(tr("Ко всем закрепам"));
+            applyBtnShadow(homeBtn);
+            connect(homeBtn, &QPushButton::clicked, this, [this]() { goToFolder(QString()); });
+            m_foldersLayout->addWidget(homeBtn);
+        }
 
         // Хлебная крошка — SmartButton в активном стиле (показывает текущий путь)
         QString leafName = m_currentFolder.mid(m_currentFolder.lastIndexOf('/') + 1);
@@ -2747,11 +3119,7 @@ void MainWindow::loadFolderBar()
         allBtn->setActiveBtnStyle(QColor(48,33,6,245), QColor(0xFF,0xDD,0x88));
         allBtn->setActiveState(true);
         applyBtnShadow(allBtn);
-        connect(allBtn, &QPushButton::clicked, this, [this]() {
-            m_currentFolder = "";
-            loadFolderBar();
-            loadPins();
-        });
+        connect(allBtn, &QPushButton::clicked, this, [this]() { goToFolder(QString()); });
         m_foldersLayout->addWidget(allBtn);
     }
 
@@ -2774,11 +3142,7 @@ void MainWindow::loadFolderBar()
         applyBtnShadow(btn);
 
         // Клик — навигация вглубь папки
-        connect(btn, &QPushButton::clicked, this, [this, fullName]() {
-            m_currentFolder = fullName;
-            loadFolderBar();
-            loadPins();
-        });
+        connect(btn, &QPushButton::clicked, this, [this, fullName]() { goToFolder(fullName); });
 
         // ПКМ: Закрепить / Переименовать / Создать подпапку / Удалить
         btn->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -2852,24 +3216,7 @@ void MainWindow::loadFolderBar()
         m_foldersLayout->addWidget(btn);
     }
 
-    // ── Кнопки импорта видео и аудио ────────────────────────────────────────────
-    SmartButton *importVideoBtn = new SmartButton(tr("🎬 Видео"), m_foldersBar);
-    importVideoBtn->setFixedHeight(FH);
-    importVideoBtn->setFont(fbarFont);
-    importVideoBtn->setBtnStyle(QColor(10,20,48,245), QColor(160,200,255,220), 5);
-    importVideoBtn->setToolTip(tr("Импортировать видео в закрепы"));
-    applyBtnShadow(importVideoBtn);
-    connect(importVideoBtn, &QPushButton::clicked, this, &MainWindow::importVideo);
-    m_foldersLayout->addWidget(importVideoBtn);
-
-    SmartButton *importAudioBtn = new SmartButton(tr("🎵 Аудио"), m_foldersBar);
-    importAudioBtn->setFixedHeight(FH);
-    importAudioBtn->setFont(fbarFont);
-    importAudioBtn->setBtnStyle(QColor(32,14,55,245), QColor(210,160,255,220), 5);
-    importAudioBtn->setToolTip(tr("Импортировать аудио в закрепы"));
-    applyBtnShadow(importAudioBtn);
-    connect(importAudioBtn, &QPushButton::clicked, this, &MainWindow::importAudio);
-    m_foldersLayout->addWidget(importAudioBtn);
+    // (Импорт видео и аудио — кнопки по бокам полоски файлов внизу)
 
     // Кнопка "+" — квадратная, как backBtn
     SmartButton *addBtn = new SmartButton(QString(), m_foldersBar);
@@ -2924,6 +3271,79 @@ QString MainWindow::askFolder(bool &cancelled)
     return selected;
 }
 
+// Открыть папку закрепов: старые карточки уезжают, новые въезжают
+// (вглубь — справа налево, назад/наверх — слева направо)
+void MainWindow::goToFolder(const QString &folder)
+{
+    const QString old = m_currentFolder;
+    if (folder == old) { loadFolderBar(); loadPins(); return; }
+    auto depth = [](const QString &f) { return f.isEmpty() ? 0 : int(f.count('/')) + 1; };
+    int dir = depth(folder) > depth(old) ? 1 : -1;
+    if (depth(folder) == depth(old)) {
+        // Соседние папки — в какую сторону по порядку кнопок
+        const int sep = folder.lastIndexOf('/');
+        const QList<FolderItem> sibs = m_db->getFolders(sep >= 0 ? folder.left(sep) : QString());
+        int iOld = -1, iNew = -1;
+        for (int i = 0; i < sibs.size(); ++i) {
+            if (sibs[i].name == old) iOld = i;
+            if (sibs[i].name == folder) iNew = i;
+        }
+        dir = iNew >= iOld ? 1 : -1;
+    }
+
+    // Колонки уезжают в разные стороны, зеркально: левая — влево, правая — вправо
+    QList<FolderSlide *> slides;
+    if (isVisible() && Anim::enabled(Anim::Kind::Tabs)) {
+        slides << new FolderSlide(m_leftScroll, m_leftScroll->grab(), dir);
+        slides << new FolderSlide(m_rightScroll, m_rightScroll->grab(), -dir);
+    }
+
+    m_currentFolder = folder;
+    loadFolderBar();
+    loadPins();
+
+    if (!slides.isEmpty()) {
+        // Новые карточки Qt показывает «потом» (на следующем шаге) — показываем
+        // сразу, иначе в снимок новой папки попадали одни фантомы
+        for (QVBoxLayout *lay : {m_leftLayout, m_rightLayout})
+            for (int i = 0; i < lay->count(); ++i)
+                if (QWidget *w = lay->itemAt(i)->widget())
+                    if (!w->isVisible() && !w->testAttribute(Qt::WA_WState_ExplicitShowHide))
+                        w->show();
+        for (int i = 0; i < 3; ++i) QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        for (FolderSlide *sl : slides) sl->play();
+        // Полоса папок, полоска файлов и кнопки — поверх анимации
+        m_foldersBar->raise();
+        if (m_filesStrip) m_filesStrip->raise();
+        placeImportButtons();
+    }
+}
+
+// Кнопки импорта — слева и справа от свёрнутой полоски файлов, только в Закрепах
+void MainWindow::placeImportButtons()
+{
+    if (!m_importVideoBtn || !m_importAudioBtn) return;
+    const bool show = m_viewMode == ViewMode::Pins && m_filesStrip && m_filesStrip->isVisible();
+    m_importVideoBtn->setVisible(show);
+    m_importAudioBtn->setVisible(show);
+    if (!show) return;
+    const QRect r = m_filesStrip->collapsedRect();
+    const int sz = m_importVideoBtn->width(), gap = sc(8);
+    const int y = r.center().y() - sz / 2;
+    m_importVideoBtn->move(r.left() - gap - sz, y);
+    m_importAudioBtn->move(r.right() + 1 + gap, y);
+    m_importVideoBtn->raise();
+    m_importAudioBtn->raise();
+}
+
+// Полоса папок: от левого края до правой колонки, сразу под верхней панелью
+void MainWindow::placeFoldersBar()
+{
+    if (!m_foldersBar || !m_rightScroll || !m_topPanel) return;
+    const int top = m_topPanel->geometry().bottom() + 1;
+    m_foldersBar->setGeometry(0, top, qMax(sc(200), m_rightScroll->geometry().left() - sc(8)), sc(BASE_FOLD));
+}
+
 void MainWindow::switchView(ViewMode mode)
 {
     // Уходим из Истории в Закрепы — запоминаем, где остановились в Истории
@@ -2960,13 +3380,21 @@ void MainWindow::switchView(ViewMode mode)
         if (m_editBtn) m_editBtn->setActiveState(false);
     }
 
+    // Полоска внизу: в Истории — свежие файлы, в Закрепах — закреплённые
+    if (m_filesStrip) m_filesStrip->setPinsMode(mode == ViewMode::Pins);
+    placeImportButtons();
+
     if (mode == ViewMode::History) {
         m_foldersBar->hide();
+        static_cast<ColumnScroll *>(m_leftScroll)->setViewportMargins(0, 0, 0, 0);
         loadHistory();
         restoreHistoryPos();
     } else {
-        m_currentFolder = ""; // при каждом переходе сбрасываем на "Все"
+        // Папку НЕ сбрасываем: вернулся в Закрепы — ты там же, где был
+        static_cast<ColumnScroll *>(m_leftScroll)->setViewportMargins(0, sc(BASE_FOLD), 0, 0);
+        placeFoldersBar();
         m_foldersBar->show();
+        m_foldersBar->raise();
         loadFolderBar();
         loadPins();
         // Закрепы — всегда с начала (раньше оставалась прокрутка Истории,
@@ -3094,6 +3522,9 @@ void MainWindow::loadPins(bool allFolders)
             break;
         default: break; // DateDesc — уже правильный порядок из БД
     }
+
+    // Закреплённые файлы — не в колонках, а в полоске внизу
+    refreshPinnedFiles(allFolders);
 
     for (const PinItem &pin : pins) {
         if (pin.type == "text") {
@@ -4368,7 +4799,7 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
 // SmartClip потерял фокус, пока поверх него было открыто окно/меню.
 void MainWindow::closeAllOnDeactivate()
 {
-    if (!isVisible()) return;
+    if (!isVisible() || m_fileDrag) return;
     // Фокус ушёл в окно нашего же процесса (например, системное окно выбора
     // файла или папки) — это не «клик мимо», ничего не закрываем
     DWORD pid = 0;
@@ -4411,6 +4842,12 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
     if (obj == m_centerSpacer && m_filesStrip &&
         (event->type() == QEvent::Move || event->type() == QEvent::Resize))
         m_filesStrip->place(m_centerSpacer->geometry());
+    if ((obj == m_rightScroll || obj == m_topPanel) &&
+        (event->type() == QEvent::Move || event->type() == QEvent::Resize))
+        placeFoldersBar();
+    if (obj == m_filesStrip && (event->type() == QEvent::Move || event->type() == QEvent::Resize ||
+                                event->type() == QEvent::Show || event->type() == QEvent::Hide))
+        placeImportButtons();
 
     if ((obj == m_historyBtn || obj == m_pinsBtn) && m_viewPill &&
         (event->type() == QEvent::Move || event->type() == QEvent::Resize)) {
@@ -4424,6 +4861,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 void MainWindow::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
+    dropSqueeze();
     removeInputHooks();
     Media::Playback::get().stop();  // Закрыли SmartClip — звук и видео останавливаются
     if (m_videoViewer) m_videoViewer->hideNow();
@@ -4474,13 +4912,14 @@ void MainWindow::paintEvent(QPaintEvent *event)
         // ── Верхняя панель ────────────────────────────────────────────
         p.fillRect(0, 0, W, sc(BASE_TOP), panelColor);
 
-        // ── Полоса папок (если видима) ────────────────────────────────
+        // ── Полоса папок (если видима) — над левой колонкой ───────────
         if (m_foldersBar && m_foldersBar->isVisible())
-            p.fillRect(0, sc(BASE_TOP), W, sc(BASE_FOLD), panelColor);
+            p.fillRect(QRect(m_foldersBar->x() + sc(BASE_LEFT) + 18, m_foldersBar->y(),
+                             qMax(0, m_foldersBar->width() - sc(BASE_LEFT) - 18), m_foldersBar->height()),
+                       panelColor);
 
-        // ── Левая колонка ─────────────────────────────────────────────
-        int colTop = sc(BASE_TOP) +
-                     (m_foldersBar && m_foldersBar->isVisible() ? sc(BASE_FOLD) : 0);
+        // ── Левая колонка (с полосой папок сверху) ────────────────────
+        int colTop = sc(BASE_TOP);
         int colH   = H - colTop - sc(BASE_BOT);
         p.fillRect(0, colTop, sc(BASE_LEFT) + 18, colH, panelColor);
 
@@ -4693,7 +5132,9 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
         }
         statusLbl->setText(tr("Запуск установщика..."));
         dlgPtr->accept();
-        // Установщик сам закроет SmartClip, но выходим и сами — чтобы файлы освободились
+        // Установщик сам закроет SmartClip, но выходим и сами — чтобы файлы освободились.
+        // После обновления SmartClip сам откроет окно — видно, что всё готово
+        AppSettings::get().setOpenOnStart(true);
         QTimer::singleShot(300, qApp, []() { QCoreApplication::quit(); });
     };
 

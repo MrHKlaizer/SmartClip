@@ -1657,4 +1657,178 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <translation>📋  Вставити</translation>
     </message>
 </context>
+<context>
+    <name>QObject</name>
+    <message>
+        <source>%1  (%2 байт)</source>
+        <translation>%1  (%2 байт)</translation>
+    </message>
+    <message>
+        <source>Архив</source>
+        <translation>Архів</translation>
+    </message>
+    <message>
+        <source>Аудио</source>
+        <translation>Аудіо</translation>
+    </message>
+    <message>
+        <source>Видео</source>
+        <translation>Відео</translation>
+    </message>
+    <message>
+        <source>Длительность</source>
+        <translation>Тривалість</translation>
+    </message>
+    <message>
+        <source>Документ</source>
+        <translation>Документ</translation>
+    </message>
+    <message>
+        <source>Закрыть</source>
+        <translation>Закрити</translation>
+    </message>
+    <message>
+        <source>Изменён</source>
+        <translation>Змінено</translation>
+    </message>
+    <message>
+        <source>Имя</source>
+        <translation>Ім’я</translation>
+    </message>
+    <message>
+        <source>Картинка</source>
+        <translation>Картинка</translation>
+    </message>
+    <message>
+        <source>Папка</source>
+        <translation>Тека</translation>
+    </message>
+    <message>
+        <source>Программа</source>
+        <translation>Програма</translation>
+    </message>
+    <message>
+        <source>Размер</source>
+        <translation>Розмір</translation>
+    </message>
+    <message>
+        <source>Разрешение</source>
+        <translation>Роздільність</translation>
+    </message>
+    <message>
+        <source>Свойства</source>
+        <translation>Властивості</translation>
+    </message>
+    <message>
+        <source>Создан</source>
+        <translation>Створено</translation>
+    </message>
+    <message>
+        <source>Состояние</source>
+        <translation>Стан</translation>
+    </message>
+    <message>
+        <source>Тип</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>Файл</source>
+        <translation>Файл</translation>
+    </message>
+    <message>
+        <source>Файл не найден — его переместили или удалили</source>
+        <translation>Файл не знайдено — його перемістили або видалили</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Закрепить файл</source>
+        <translation>Закріпити файл</translation>
+    </message>
+    <message>
+        <source>ℹ  Свойства</source>
+        <translation>ℹ  Властивості</translation>
+    </message>
+</context>
+<context>
+    <name>FilesStrip</name>
+    <message>
+        <source>Закреплённые файлы · %1</source>
+        <translation>Закріплені файли · %1</translation>
+    </message>
+    <message>
+        <source>файл не найден</source>
+        <translation>файл не знайдено</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Открыть</source>
+        <translation>Відкрити</translation>
+    </message>
+</context>
+<context>
+    <name>FilesStrip</name>
+    <message>
+        <source>Пока нет закреплённых файлов.
+Закрепить: История → правый клик по файлу внизу → «Закрепить».</source>
+        <translation>Поки немає закріплених файлів.
+Закріпити: Історія → правий клік по файлу внизу → «Закріпити».</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Ко всем закрепам</source>
+        <translation>До всіх закріпів</translation>
+    </message>
+</context>
+<context>
+    <name>FilesStrip</name>
+    <message>
+        <source>Все</source>
+        <translation>Усі</translation>
+    </message>
+    <message>
+        <source>Загрузки</source>
+        <translation>Завантаження</translation>
+    </message>
+    <message>
+        <source>Рабочий стол</source>
+        <translation>Робочий стіл</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Новая вкладка</source>
+        <translation>Нова вкладка</translation>
+    </message>
+    <message>
+        <source>Папка с файлами</source>
+        <translation>Тека з файлами</translation>
+    </message>
+    <message>
+        <source>Переименовать вкладку</source>
+        <translation>Перейменувати вкладку</translation>
+    </message>
+    <message>
+        <source>✕  Убрать вкладку</source>
+        <translation>✕  Прибрати вкладку</translation>
+    </message>
+    <message>
+        <source>✕  Удалить вкладку</source>
+        <translation>✕  Видалити вкладку</translation>
+    </message>
+    <message>
+        <source>📂  Открыть папку</source>
+        <translation>📂  Відкрити теку</translation>
+    </message>
+    <message>
+        <source>🗂  Во вкладку</source>
+        <translation>🗂  До вкладки</translation>
+    </message>
+</context>
 </TS>

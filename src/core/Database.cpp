@@ -727,8 +727,11 @@ int Database::addPin(const QString &folder, const QString &name, const QString &
                      const QString &content, const QString &filepath)
 {
     QSqlQuery query;
+    // COALESCE: пустой QString() уходит в SQLite как NULL, а колонки NOT NULL —
+    // закреп без названия (или без папки) тогда молча не сохранялся
     query.prepare("INSERT INTO pins (folder, name, type, content, filepath) "
-                  "VALUES (:folder, :name, :type, :content, :filepath)");
+                  "VALUES (COALESCE(:folder, ''), COALESCE(:name, ''), :type, "
+                  "COALESCE(:content, ''), COALESCE(:filepath, ''))");
     query.bindValue(":folder",   folder);
     query.bindValue(":name",     name);
     query.bindValue(":type",     type);

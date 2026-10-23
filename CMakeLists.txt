@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 #  в «Программы и компоненты» и в имя файла релиза (make_release.bat).
 # ════════════════════════════════════════════════════════════════════════════
 #  Формат: «2.0» для больших версий, «2.0.1» для мелких правок.
-project(SmartClip VERSION 2.2.1 LANGUAGES CXX)
+project(SmartClip VERSION 2.2.2 LANGUAGES CXX)
 
 add_compile_definitions(SMARTCLIP_VERSION="${PROJECT_VERSION}")
 file(WRITE "${CMAKE_BINARY_DIR}/version.txt" "${PROJECT_VERSION}")
@@ -76,6 +76,10 @@ set(SOURCES
     src/ui/MediaCards.h
     src/ui/VideoViewer.h
     src/ui/FilesStrip.h
+    src/ui/DragSqueeze.h
+    src/ui/GhostCards.h
+    src/ui/FolderSlide.h
+    src/ui/DragGhost.h
     src/ui/NavTabs.h
     src/ui/HotkeyEdit.h
     src/ui/ImageViewer.h

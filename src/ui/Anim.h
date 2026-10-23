@@ -31,10 +31,21 @@
 #include <functional>
 #include <QtMath>
 #include <QScreen>
+#include <QGuiApplication>
 #include <windows.h>
 #include "core/AppSettings.h"
 
 namespace Anim {
+
+// Длительность кадра анимации — по частоте монитора, на котором окно:
+// 60 Гц → 16 мс, 144 Гц → 6 мс. Рисовать чаще монитора бессмысленно —
+// эти кадры никто не увидит, а процессор их всё равно рисует.
+inline int frameMs(const QWidget *w = nullptr)
+{
+    QScreen *sc = (w && w->screen()) ? w->screen() : QGuiApplication::primaryScreen();
+    const qreal hz = sc ? sc->refreshRate() : 60.0;
+    return qBound(4, int(1000.0 / (hz > 20 ? hz : 60.0)), 16);
+}
 
 // Разрешает ли Windows анимации интерфейса
 inline bool systemAllows()

@@ -1657,4 +1657,178 @@ Im Standardplayer öffnen?</translation>
         <translation>📋  Einfügen</translation>
     </message>
 </context>
+<context>
+    <name>QObject</name>
+    <message>
+        <source>%1  (%2 байт)</source>
+        <translation>%1  (%2 Bytes)</translation>
+    </message>
+    <message>
+        <source>Архив</source>
+        <translation>Archiv</translation>
+    </message>
+    <message>
+        <source>Аудио</source>
+        <translation>Audio</translation>
+    </message>
+    <message>
+        <source>Видео</source>
+        <translation>Video</translation>
+    </message>
+    <message>
+        <source>Длительность</source>
+        <translation>Dauer</translation>
+    </message>
+    <message>
+        <source>Документ</source>
+        <translation>Dokument</translation>
+    </message>
+    <message>
+        <source>Закрыть</source>
+        <translation>Schließen</translation>
+    </message>
+    <message>
+        <source>Изменён</source>
+        <translation>Geändert</translation>
+    </message>
+    <message>
+        <source>Имя</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>Картинка</source>
+        <translation>Bild</translation>
+    </message>
+    <message>
+        <source>Папка</source>
+        <translation>Ordner</translation>
+    </message>
+    <message>
+        <source>Программа</source>
+        <translation>Programm</translation>
+    </message>
+    <message>
+        <source>Размер</source>
+        <translation>Größe</translation>
+    </message>
+    <message>
+        <source>Разрешение</source>
+        <translation>Auflösung</translation>
+    </message>
+    <message>
+        <source>Свойства</source>
+        <translation>Eigenschaften</translation>
+    </message>
+    <message>
+        <source>Создан</source>
+        <translation>Erstellt</translation>
+    </message>
+    <message>
+        <source>Состояние</source>
+        <translation>Status</translation>
+    </message>
+    <message>
+        <source>Тип</source>
+        <translation>Typ</translation>
+    </message>
+    <message>
+        <source>Файл</source>
+        <translation>Datei</translation>
+    </message>
+    <message>
+        <source>Файл не найден — его переместили или удалили</source>
+        <translation>Datei nicht gefunden — sie wurde verschoben oder gelöscht</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Закрепить файл</source>
+        <translation>Datei anheften</translation>
+    </message>
+    <message>
+        <source>ℹ  Свойства</source>
+        <translation>ℹ  Eigenschaften</translation>
+    </message>
+</context>
+<context>
+    <name>FilesStrip</name>
+    <message>
+        <source>Закреплённые файлы · %1</source>
+        <translation>Angeheftete Dateien · %1</translation>
+    </message>
+    <message>
+        <source>файл не найден</source>
+        <translation>Datei nicht gefunden</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Открыть</source>
+        <translation>Öffnen</translation>
+    </message>
+</context>
+<context>
+    <name>FilesStrip</name>
+    <message>
+        <source>Пока нет закреплённых файлов.
+Закрепить: История → правый клик по файлу внизу → «Закрепить».</source>
+        <translation>Noch keine angehefteten Dateien.
+Anheften: Verlauf → Rechtsklick auf eine Datei unten → „Anheften“.</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Ко всем закрепам</source>
+        <translation>Zu allen Pins</translation>
+    </message>
+</context>
+<context>
+    <name>FilesStrip</name>
+    <message>
+        <source>Все</source>
+        <translation>Alle</translation>
+    </message>
+    <message>
+        <source>Загрузки</source>
+        <translation>Downloads</translation>
+    </message>
+    <message>
+        <source>Рабочий стол</source>
+        <translation>Desktop</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Новая вкладка</source>
+        <translation>Neuer Tab</translation>
+    </message>
+    <message>
+        <source>Папка с файлами</source>
+        <translation>Ordner mit Dateien</translation>
+    </message>
+    <message>
+        <source>Переименовать вкладку</source>
+        <translation>Tab umbenennen</translation>
+    </message>
+    <message>
+        <source>✕  Убрать вкладку</source>
+        <translation>✕  Tab entfernen</translation>
+    </message>
+    <message>
+        <source>✕  Удалить вкладку</source>
+        <translation>✕  Tab löschen</translation>
+    </message>
+    <message>
+        <source>📂  Открыть папку</source>
+        <translation>📂  Ordner öffnen</translation>
+    </message>
+    <message>
+        <source>🗂  Во вкладку</source>
+        <translation>🗂  In Tab verschieben</translation>
+    </message>
+</context>
 </TS>

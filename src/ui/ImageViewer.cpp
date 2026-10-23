@@ -104,7 +104,7 @@ void ImageViewer::startFlight(qreal to, int durationMs, QEasingCurve curve)
     m_curve = curve;
     m_flying = true;
     m_clockStarted = false;  // Отсчёт — с первого нарисованного кадра (см. paintEvent)
-    if (!m_tick.isActive()) { m_frameClock.start(); m_lastFrame = 0; m_tick.start(); }
+    if (!m_tick.isActive()) { m_frameClock.start(); m_lastFrame = 0; m_tick.setInterval(Anim::frameMs(this)); m_tick.start(); }
     update();
 }
 
@@ -262,7 +262,7 @@ void ImageViewer::wheelEvent(QWheelEvent *event)
         update();
         return;
     }
-    if (!m_tick.isActive()) { m_frameClock.start(); m_lastFrame = 0; m_tick.start(); }
+    if (!m_tick.isActive()) { m_frameClock.start(); m_lastFrame = 0; m_tick.setInterval(Anim::frameMs(this)); m_tick.start(); }
 }
 
 // ─── Нажатие кнопки мыши — начало перетаскивания ─────────────────────────────

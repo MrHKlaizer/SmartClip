@@ -6,6 +6,7 @@
 // ║  раскрывается вверх: плитки или список. Клик — вставить файл (как у видео),  ║
 // ║  можно перетащить мышкой в Telegram/Discord, правый клик — меню.             ║
 // ║  Папки, срок, количество, вид и типы файлов — Настройки → Файлы.             ║
+// ║  В Закрепах здесь — закреплённые файлы текущей папки.                        ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 #include <QWidget>
@@ -33,11 +34,13 @@
 #include <QLocale>
 #include <algorithm>
 #include <functional>
+#include <windows.h>   // GetAsyncKeyState — зажата ли кнопка мыши на самом деле
 
 #include "../core/AppSettings.h"
 #include "../core/Thumbs.h"
 #include "Anim.h"
 #include "SmartButton.h"   // SmartButton::iconFontFamily() — системный шрифт значков
+#include "DragGhost.h"     // «Живой» файл в руке
 
 namespace Files {
 
@@ -92,7 +95,29 @@ struct Entry {
     QString   name;
     qint64    size = 0;
     QDateTime mtime;
+    QString   folder;          // Из какой папки (вкладки в Истории)
+    QString   group;           // Вкладка закреплённого файла внутри папки закрепов
+    int       pinId = 0;       // Закреплённый файл — номер закрепа
+    QString   title;           // Название закрепа (если задано)
+    bool      missing = false; // Закреплённого файла больше нет на диске
+    QString display() const { return title.isEmpty() ? name : title; }
 };
+
+// Закреплённый файл -> запись полоски (размер и дата — с диска)
+inline Entry fromPin(int pinId, const QString &title, const QString &path, const QString &group = QString())
+{
+    const QFileInfo fi(path);
+    Entry e;
+    e.path = path;
+    e.name = fi.fileName();
+    e.size = fi.exists() ? fi.size() : 0;
+    e.mtime = fi.exists() ? fi.lastModified() : QDateTime();
+    e.pinId = pinId;
+    e.title = title;
+    e.group = group;
+    e.missing = !fi.exists();
+    return e;
+}
 
 // Свежие файлы: за days дней, не больше max, новые первыми (в фоновом потоке)
 inline QList<Entry> scan(const QStringList &folders, int days, int max, const QStringList &cats)
@@ -109,7 +134,13 @@ inline QList<Entry> scan(const QStringList &folders, int days, int max, const QS
             const QDateTime t = qMax(fi.lastModified(), fi.birthTime().isValid() ? fi.birthTime() : QDateTime());
             if (skipFile(fi) || t < since) continue;
             if (!cats.contains(category(fi.filePath()))) continue;
-            out.append({fi.filePath(), fi.fileName(), fi.size(), t});
+            Entry e;
+            e.path = fi.filePath();
+            e.name = fi.fileName();
+            e.size = fi.size();
+            e.mtime = t;
+            e.folder = folder;
+            out.append(e);
         }
     }
     std::sort(out.begin(), out.end(), [](const Entry &a, const Entry &b) { return a.mtime > b.mtime; });
@@ -144,24 +175,40 @@ public:
         m_tick.setTimerType(Qt::PreciseTimer);
         m_tick.setInterval(6);
         connect(&m_tick, &QTimer::timeout, this, [this]() { tick(); });
-        m_leaveTimer.setSingleShot(true);
-        m_leaveTimer.setInterval(60);  // Увели мышь — почти сразу сворачиваемся
-        connect(&m_leaveTimer, &QTimer::timeout, this, [this]() { expand(false); });
-        // Подстраховка: Windows не всегда сразу сообщает, что мышь ушла
-        // (над полоской окно прозрачное) — проверяем курсор сами
-        m_hoverPoll.setInterval(40);
-        connect(&m_hoverPoll, &QTimer::timeout, this, [this]() {
-            if (m_target <= 0) { m_hoverPoll.stop(); return; }
-            if (m_dragging || QApplication::activePopupWidget()) return;  // Тянем файл или открыто меню
-            const QPoint p = mapFromGlobal(QCursor::pos());
-            if (!rect().contains(p) || !hitVisible(p)) expand(false);
+        // Ушла ли мышь — проверяем курсор сами: над полоской окно прозрачное, и
+        // Windows не всегда сообщает об уходе. Небольшой запас по краям и снизу
+        // (до поиска): чуть промахнулся — полоска не закрывается.
+        m_hoverPoll.setTimerType(Qt::PreciseTimer);
+        m_hoverPoll.setInterval(30);
+        connect(&m_hoverPoll, &QTimer::timeout, this, [this]() { checkHover(); });
+        // Зажал файл и держишь — он «берётся в руку» (даже если мышь не двигалась)
+        m_holdTimer.setSingleShot(true);
+        m_holdTimer.setInterval(220);
+        // Пока файлы в руке — сами следим за мышью: над прозрачной серединой окна
+        // Windows может не присылать SmartClip движения и отпускание кнопки, и
+        // файлы оставались «в руке» после отпускания
+        m_carryPoll.setTimerType(Qt::PreciseTimer);
+        m_carryPoll.setInterval(15);
+        connect(&m_carryPoll, &QTimer::timeout, this, [this]() { checkCarry(); });
+        connect(&m_holdTimer, &QTimer::timeout, this, [this]() {
+            if (m_press >= 0 && m_press < m_items.size() && (QApplication::mouseButtons() & Qt::LeftButton))
+                pickUp(m_items[m_press]);
         });
         hide();
     }
 
-    std::function<void(const QString &)> onPick;                  // Клик — вставить файл
-    std::function<void(const QString &, const QPoint &)> onMenu;  // Правый клик
-    std::function<void()> onDropped;                              // Файл перетащили в другую программу
+    std::function<void(const Files::Entry &)> onPick;                  // Клик — вставить файл
+    std::function<void(const Files::Entry &, const QPoint &)> onMenu;  // Правый клик
+    std::function<void()> onDragStarted;                               // Понесли файл мышкой
+    std::function<void(bool dropped)> onDragFinished;                  // Отпустили (dropped — куда-то вставили)
+
+    // Вкладки над файлами. В Истории — папки, из которых показывать файлы
+    // («Все» и по одной на папку), в Закрепах — дополнительные «полки» внутри
+    // одной папки закрепов, чтобы разложить файлы.
+    struct Tab { QString key; QString label; };
+    std::function<void()> onAddTab;                                         // «+»
+    std::function<void(const QString &key, const QPoint &globalPos)> onTabMenu;  // Правый клик по вкладке
+    std::function<void(const QList<Files::Entry> &, const QString &key)> onMoveToTab;  // Бросили файлы на вкладку
 
     // Где стоять: прямоугольник прозрачной середины окна (координаты родителя)
     void place(const QRect &center)
@@ -170,14 +217,39 @@ public:
         relayout();
     }
 
+    // В Закрепах — только закреплённые файлы текущей папки (их даёт setPinned),
+    // в Истории — свежие файлы из папок
+    void setPinsMode(bool on)
+    {
+        if (m_pinsMode == on) return;
+        m_pinsMode = on;
+        m_all.clear();
+        collapseNow();
+        if (on) applyFilter();
+        else reload();
+    }
+    bool pinsMode() const { return m_pinsMode; }
+
+    void setPinned(const QList<Files::Entry> &pinned, const QStringList &groups = {})
+    {
+        if (!m_pinsMode) return;
+        m_all = pinned;
+        m_pinTabs = groups;
+        if (!m_tabPins.isEmpty() && !groups.contains(m_tabPins)) m_tabPins.clear();
+        applyFilter();
+    }
+
     // Перечитать папки (при каждом открытии SmartClip и после настроек)
     void reload()
     {
         const AppSettings &s = AppSettings::get();
         m_enabled = s.filesStrip();
         m_view = s.filesView();
+        if (m_pinsMode) { relayout(); return; }  // Закреплённые приходят из loadPins
         if (!m_enabled) { m_all.clear(); applyFilter(); return; }
         const QStringList folders = Files::configuredFolders();
+        m_folders = folders;
+        if (!m_tabHistory.isEmpty() && !folders.contains(m_tabHistory)) m_tabHistory.clear();
         const int days = s.filesDays(), max = s.filesMax();
         const QStringList cats = s.filesTypes();
         const int gen = ++m_gen;
@@ -185,14 +257,20 @@ public:
         Thumbs::runAsync(this, [folders, days, max, cats]() {
             QVariantList l;
             for (const Files::Entry &e : Files::scan(folders, days, max, cats))
-                l << QVariant(QVariantList{e.path, e.name, e.size, e.mtime});
+                l << QVariant(QVariantList{e.path, e.name, e.size, e.mtime, e.folder});
             return QVariant(l);
         }, [self, gen](const QVariant &v) {
-            if (!self || gen != self->m_gen) return;
+            if (!self || gen != self->m_gen || self->m_pinsMode) return;
             self->m_all.clear();
             for (const QVariant &x : v.toList()) {
                 const QVariantList r = x.toList();
-                self->m_all.append({r[0].toString(), r[1].toString(), r[2].toLongLong(), r[3].toDateTime()});
+                Files::Entry e;
+                e.path = r[0].toString();
+                e.name = r[1].toString();
+                e.size = r[2].toLongLong();
+                e.mtime = r[3].toDateTime();
+                e.folder = r[4].toString();
+                self->m_all.append(e);
             }
             self->applyFilter();
         });
@@ -205,15 +283,15 @@ public:
         applyFilter();
     }
 
-    // Свернуть сразу, без анимации (окно спряталось)
+    // Свернуть сразу, без анимации (окно спряталось, понесли файл)
     void collapseNow()
     {
         m_tick.stop();
-        m_leaveTimer.stop();
         m_hoverPoll.stop();
         m_t = m_target = 0;
         m_scroll = 0;
         m_hover = -1;
+        m_outside = 0;
         relayout();
     }
 
@@ -221,47 +299,110 @@ public:
     // прозрачно, клики там проходят насквозь, см. MainWindow::isInteractiveArea)
     bool hitVisible(const QPoint &p) const { return p.y() >= top(); }
 
+    // Видимая сейчас часть — в координатах родителя (для анимации открытия окна)
+    QRect visibleRect() const { return QRect(x(), y() + top(), width(), curH()); }
+
+    // Свёрнутая плашка — в координатах родителя (для анимации при перетаскивании)
+    QRect collapsedRect() const
+    {
+        return QRect(x(), y() + height() - s(HeadH), width(), s(HeadH));
+    }
+
 protected:
     void enterEvent(QEnterEvent *e) override
     {
         if (!hitVisible(e->position().toPoint())) return;
-        m_leaveTimer.stop();
         expand(true);
     }
     void leaveEvent(QEvent *) override
     {
         m_hover = -1;
         update();
-        if (!m_dragging) m_leaveTimer.start();
+        // Сворачивание решает checkHover — с запасом по краям
     }
 
     void mouseMoveEvent(QMouseEvent *e) override
     {
-        if (!hitVisible(e->position().toPoint())) {  // Над полоской — прозрачно
-            if (m_hover != -1) { m_hover = -1; update(); }
-            if (!m_dragging && m_target > 0 && !m_leaveTimer.isActive()) m_leaveTimer.start();
+        if (m_carrying) {
+            // Файл в руке: пока над полоской — можно добавлять ещё (правый клик);
+            // вынес за полоску — начинается настоящее перетаскивание
+            const QPoint p = e->position().toPoint();
+            const QRect zone = QRect(0, top(), width(), curH()).adjusted(-s(6), -s(6), s(6), s(6));
+            if (!zone.contains(p)) { startCarryDrag(); return; }
+            const int h = itemAt(p);
+            if (h != m_hover) { m_hover = h; update(); }
+            // Зажал правую и ведёшь — собираешь (или убираешь) файлы подряд
+            if (m_sweeping && (e->buttons() & Qt::RightButton) && h >= 0 && !m_items[h].missing) {
+                const bool carried = isCarried(m_items[h]);
+                if (m_sweepAdd != carried) toggleCarry(m_items[h]);
+            }
             return;
         }
-        m_leaveTimer.stop();
+        if (!hitVisible(e->position().toPoint())) {  // Над полоской — прозрачно
+            if (m_hover != -1) { m_hover = -1; update(); }
+            return;
+        }
         if (m_target < 1) expand(true);
         const int h = itemAt(e->position().toPoint());
         if (h != m_hover) { m_hover = h; update(); }
-        setCursor(h >= 0 || viewBtnAt(e->position().toPoint()) >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        const int ht = tabAt(e->position().toPoint());
+        if (ht != m_hoverTab) { m_hoverTab = ht; update(); }
+        setCursor(h >= 0 || ht != -1 || viewBtnAt(e->position().toPoint()) >= 0 ? Qt::PointingHandCursor
+                                                                                 : Qt::ArrowCursor);
         // Тянем файл мышкой — перетаскивание в другую программу
         if ((e->buttons() & Qt::LeftButton) && m_press >= 0 && m_press < m_items.size()
-            && (e->position().toPoint() - m_pressPos).manhattanLength() > QApplication::startDragDistance()) {
-            const QString path = m_items[m_press].path;
-            m_press = -1;
-            startDrag(path);
-        }
+            && (e->position().toPoint() - m_pressPos).manhattanLength() > QApplication::startDragDistance())
+            pickUp(m_items[m_press]);
     }
 
     void mousePressEvent(QMouseEvent *e) override
     {
+        if (m_carrying) {
+            // Файл в руке, правый клик по другому файлу — добавить его в стопку
+            // (ещё раз — убрать), чтобы потом закинуть всё разом
+            if (e->button() == Qt::RightButton) {
+                const int i = itemAt(e->position().toPoint());
+                if (i >= 0 && !m_items[i].missing) {
+                    toggleCarry(m_items[i]);
+                    // Дальше, пока правая зажата, — так же со всеми, над чем проведёшь
+                    m_sweeping = true;
+                    m_sweepAdd = isCarried(m_items[i]);
+                }
+            }
+            return;
+        }
         m_press = -1;
         if (m_t < 0.9) return;  // Ещё раскрывается
         const QPoint p = e->position().toPoint();
         if (!hitVisible(p)) return;
+        const int tab = tabAt(p);
+        if (tab == TabPlus) {
+            if (e->button() == Qt::LeftButton && onAddTab) {
+                m_menuOpen = true;
+                QPointer<FilesStrip> self = this;
+                onAddTab();
+                if (!self) return;
+                m_menuOpen = false;
+                m_outside = 0;
+            }
+            return;
+        }
+        if (tab >= 0) {
+            const QList<Tab> tabs = currentTabs();
+            if (e->button() == Qt::LeftButton) {
+                currentTabRef() = tabs[tab].key;
+                m_scroll = 0;
+                applyFilter();
+            } else if (e->button() == Qt::RightButton && !tabs[tab].key.isEmpty() && onTabMenu) {
+                m_menuOpen = true;
+                QPointer<FilesStrip> self = this;
+                onTabMenu(tabs[tab].key, e->globalPosition().toPoint());
+                if (!self) return;
+                m_menuOpen = false;
+                m_outside = 0;
+            }
+            return;
+        }
         const int btn = viewBtnAt(p);
         if (btn >= 0 && e->button() == Qt::LeftButton) {
             m_view = btn == 0 ? QStringLiteral("tiles") : QStringLiteral("list");
@@ -272,17 +413,43 @@ protected:
         }
         const int i = itemAt(p);
         if (i < 0) return;
-        if (e->button() == Qt::LeftButton) { m_press = i; m_pressPos = p; }
-        else if (e->button() == Qt::RightButton && onMenu) onMenu(m_items[i].path, e->globalPosition().toPoint());
+        if (e->button() == Qt::LeftButton) { m_press = i; m_pressPos = p; m_holdTimer.start(); }
+        else if (e->button() == Qt::RightButton && onMenu) {
+            // Пока открыто меню — полоска не сворачивается
+            m_menuOpen = true;
+            const Files::Entry entry = m_items[i];
+            QPointer<FilesStrip> self = this;
+            onMenu(entry, e->globalPosition().toPoint());
+            if (!self) return;
+            m_menuOpen = false;
+            m_outside = 0;
+        }
     }
 
     void mouseReleaseEvent(QMouseEvent *e) override
     {
+        m_holdTimer.stop();
+        if (m_carrying) {
+            if (e->button() == Qt::RightButton) { m_sweeping = false; return; }
+            if (e->button() != Qt::LeftButton) return;
+            // Отпустил на вкладке в Закрепах — файлы перекладываются в неё
+            const int tab = tabAt(e->position().toPoint());
+            if (m_pinsMode && tab >= 0 && onMoveToTab) {
+                const QList<Files::Entry> moved = m_carry;
+                const QString key = currentTabs()[tab].key;
+                dropCarry(true);
+                onMoveToTab(moved, key);
+                return;
+            }
+            // Иначе передумал: файлы «кладутся» обратно
+            dropCarry(false);
+            return;
+        }
         if (e->button() == Qt::LeftButton && m_press >= 0 && m_press < m_items.size()
             && itemAt(e->position().toPoint()) == m_press) {
-            const QString path = m_items[m_press].path;
+            const Files::Entry entry = m_items[m_press];
             m_press = -1;
-            if (onPick) onPick(path);
+            if (onPick && !entry.missing) onPick(entry);
             return;
         }
         m_press = -1;
@@ -290,6 +457,13 @@ protected:
 
     void wheelEvent(QWheelEvent *e) override
     {
+        if (tabsRow().contains(local(e->position().toPoint())) && m_t > 0.5) {
+            const int d = e->angleDelta().y() != 0 ? e->angleDelta().y() : e->angleDelta().x();
+            m_tabScroll = qBound(0, m_tabScroll - d / 2, maxTabScroll());
+            update();
+            e->accept();
+            return;
+        }
         m_scroll = qBound(0, m_scroll - e->angleDelta().y() / 2, maxScroll());
         m_hover = itemAt(e->position().toPoint());
         update();
@@ -310,25 +484,28 @@ protected:
         p.drawPath(bg);
         p.setClipPath(bg);
 
-        // Заголовок: значок папки, «Файлы», сколько; справа — плитки/список
+        // Заголовок: значок, название, сколько; справа — плитки/список
         QFont icon(SmartButton::iconFontFamily());
         icon.setPixelSize(s(14));
         QFont f = font();
         f.setPixelSize(s(12));
         const QRect head(s(12), 0, width() - s(24), s(HeadH));
         p.setFont(icon);
-        p.setPen(QColor(160, 200, 255));
-        p.drawText(head, Qt::AlignLeft | Qt::AlignVCenter, QString(QChar(0xE8B7)));
+        p.setPen(m_pinsMode ? QColor(255, 210, 90) : QColor(160, 200, 255));
+        p.drawText(head, Qt::AlignLeft | Qt::AlignVCenter, QString(QChar(m_pinsMode ? 0xE718 : 0xE8B7)));
         p.setFont(f);
         p.setPen(QColor(255, 255, 255, 190));
+        p.setOpacity(qBound(0.0, 1.0 - m_t / 0.45, 1.0));  // Раскрылась — вместо названия вкладки
         p.drawText(head.adjusted(s(24), 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
-                   QApplication::translate("FilesStrip", "Свежие файлы · %1").arg(m_items.size()));
+                   (m_pinsMode ? QApplication::translate("FilesStrip", "Закреплённые файлы · %1")
+                               : QApplication::translate("FilesStrip", "Свежие файлы · %1")).arg(m_items.size()));
+        p.setOpacity(1.0);
 
         if (m_t < 0.4) {
             // Свёрнута — маленькие значки в ряд справа от заголовка (тают при раскрытии)
             const int sz = s(22), gap = s(5);
             int x = width() - s(12) - sz;
-            const int minX = s(150);
+            const int minX = s(190);
             p.setOpacity(1.0 - m_t / 0.4);
             for (int i = 0; i < m_items.size() && x >= minX; ++i, x -= sz + gap)
                 drawThumb(p, m_items[i], QRect(x, (s(HeadH) - sz) / 2, sz, sz), s(4));
@@ -337,9 +514,9 @@ protected:
         }
 
         // Содержимое проявляется вместе с ростом и чуть «въезжает» снизу
-        const qreal fade = qBound(0.0, (m_t - 0.25) / 0.75, 1.0);
+        const qreal fade = qBound(0.0, (m_t - 0.2) / 0.8, 1.0);
         p.setOpacity(fade);
-        p.translate(0, (1.0 - fade) * s(10));
+        p.translate(0, (1.0 - fade) * s(12));
         p.setFont(icon);
         for (int b = 0; b < 2; ++b) {
             const QRect br = viewBtnRect(b);
@@ -352,13 +529,18 @@ protected:
             p.setPen(QColor(255, 255, 255, on ? 230 : 120));
             p.drawText(br, Qt::AlignCenter, QString(QChar(b == 0 ? 0xE80A : 0xE8FD)));  // Плитки / список
         }
+        drawTabs(p, f, icon);
 
         const QRect body = bodyRect();
         p.setClipRect(body, Qt::IntersectClip);
         if (m_items.isEmpty()) {
             p.setFont(f);
             p.setPen(QColor(255, 255, 255, 110));
-            p.drawText(body, Qt::AlignCenter, QApplication::translate("FilesStrip", "Ничего не найдено"));
+            const QString msg = (m_pinsMode && m_all.isEmpty())
+                ? QApplication::translate("FilesStrip", "Пока нет закреплённых файлов.\n"
+                                                        "Закрепить: История → правый клик по файлу внизу → «Закрепить».")
+                : QApplication::translate("FilesStrip", "Ничего не найдено");
+            p.drawText(body.adjusted(s(12), 0, -s(12), 0), Qt::AlignCenter | Qt::TextWordWrap, msg);
             return;
         }
         for (int i = 0; i < m_items.size(); ++i) {
@@ -370,18 +552,22 @@ protected:
                 p.drawRoundedRect(ir, s(8), s(8));
             }
             const Files::Entry &e = m_items[i];
+            // Файла уже нет — бледный; взят «в руку» — тоже (его место пустеет)
+            const qreal itemOpacity = (e.missing || isCarried(e)) ? fade * 0.35 : fade;
+            p.setOpacity(itemOpacity);
             if (m_view == QLatin1String("list")) {
                 const int isz = s(24);
                 drawThumb(p, e, QRect(ir.left() + s(6), ir.center().y() - isz / 2 + 1, isz, isz), s(4));
                 p.setFont(f);
-                const QString meta = Files::sizeText(e.size) + "   " + Files::timeText(e.mtime);
+                const QString meta = e.missing ? QApplication::translate("FilesStrip", "файл не найден")
+                                               : Files::sizeText(e.size) + "   " + Files::timeText(e.mtime);
                 const int metaW = QFontMetrics(f).horizontalAdvance(meta) + s(10);
                 p.setPen(QColor(255, 255, 255, 110));
                 p.drawText(ir.adjusted(0, 0, -s(8), 0), Qt::AlignRight | Qt::AlignVCenter, meta);
                 p.setPen(QColor(255, 255, 255, 220));
                 const QRect nr = ir.adjusted(s(38), 0, -metaW - s(8), 0);
                 p.drawText(nr, Qt::AlignLeft | Qt::AlignVCenter,
-                           QFontMetrics(f).elidedText(e.name, Qt::ElideMiddle, nr.width()));
+                           QFontMetrics(f).elidedText(e.display(), Qt::ElideMiddle, nr.width()));
             } else {
                 const int tsz = s(56);
                 drawThumb(p, e, QRect(ir.center().x() - tsz / 2, ir.top() + s(6), tsz, tsz), s(6));
@@ -391,8 +577,9 @@ protected:
                 p.setPen(QColor(255, 255, 255, 210));
                 const QRect nr(ir.left() + s(4), ir.top() + s(66), ir.width() - s(8), s(28));
                 p.drawText(nr, Qt::AlignHCenter | Qt::AlignTop | Qt::TextWrapAnywhere,
-                           QFontMetrics(small).elidedText(e.name, Qt::ElideMiddle, nr.width() * 2 - s(6)));
+                           QFontMetrics(small).elidedText(e.display(), Qt::ElideMiddle, nr.width() * 2 - s(6)));
             }
+            p.setOpacity(fade);
         }
     }
 
@@ -404,24 +591,28 @@ private:
 
     void expand(bool on)
     {
-        if (m_items.isEmpty() && on && m_query.isEmpty()) return;
+        if (m_items.isEmpty() && on && m_query.isEmpty() && !m_pinsMode) return;
         const qreal target = on ? 1.0 : 0.0;
         if (target == m_target && (m_tick.isActive() || m_t == target)) return;
         m_target = target;
         m_from = m_t;
-        m_duration = qMax(1, int(Anim::ms(Anim::Kind::Menu, on ? 340 : 190) * qAbs(target - m_t)));
+        // Раскрытие чуть дольше и мягче, сворачивание — не медленнее, но без рывка
+        m_duration = qMax(1, int(Anim::ms(Anim::Kind::Menu, on ? 400 : 260) * qAbs(target - m_t)));
+        m_outside = 0;
         if (on) m_hoverPoll.start();
         else m_hover = -1;
         if (!Anim::enabled(Anim::Kind::Menu)) { m_t = target; finish(); return; }
         m_clock.restart();
+        m_tick.setInterval(Anim::frameMs(this));  // По частоте монитора
         m_tick.start();
     }
 
     void tick()
     {
         const qreal k = qMin(1.0, m_clock.elapsed() / qreal(m_duration));
-        // Раскрытие — мягкое торможение в конце, сворачивание — сразу и быстро
-        const QEasingCurve curve(m_target > m_from ? QEasingCurve::OutQuart : QEasingCurve::OutCubic);
+        // Раскрытие — плавный старт и долгое мягкое торможение;
+        // сворачивание — плавно разгоняется и плавно садится на место
+        const QEasingCurve curve(m_target > m_from ? QEasingCurve::OutCubic : QEasingCurve::InOutSine);
         m_t = m_from + (m_target - m_from) * curve.valueForProgress(k);
         update();
         if (k >= 1.0) { m_t = m_target; finish(); }
@@ -434,15 +625,156 @@ private:
         update();
     }
 
+    // ── Вкладки ──────────────────────────────────────────────────────────────
+    static constexpr int TabPlus = -2;  // tabAt(): попали в «+»
+
+    QList<Tab> currentTabs() const
+    {
+        QList<Tab> tabs{{QString(), QApplication::translate("FilesStrip", "Все")}};
+        if (m_pinsMode) {
+            for (const QString &g : m_pinTabs) tabs.append({g, g});
+        } else {
+            const QString dl = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+            const QString desk = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+            for (const QString &f : m_folders) {
+                const QString c = QDir::cleanPath(f);
+                QString label = QDir(c).dirName();
+                if (c.compare(QDir::cleanPath(dl), Qt::CaseInsensitive) == 0)
+                    label = QApplication::translate("FilesStrip", "Загрузки");
+                else if (c.compare(QDir::cleanPath(desk), Qt::CaseInsensitive) == 0)
+                    label = QApplication::translate("FilesStrip", "Рабочий стол");
+                tabs.append({f, label});
+            }
+        }
+        return tabs;
+    }
+    QString &currentTabRef() { return m_pinsMode ? m_tabPins : m_tabHistory; }
+    QString currentTab() const { return m_pinsMode ? m_tabPins : m_tabHistory; }
+
+    // Где вкладки: от значка до кнопок вида (координаты видимой части)
+    QRect tabsRow() const
+    {
+        const int left = s(34), right = viewBtnRect(0).left() - s(8);
+        return QRect(left, (s(HeadH) - s(24)) / 2, qMax(0, right - left), s(24));
+    }
+
+    // Прямоугольники вкладок (без прокрутки) и «+» в конце
+    QList<QRect> tabRects(QRect *plus = nullptr) const
+    {
+        QFont f = font();
+        f.setPixelSize(s(11));
+        const QFontMetrics fm(f);
+        const QRect row = tabsRow();
+        QList<QRect> out;
+        int x = row.left();
+        for (const Tab &t : currentTabs()) {
+            const int w = qMin(s(160), fm.horizontalAdvance(t.label) + s(20));
+            out.append(QRect(x, row.top(), w, row.height()));
+            x += w + s(5);
+        }
+        if (plus) *plus = QRect(x, row.top(), row.height(), row.height());
+        return out;
+    }
+    int maxTabScroll() const
+    {
+        QRect plus;
+        tabRects(&plus);
+        return qMax(0, plus.right() + s(4) - tabsRow().right());
+    }
+
+    int tabAt(const QPoint &widgetPos) const
+    {
+        if (m_t < 0.9) return -1;
+        const QPoint p = local(widgetPos) + QPoint(m_tabScroll, 0);
+        if (!tabsRow().contains(local(widgetPos))) return -1;
+        QRect plus;
+        const QList<QRect> rects = tabRects(&plus);
+        for (int i = 0; i < rects.size(); ++i) if (rects[i].contains(p)) return i;
+        if (plus.contains(p)) return TabPlus;
+        return -1;
+    }
+
+    void drawTabs(QPainter &p, const QFont &base, const QFont &icon)
+    {
+        QFont f = base;
+        f.setPixelSize(s(11));
+        const QRect row = tabsRow();
+        QRect plus;
+        const QList<QRect> rects = tabRects(&plus);
+        const QList<Tab> tabs = currentTabs();
+        const QString cur = currentTab();
+        p.save();
+        p.setClipRect(row.adjusted(0, -2, 0, 2), Qt::IntersectClip);
+        p.translate(-m_tabScroll, 0);
+        for (int i = 0; i < rects.size(); ++i) {
+            const bool on = tabs[i].key == cur;
+            const bool hot = m_hoverTab == i;
+            p.setPen(QPen(QColor(255, 255, 255, on ? 90 : 40), 1));
+            p.setBrush(on ? (m_pinsMode ? QColor(80, 60, 14, 235) : QColor(36, 60, 104, 235))
+                          : QColor(255, 255, 255, hot ? 26 : 12));
+            p.drawRoundedRect(QRectF(rects[i]).adjusted(0.5, 0.5, -0.5, -0.5), s(7), s(7));
+            p.setFont(f);
+            p.setPen(QColor(255, 255, 255, on ? 240 : 170));
+            p.drawText(rects[i].adjusted(s(8), 0, -s(8), 0), Qt::AlignCenter,
+                       QFontMetrics(f).elidedText(tabs[i].label, Qt::ElideMiddle, rects[i].width() - s(16)));
+        }
+        p.setPen(QPen(QColor(255, 255, 255, 45), 1));
+        p.setBrush(QColor(255, 255, 255, m_hoverTab == TabPlus ? 26 : 10));
+        p.drawRoundedRect(QRectF(plus).adjusted(0.5, 0.5, -0.5, -0.5), s(7), s(7));
+        QFont ic = icon;
+        ic.setPixelSize(s(10));
+        p.setFont(ic);
+        p.setPen(QColor(255, 255, 255, 180));
+        p.drawText(plus, Qt::AlignCenter, QString(QChar(0xE710)));  // Плюс
+        p.restore();
+        // Не всё влезло — мягкие края подсказывают, что вкладки листаются
+        if (maxTabScroll() > 0) {
+            const QColor bg(18, 18, 30, 245);
+            QLinearGradient gl(row.left(), 0, row.left() + s(18), 0);
+            gl.setColorAt(0, bg); gl.setColorAt(1, QColor(18, 18, 30, 0));
+            if (m_tabScroll > 0) p.fillRect(QRect(row.left(), row.top(), s(18), row.height()), gl);
+            QLinearGradient gr(row.right() - s(18), 0, row.right(), 0);
+            gr.setColorAt(0, QColor(18, 18, 30, 0)); gr.setColorAt(1, bg);
+            if (m_tabScroll < maxTabScroll()) p.fillRect(QRect(row.right() - s(18), row.top(), s(18), row.height()), gr);
+        }
+    }
+
+    // Мышь ушла дальше запаса (60 мс подряд) — сворачиваемся
+    void checkHover()
+    {
+        if (m_target <= 0) { m_hoverPoll.stop(); return; }
+        if (m_dragging || m_carrying || m_menuOpen || QApplication::activePopupWidget()) { m_outside = 0; return; }
+        const QRect visible(mapToGlobal(QPoint(0, top())), QSize(width(), curH()));
+        // Запас: по бокам немного, снизу — до поля поиска и чуть в него
+        const QRect zone = visible.adjusted(-s(14), -s(10), s(14), s(28));
+        if (zone.contains(QCursor::pos())) { m_outside = 0; return; }
+        m_outside += m_hoverPoll.interval();
+        if (m_outside >= 60) expand(false);
+    }
+
     void applyFilter()
     {
         m_items.clear();
-        for (const Files::Entry &e : m_all)
-            if (m_query.isEmpty() || e.name.contains(m_query, Qt::CaseInsensitive)) m_items.append(e);
+        const QString tab = currentTab();
+        for (const Files::Entry &e : m_all) {
+            if (!tab.isEmpty()) {  // Открыта вкладка — только её файлы
+                if (m_pinsMode ? e.group != tab
+                               : QDir::cleanPath(e.folder).compare(QDir::cleanPath(tab), Qt::CaseInsensitive) != 0)
+                    continue;
+            }
+            if (m_query.isEmpty() || e.name.contains(m_query, Qt::CaseInsensitive)
+                || e.title.contains(m_query, Qt::CaseInsensitive)) m_items.append(e);
+        }
+        m_tabScroll = qBound(0, m_tabScroll, maxTabScroll());
         m_scroll = qBound(0, m_scroll, maxScroll());
         m_hover = -1;
         requestThumbs();
         relayout();
+    }
+
+    static QString thumbKey(const Files::Entry &e)
+    {
+        return e.path + '|' + QString::number(e.mtime.toMSecsSinceEpoch());
     }
 
     // Превью — по одному разу на файл (ключ — путь и время изменения)
@@ -450,7 +782,8 @@ private:
     {
         const QSize px = QSize(s(56), s(56)) * devicePixelRatioF();
         for (const Files::Entry &e : m_items) {
-            const QString key = e.path + '|' + QString::number(e.mtime.toMSecsSinceEpoch());
+            if (e.missing) continue;
+            const QString key = thumbKey(e);
             if (m_thumbs.contains(key) || m_waiting.contains(key)) continue;
             m_waiting.insert(key);
             const QString path = e.path;
@@ -470,7 +803,7 @@ private:
 
     void drawThumb(QPainter &p, const Files::Entry &e, const QRect &r, int radius) const
     {
-        const QPixmap pm = m_thumbs.value(e.path + '|' + QString::number(e.mtime.toMSecsSinceEpoch()));
+        const QPixmap pm = m_thumbs.value(thumbKey(e));
         if (pm.isNull()) {
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(255, 255, 255, 18));
@@ -491,7 +824,7 @@ private:
     // ── Раскладка ────────────────────────────────────────────────────────────
     int fullBodyHeight() const
     {
-        if (m_items.isEmpty()) return s(60);
+        if (m_items.isEmpty()) return s(m_pinsMode && m_all.isEmpty() ? 80 : 60);
         if (m_view == QLatin1String("list")) return m_items.size() * s(34) + s(8);
         const int cols = qMax(1, (width() - s(16)) / s(92));
         return int((m_items.size() + cols - 1) / cols) * s(100) + s(8);
@@ -540,7 +873,9 @@ private:
 
     void relayout()
     {
-        const bool show = m_enabled && m_center.width() > s(260) && (!m_all.isEmpty());
+        // В Закрепах полоска есть всегда (даже пустая — с подсказкой),
+        // в Истории — если включена и есть свежие файлы
+        const bool show = (m_pinsMode || (m_enabled && !m_all.isEmpty())) && m_center.width() > s(260);
         if (!show) { hide(); return; }
         const int w = qMin(m_center.width() - s(40), s(720));
         const int h = s(HeadH) + bodyHeight();  // Размер не меняется во время анимации
@@ -549,29 +884,114 @@ private:
         update();
     }
 
-    void startDrag(const QString &path)
+    // ── Файлы «в руке» ──────────────────────────────────────────────────────
+    // Зажал файл (или потянул) — он берётся в руку: висит под курсором, а
+    // полоска остаётся открытой. Правым кликом по другим файлам их можно
+    // добавить в стопку. Вынес за полоску — SmartClip прижимается к краям, и
+    // стопку можно бросить в любую программу. Отпустил над полоской — отмена.
+    bool isCarried(const Files::Entry &e) const
+    {
+        for (const Files::Entry &c : m_carry) if (c.path == e.path) return true;
+        return false;
+    }
+
+    void pickUp(const Files::Entry &entry)
+    {
+        m_holdTimer.stop();
+        m_press = -1;
+        if (entry.missing || m_carrying) return;
+        m_carrying = true;
+        m_carry = {entry};
+        m_outside = 0;
+        if (!m_ghost) m_ghost = new DragGhost(this, m_scale);
+        updateGhost();
+        m_ghost->start();
+        setCursor(Qt::ClosedHandCursor);
+        m_carryPoll.start();
+        update();
+    }
+
+    // Левая кнопка мыши зажата прямо сейчас (с учётом «левши»: кнопки поменяны)
+    static bool leftHeld()
+    {
+        const int vk = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
+        return (GetAsyncKeyState(vk) & 0x8000) != 0;
+    }
+
+    void checkCarry()
+    {
+        if (!m_carrying) { m_carryPoll.stop(); return; }
+        if (m_dragging) return;  // Идёт перетаскивание Windows — она сама следит за кнопкой
+        // Отпустил кнопку — файлы просто пропадают из руки
+        if (!leftHeld()) { dropCarry(false); return; }
+        // Вынес за полоску — начинаем перетаскивание, даже если движения не пришли
+        const QPoint p = mapFromGlobal(QCursor::pos());
+        const QRect zone = QRect(0, top(), width(), curH()).adjusted(-s(6), -s(6), s(6), s(6));
+        if (!zone.contains(p)) startCarryDrag();
+    }
+
+    void toggleCarry(const Files::Entry &e)
+    {
+        for (int i = 0; i < m_carry.size(); ++i)
+            if (m_carry[i].path == e.path) {
+                if (i > 0) m_carry.removeAt(i);  // Первый (взятый) не убираем
+                updateGhost();
+                update();
+                return;
+            }
+        m_carry.append(e);
+        updateGhost();
+        update();
+    }
+
+    void updateGhost()
+    {
+        if (!m_ghost) return;
+        QList<DragGhost::Item> items;
+        for (const Files::Entry &e : m_carry) items.append({m_thumbs.value(thumbKey(e)), e.display()});
+        m_ghost->setItems(items);
+    }
+
+    // Положить обратно / бросили: убрать «руку»
+    void dropCarry(bool dropped)
+    {
+        m_carryPoll.stop();
+        if (m_ghost) { m_ghost->finish(dropped); m_ghost = nullptr; }
+        m_carrying = false;
+        m_carry.clear();
+        m_outside = 0;
+        setCursor(Qt::ArrowCursor);
+        update();
+    }
+
+    // Вынес за полоску — настоящее перетаскивание всей стопки в другую программу
+    void startCarryDrag()
     {
         auto *mime = new QMimeData;
-        mime->setUrls({QUrl::fromLocalFile(path)});
+        QList<QUrl> urls;
+        for (const Files::Entry &e : m_carry) urls << QUrl::fromLocalFile(e.path);
+        mime->setUrls(urls);
         auto *drag = new QDrag(this);
         drag->setMimeData(mime);
-        const QPixmap pm = [&]() {
-            for (const Files::Entry &e : m_items)
-                if (e.path == path) return m_thumbs.value(e.path + '|' + QString::number(e.mtime.toMSecsSinceEpoch()));
-            return QPixmap();
-        }();
-        if (!pm.isNull()) drag->setPixmap(pm.scaled(QSize(s(48), s(48)) * pm.devicePixelRatio(),
-                                                    Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        // Картинку под курсором рисует «живая» карточка (DragGhost) — у Windows своей нет
+        QPixmap none(1, 1);
+        none.fill(Qt::transparent);
+        drag->setPixmap(none);
         m_dragging = true;
+        QPointer<FilesStrip> self = this;
+        if (onDragStarted) onDragStarted();   // SmartClip прижимается к краям экрана
         const Qt::DropAction act = drag->exec(Qt::CopyAction, Qt::CopyAction);
+        if (!self) return;
         m_dragging = false;
-        if (act != Qt::IgnoreAction && onDropped) onDropped();
-        else if (!underMouse()) m_leaveTimer.start();
+        // Бросили туда, где файлы не принимают, или отменили — рука всё равно пустеет
+        const bool dropped = act != Qt::IgnoreAction;
+        dropCarry(dropped);
+        if (onDragFinished) onDragFinished(dropped);  // …и отпрыгивает на место
     }
 
     int m_scale = 100;
     std::function<QImage(const QString &, QSize)> m_thumbnailer;
-    QList<Files::Entry> m_all;     // Всё найденное
+    QList<Files::Entry> m_all;     // Всё найденное / закреплённое
     QList<Files::Entry> m_items;   // После поиска
     QHash<QString, QPixmap> m_thumbs;
     QSet<QString> m_waiting;
@@ -579,17 +999,31 @@ private:
     QString m_query;
     QRect m_center;
     bool m_enabled = true;
+    bool m_pinsMode = false;
     bool m_dragging = false;
+    bool m_menuOpen = false;
+    bool m_carrying = false;       // Файлы «в руке» (см. pickUp)
+    bool m_sweeping = false;       // Правая зажата — собираем файлы подряд
+    bool m_sweepAdd = true;        // ...добавляем (или убираем)
+    QStringList m_folders;         // Папки Истории (вкладки)
+    QStringList m_pinTabs;         // Вкладки текущей папки закрепов
+    QString m_tabHistory, m_tabPins;  // Открытая вкладка
+    int m_tabScroll = 0;
+    int m_hoverTab = -1;
+    QList<Files::Entry> m_carry;   // Что в руке: первый — взятый, дальше — добавленные
+    QPointer<DragGhost> m_ghost;
+    QTimer m_holdTimer;
+    QTimer m_carryPoll;            // Следит за кнопкой мыши, пока файлы в руке
     int m_gen = 0;
     int m_scroll = 0;
     int m_hover = -1;
     int m_press = -1;
+    int m_outside = 0;             // Сколько мс мышь за пределами полоски
     QPoint m_pressPos;
     qreal m_t = 0;                 // 0 — свёрнута, 1 — раскрыта
     qreal m_from = 0, m_target = 0;
     int m_duration = 1;
     QElapsedTimer m_clock;
     QTimer m_tick;
-    QTimer m_leaveTimer;
     QTimer m_hoverPoll;
 };

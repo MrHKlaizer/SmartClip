@@ -39,6 +39,7 @@
 
 // Предварительные объявления — нам нужны только указатели:
 class Database;      // База данных
+namespace Files { struct Entry; }  // Файл в полоске внизу (FilesStrip.h)
 class ImageViewer;   // Полноэкранный просмотрщик изображений
 
 // ─── Класс MainWindow ─────────────────────────────────────────────────────────
@@ -230,6 +231,20 @@ private:
     // ─── Действия над карточками ──────────────────────────────────────────────
     void pinText(const QString &content);       // Закрепить текст из истории
     void pinImage(const QString &filepath);     // Закрепить картинку из истории
+    void pinFile(const QString &filepath);      // Закрепить файл из полоски внизу
+    void showFileMenu(const Files::Entry &e, const QPoint &globalPos);  // Правый клик по файлу
+    void startFileDragSqueeze();  // Понесли файл — SmartClip прижимается к краям экрана
+    void endFileDragSqueeze();    // Отпустили — отпрыгивает на место
+    void dropSqueeze();           // SmartClip прячется — убрать сцену сразу
+    void placeFoldersBar();       // Полоса папок — над левой колонкой, до правой
+    void placeImportButtons();    // Кнопки импорта видео/аудио — по бокам полоски файлов
+    void prewarm();               // Подготовить окно заранее, пока скрыто (быстрое первое открытие)
+    void refreshPinnedFiles(bool allFolders = false);  // Закреплённые файлы и вкладки -> полоска
+    QStringList pinFileTabs() const;  // Вкладки полоски в текущей папке закрепов
+    void addFilesTab();                                         // «+» в полоске файлов
+    void showFilesTabMenu(const QString &key, const QPoint &globalPos);  // Правый клик по вкладке
+    void moveFilesToTab(const QList<Files::Entry> &files, const QString &tab);
+    void goToFolder(const QString &folder);  // Открыть папку закрепов (с анимацией)
     void importVideo();                         // Выбрать видеофайл и добавить в закрепы
     void importAudio();                         // Выбрать аудиофайл и добавить в закрепы
     void deleteCard(int id, QLabel *card);      // Удалить запись истории
@@ -275,6 +290,10 @@ private:
     class QTimer *m_searchTimer = nullptr; // Задержка поиска по истории (не искать на каждую букву)
     ImageViewer *m_imageViewer  = nullptr; // Полноэкранный просмотрщик (создаётся при первом использовании)
     class FilesStrip  *m_filesStrip = nullptr;  // Свежие файлы внизу по центру
+    QPointer<QWidget>  m_squeeze;               // Сцена «прижались к краям» (DragSqueeze.h)
+    bool               m_fileDrag = false;      // Сейчас несут файл из полоски
+    class SmartButton *m_importVideoBtn = nullptr; // 🎬 / 🎵 — импорт в текущую папку закрепов
+    class SmartButton *m_importAudioBtn = nullptr;
     class VideoViewer *m_videoViewer = nullptr; // Большой просмотр видео (2.1)
 
     // Ожидающее обновление (данные о новой версии от UpdateChecker).

@@ -26,6 +26,7 @@
 #include <QScrollBar>
 #include <QEvent>
 #include <QTimer>
+#include <QApplication>
 #include <QElapsedTimer>
 #include <QPointer>
 #include <QHash>
@@ -41,10 +42,12 @@ class ArcColumnLayout : public QVBoxLayout
 {
 public:
     using QVBoxLayout::QVBoxLayout;
+    std::function<void()> beforeLayout;
     std::function<void()> afterLayout;
 
     void setGeometry(const QRect &r) override
     {
+        if (beforeLayout) beforeLayout();
         QVBoxLayout::setGeometry(r);
         if (afterLayout) afterLayout();
     }
@@ -64,7 +67,23 @@ public:
         : QObject(area), m_area(area), m_layout(layout), m_toCenter(toCenter),
           m_edge(edge), m_slide(slide), m_byCrossing(byCrossing)
     {
-        layout->afterLayout = [this]() { rememberBase(); apply(); };
+        // Плавная перестройка: лейаут сразу ставит карточки на новые места —
+        // запоминаем, где они стояли, и возвращаем туда; дальше tick() плавно
+        // довозит их (раньше соседние карточки при перетаскивании перескакивали)
+        layout->beforeLayout = [this]() {
+            m_prevPos.clear();
+            if (!m_reflow) return;
+            if (QWidget *content = m_area->widget())
+                for (QObject *o : content->children())
+                    if (auto *w = qobject_cast<QWidget *>(o)) m_prevPos.insert(w, w->pos());
+        };
+        layout->afterLayout = [this]() {
+            rememberBase();
+            for (auto it = m_prevPos.cbegin(); it != m_prevPos.cend(); ++it)
+                if (it.key()->pos() != it.value()) it.key()->move(it.value());
+            m_prevPos.clear();
+            apply();
+        };
         // Содержимое колонки двигается при прокрутке (и при «перетяжке» за край)
         area->widget()->installEventFilter(this);
         area->widget()->setMouseTracking(true);  // Курсор между карточками — тоже знаем
@@ -72,6 +91,12 @@ public:
         m_timer.setTimerType(Qt::PreciseTimer);
         m_timer.setInterval(8);
         connect(&m_timer, &QTimer::timeout, this, [this]() { tick(); });
+        // Страховка наведения: Windows иногда не присылает «мышь ушла/пришла»
+        // (быстрое движение, прозрачная середина окна) — карточка «залипала»
+        // выдвинутой, а другие больше не выдвигались. Пока мышь над колонкой,
+        // сами сверяем, над какой карточкой курсор.
+        m_hoverCheck.setInterval(80);
+        connect(&m_hoverCheck, &QTimer::timeout, this, [this]() { syncHover(); });
     }
 
     // Пересчитать (например, после смены оформления в настройках)
@@ -105,13 +130,15 @@ protected:
         const QEvent::Type t = e->type();
         if ((obj == content && t == QEvent::Move) || (obj == m_area->viewport() && t == QEvent::Resize)) {
             apply();
+        } else if (obj == m_area->viewport() && t == QEvent::Enter) {
+            if (hoverOn()) m_hoverCheck.start();
         } else if (obj == m_area->viewport() && (t == QEvent::Leave || t == QEvent::Hide)) {
             setHovered(nullptr);
         } else if (obj != content && obj != m_area->viewport()) {
             // Карточка: мышь зашла — выдвигаем; вышла — проверяем, не осталась ли
             // она над увеличенной частью карточки (иначе карточка дрожала бы)
             auto *w = static_cast<QWidget *>(obj);
-            if (t == QEvent::Enter && hoverOn()) setHovered(w);
+            if (t == QEvent::Enter && hoverOn()) { setHovered(w); m_hoverCheck.start(); }
             else if (t == QEvent::Leave) checkHover();
         } else if (obj == content && t == QEvent::MouseMove) {
             checkHover();
@@ -149,20 +176,55 @@ private:
         startTimer();
     }
 
+    // Где видна выдвинутая карточка с учётом её увеличения (координаты колонки)
+    QRectF hoveredRect() const
+    {
+        const qreal s = 1.0 + GROW * m_hover.value(m_hovered.data(), 0.0);
+        const QRectF g(m_hovered->geometry());
+        return QRectF(g.center().x() - g.width() * s / 2, g.top(), g.width() * s, g.height() * s);
+    }
+
     // Курсор всё ещё над карточкой с учётом её увеличения?
     void checkHover()
     {
         if (!m_hovered) return;
-        const qreal s = 1.0 + GROW * m_hover.value(m_hovered.data(), 0.0);
-        const QRectF g(m_hovered->geometry());
-        const QRectF vis(g.center().x() - g.width() * s / 2, g.top(), g.width() * s, g.height() * s);
         const QPointF c = m_area->widget()->mapFromGlobal(QCursor::pos());
-        if (!vis.contains(c)) setHovered(nullptr);
+        if (!hoveredRect().contains(c)) setHovered(nullptr);
+    }
+
+    // Сверить выдвинутую карточку с тем, что сейчас под курсором
+    void syncHover()
+    {
+        QWidget *content = m_area->widget();
+        if (!content || !m_area->isVisible() || !hoverOn()) {
+            m_hoverCheck.stop();
+            if (m_hovered) setHovered(nullptr);
+            return;
+        }
+        if (QApplication::mouseButtons() != Qt::NoButton) return;  // Тащат карточку — не мешаем
+        const QPoint gp = QCursor::pos();
+        const QPointF c = content->mapFromGlobal(gp);
+        if (m_hovered && hoveredRect().contains(c)) return;           // Всё верно
+        const bool inColumn = m_area->viewport()->rect().contains(m_area->viewport()->mapFromGlobal(gp));
+        QWidget *under = nullptr;
+        if (inColumn) {
+            for (int i = 0; i < m_layout->count(); ++i) {
+                QWidget *w = m_layout->itemAt(i)->widget();
+                if (w && !w->isHidden() && fxOf(w) && w->geometry().contains(c.toPoint())) { under = w; break; }
+            }
+        }
+        setHovered(under);
+        if (!inColumn && !m_hovered) m_hoverCheck.stop();  // Мышь ушла из колонки — проверять нечего
     }
 
     void startTimer()
     {
-        if (!m_timer.isActive()) { m_clock.start(); m_last = 0; m_timer.start(); }
+        if (!m_timer.isActive()) {
+            m_clock.start();
+            m_last = 0;
+            m_timer.setInterval(Anim::frameMs(m_area));  // По частоте монитора
+            m_timer.start();
+        }
     }
 
     // Плавное выдвижение/возврат карточек под мышью
@@ -227,6 +289,12 @@ private:
         const qreal kTop    = qBound(0.0, scrolled  / ramp, 1.0);
         const qreal kBottom = qBound(0.0, remaining / ramp, 1.0);
 
+        // Карточки далеко за краем видимой части не трогаем: их никто не видит,
+        // а двигать и перерисовывать их — работа впустую. Встанут на место,
+        // когда до них долистают (прокрутка тоже вызывает apply).
+        // При перестройке (перетаскивание) — двигаем все, чтобы ничего не потерялось.
+        const qreal bandTop = scrolled - 120, bandBottom = scrolled + vh + 120;
+
         qreal push = 0;  // Насколько раздвинуты карточки выше (увеличенными под мышью)
         for (int i = 0; i < m_layout->count(); ++i) {
             QWidget *w = m_layout->itemAt(i)->widget();
@@ -234,6 +302,10 @@ private:
             const QVariant baseV = w->property("arcBase");
             if (!baseV.isValid()) continue;
             const QPoint base = baseV.toPoint();
+            if (!m_reflow && (base.y() + push > bandBottom || base.y() + push + w->height() < bandTop)) {
+                push += GROW * m_hover.value(w, 0.0) * w->height();
+                continue;
+            }
             CardShadowEffect *fx = fxOf(w);
 
             // «Приподнятая» карточка (её тащат или только что отпустили):
@@ -288,12 +360,22 @@ private:
     // Поставить карточку на место: сразу или (при перестройке) через tick()
     void place(QWidget *w, const QPoint &pos)
     {
-        if (m_reflow) m_targets.insert(w, pos);
+        if (m_reflow) {
+            // Виджет удалят (например, пустое место после перетаскивания) —
+            // забываем его. Раньше tick() ещё полсекунды двигал удалённое
+            // место, и SmartClip падал.
+            if (!w->property("arcForget").toBool()) {
+                w->setProperty("arcForget", true);
+                connect(w, &QObject::destroyed, this, [this, w]() { m_targets.remove(w); m_hover.remove(w); });
+            }
+            m_targets.insert(w, pos);
+        }
         else if (w->pos() != pos) w->move(pos);
     }
 
     bool              m_reflow = false;  // Плавная перестройка включена
     QHash<QWidget *, QPoint> m_targets;   // Куда доезжает каждая карточка
+    QHash<QWidget *, QPoint> m_prevPos;   // Где стояли до перестройки лейаута
 
     QScrollArea      *m_area;
     ArcColumnLayout  *m_layout;
@@ -303,6 +385,7 @@ private:
     bool              m_byCrossing;
     qreal             m_cross = 30;   // Линия у края для byCrossing: за ней карточка «уходит», px
     QPointer<QWidget> m_hovered;
+    QTimer            m_hoverCheck;  // Страховка наведения (см. syncHover)
     QHash<QWidget *, qreal> m_hover;  // Карточки, которые выдвинуты или возвращаются
     QTimer            m_timer;
     QElapsedTimer     m_clock;

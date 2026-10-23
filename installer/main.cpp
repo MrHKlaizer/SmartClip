@@ -155,6 +155,14 @@ static void writeLanguageToIni(const std::wstring& langCode)
                                langCode.c_str(), iniPath.c_str());
 }
 
+// Язык уже выбран (есть запись в настройках SmartClip)?
+static bool iniHasLanguage()
+{
+    wchar_t buf[64] = {};
+    GetPrivateProfileStringW(L"system", L"language", L"", buf, 64, getIniPath().c_str());
+    return buf[0] != L'\0';
+}
+
 static std::wstring readLanguageFromIni()
 {
     wchar_t buf[64] = {};
@@ -669,9 +677,13 @@ static void doInstall(bool updateMode) {
 
     const bool alreadyInstalled = fs::exists(fs::path(dstDir) / APP_EXE);
 
-    // ── Язык: спрашиваем только при первой установке ───────────
-    // (раньше спрашивали при каждом обновлении и сбрасывали выбор)
-    std::wstring chosenLang = alreadyInstalled ? readLanguageFromIni() : chooseLanguage();
+    // ── Язык: спрашиваем при первой установке ──────────────────
+    // (раньше спрашивали при каждом обновлении и сбрасывали выбор).
+    // «Первая» — если программы нет ИЛИ язык ещё не выбран: после удаления в
+    // папке могли остаться файлы, и установщик принимал её за обновление и
+    // молча ставил English. Удаление сбрасывает выбор языка (см. doUninstall).
+    const bool askLanguage = !updateMode && (!alreadyInstalled || !iniHasLanguage());
+    std::wstring chosenLang = askLanguage ? chooseLanguage() : readLanguageFromIni();
     if (chosenLang.empty()) return;  // Пользователь закрыл окно выбора языка
 
     // ── Подтверждение ──────────────────────────────────────────
@@ -826,6 +838,9 @@ static void doUninstall() {
     //  чтобы Uninstaller.exe успел завершиться до удаления папки)
     bool restart = confirm(str.restartExplorer);
     if (restart) restartExplorer();
+
+    // Новая установка снова спросит язык (данные — история, закрепы — остаются)
+    WritePrivateProfileStringW(L"system", L"language", nullptr, getIniPath().c_str());
 
     // ── Планируем удаление папки — самым последним! ───────────
     // Batch ждёт 4 сек → к тому времени процесс уже завершится

@@ -35,7 +35,7 @@ public:
     {
         area->viewport()->installEventFilter(this);
         m_timer.setTimerType(Qt::PreciseTimer);
-        m_timer.setInterval(8);  // Чаще, чем 60 кадров/с — чтобы не дёргалось на 120/144 Гц
+        m_timer.setInterval(8);  // При старте — по частоте монитора (Anim::frameMs)
         connect(&m_timer, &QTimer::timeout, this, [this]() { tick(); });
     }
 
@@ -67,6 +67,7 @@ public:
         }
         m_target = qBound<qreal>(sb->minimum(), target, sb->maximum());
         m_lastWheel.start();
+        m_timer.setInterval(Anim::frameMs(m_area));
         m_timer.start();
     }
 
@@ -105,7 +106,7 @@ protected:
         m_target = qBound(lo - MAX_PULL, m_target, hi + MAX_PULL);
 
         m_lastWheel.start();
-        if (!m_timer.isActive()) m_timer.start();
+        if (!m_timer.isActive()) { m_timer.setInterval(Anim::frameMs(m_area)); m_timer.start(); }
         e->accept();
         return true;  // Сами двигаем — обычную прокрутку Qt не запускаем
     }
