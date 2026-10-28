@@ -1155,6 +1155,20 @@ bool Database::setFolderPinned(const QString &name, bool pinned)
 
 // ─── Редактирование закрепа ────────────────────────────────────────────────────
 
+// Изменить текст записи истории.
+bool Database::updateHistoryContent(int id, const QString &content)
+{
+    QSqlQuery query;
+    query.prepare("UPDATE history SET content = :content WHERE id = :id");
+    query.bindValue(":content", content);
+    query.bindValue(":id",      id);
+    if (!query.exec()) {
+        qDebug() << "Ошибка обновления текста истории:" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 // Изменить текстовое содержимое закрепа.
 bool Database::updatePinContent(int id, const QString &content)
 {

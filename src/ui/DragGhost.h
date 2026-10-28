@@ -71,6 +71,15 @@ public:
         m_leaveAt = m_clock.elapsed();
     }
 
+    // Во время переноса Windows крутит свой цикл и таймер почти не срабатывает —
+    // карточку двигают отсюда на каждое движение мыши (не чаще кадра монитора)
+    void pump()
+    {
+        if (m_leaving || m_clock.elapsed() - m_last < Anim::frameMs(this) - 1) return;
+        step();
+        repaint();  // Сразу: отложенная перерисовка в этом цикле тоже запаздывает
+    }
+
 protected:
     void paintEvent(QPaintEvent *) override
     {

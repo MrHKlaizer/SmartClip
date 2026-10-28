@@ -1838,4 +1838,48 @@ To pin: History → right-click a file at the bottom → "Pin".</translation>
         <translation>Info</translation>
     </message>
 </context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Выбрано: %1  ·  перетащи в программу  ·  Esc — отмена</source>
+        <translation>Selected: %1  ·  drag into an app  ·  Esc — cancel</translation>
+    </message>
+    <message>
+        <source>Редактировать текст</source>
+        <translation>Edit text</translation>
+    </message>
+    <message>
+        <source>🗗  Открыть в окне</source>
+        <translation>🗗  Open in window</translation>
+    </message>
+</context>
+<context>
+    <name>PhotoWindow</name>
+    <message>
+        <source>Не поверх других окон</source>
+        <translation>Not on top of other windows</translation>
+    </message>
+    <message>
+        <source>Поверх всех окон</source>
+        <translation>Always on top</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <source>Сохранить</source>
+        <translation>Save</translation>
+    </message>
+</context>
+<context>
+    <name>Carry</name>
+    <message>
+        <source>В руке: %1</source>
+        <translation>In hand: %1</translation>
+    </message>
+    <message>
+        <source>Перетащи — порядок вставки  ·  «−» — убрать  ·  зажми мышь вне окна — снова в руку  ·  Esc — отмена</source>
+        <translation>Drag — paste order  ·  «−» — remove  ·  hold the mouse outside — back in hand  ·  Esc — cancel</translation>
+    </message>
+</context>
 </TS>

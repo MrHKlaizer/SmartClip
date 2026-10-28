@@ -1838,4 +1838,48 @@ Anheften: Verlauf → Rechtsklick auf eine Datei unten → „Anheften“.</tran
         <translation>Info</translation>
     </message>
 </context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Выбрано: %1  ·  перетащи в программу  ·  Esc — отмена</source>
+        <translation>Ausgewählt: %1  ·  in ein Programm ziehen  ·  Esc — abbrechen</translation>
+    </message>
+    <message>
+        <source>Редактировать текст</source>
+        <translation>Text bearbeiten</translation>
+    </message>
+    <message>
+        <source>🗗  Открыть в окне</source>
+        <translation>🗗  In Fenster öffnen</translation>
+    </message>
+</context>
+<context>
+    <name>PhotoWindow</name>
+    <message>
+        <source>Не поверх других окон</source>
+        <translation>Nicht über anderen Fenstern</translation>
+    </message>
+    <message>
+        <source>Поверх всех окон</source>
+        <translation>Immer im Vordergrund</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <source>Сохранить</source>
+        <translation>Speichern</translation>
+    </message>
+</context>
+<context>
+    <name>Carry</name>
+    <message>
+        <source>В руке: %1</source>
+        <translation>In der Hand: %1</translation>
+    </message>
+    <message>
+        <source>Перетащи — порядок вставки  ·  «−» — убрать  ·  зажми мышь вне окна — снова в руку  ·  Esc — отмена</source>
+        <translation>Ziehen — Einfügereihenfolge  ·  «−» — entfernen  ·  Maus außerhalb halten — wieder in die Hand  ·  Esc — abbrechen</translation>
+    </message>
+</context>
 </TS>

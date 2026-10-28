@@ -1838,4 +1838,48 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <translation>Інфо</translation>
     </message>
 </context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <source>Выбрано: %1  ·  перетащи в программу  ·  Esc — отмена</source>
+        <translation>Вибрано: %1  ·  перетягни в програму  ·  Esc — скасувати</translation>
+    </message>
+    <message>
+        <source>Редактировать текст</source>
+        <translation>Редагувати текст</translation>
+    </message>
+    <message>
+        <source>🗗  Открыть в окне</source>
+        <translation>🗗  Відкрити у вікні</translation>
+    </message>
+</context>
+<context>
+    <name>PhotoWindow</name>
+    <message>
+        <source>Не поверх других окон</source>
+        <translation>Не поверх інших вікон</translation>
+    </message>
+    <message>
+        <source>Поверх всех окон</source>
+        <translation>Поверх усіх вікон</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <source>Сохранить</source>
+        <translation>Зберегти</translation>
+    </message>
+</context>
+<context>
+    <name>Carry</name>
+    <message>
+        <source>В руке: %1</source>
+        <translation>У руці: %1</translation>
+    </message>
+    <message>
+        <source>Перетащи — порядок вставки  ·  «−» — убрать  ·  зажми мышь вне окна — снова в руку  ·  Esc — отмена</source>
+        <translation>Перетягни — порядок вставлення  ·  «−» — прибрати  ·  затисни мишу поза вікном — знову в руку  ·  Esc — скасувати</translation>
+    </message>
+</context>
 </TS>

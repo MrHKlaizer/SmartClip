@@ -40,7 +40,7 @@
 #include "../core/Thumbs.h"
 #include "Anim.h"
 #include "SmartButton.h"   // SmartButton::iconFontFamily() — системный шрифт значков
-#include "DragGhost.h"     // «Живой» файл в руке
+#include "Carry.h"         // Рука: файлы и фото, которые несёшь
 
 namespace Files {
 
@@ -186,23 +186,15 @@ public:
         // Зажал файл и держишь — он «берётся в руку» (даже если мышь не двигалась)
         m_holdTimer.setSingleShot(true);
         m_holdTimer.setInterval(220);
-        // Пока файлы в руке — сами следим за мышью: над прозрачной серединой окна
-        // Windows может не присылать SmartClip движения и отпускание кнопки, и
-        // файлы оставались «в руке» после отпускания
-        m_carryPoll.setTimerType(Qt::PreciseTimer);
-        m_carryPoll.setInterval(15);
-        connect(&m_carryPoll, &QTimer::timeout, this, [this]() { checkCarry(); });
         connect(&m_holdTimer, &QTimer::timeout, this, [this]() {
             if (m_press >= 0 && m_press < m_items.size() && (QApplication::mouseButtons() & Qt::LeftButton))
-                pickUp(m_items[m_press]);
+                pickUp(m_press);
         });
         hide();
     }
 
     std::function<void(const Files::Entry &)> onPick;                  // Клик — вставить файл
     std::function<void(const Files::Entry &, const QPoint &)> onMenu;  // Правый клик
-    std::function<void()> onDragStarted;                               // Понесли файл мышкой
-    std::function<void(bool dropped)> onDragFinished;                  // Отпустили (dropped — куда-то вставили)
 
     // Вкладки над файлами. В Истории — папки, из которых показывать файлы
     // («Все» и по одной на папку), в Закрепах — дополнительные «полки» внутри
@@ -285,6 +277,39 @@ public:
         applyFilter();
     }
 
+    Carry *carry = nullptr;  // Рука (общая с фото в колонках, см. Carry.h)
+
+    // Несём фото — полоска раскрывается, чтобы добрать и файлы
+    void holdOpen() { if (isVisible()) expand(true); }
+
+    // Файл под курсором (для руки: правым — добавить)
+    bool carryItemAt(const QPoint &global, CarryItem &it, QRectF &from) const
+    {
+        if (!isVisible()) return false;
+        const int i = itemAt(mapFromGlobal(global));
+        if (i < 0 || m_items[i].missing) return false;
+        it = carryItem(i);
+        from = thumbRectGlobal(i);
+        return true;
+    }
+
+    // Отпустили над вкладкой в Закрепах — закреплённые файлы перекладываются в неё
+    bool carryDropAt(const QPoint &global, const QList<CarryItem> &items)
+    {
+        if (!m_pinsMode || !onMoveToTab || !isVisible()) return false;
+        const int tab = tabAt(mapFromGlobal(global));
+        if (tab < 0) return false;
+        QList<Files::Entry> moved;
+        for (const CarryItem &it : items)
+            for (const Files::Entry &e : m_all)
+                if (e.path == it.path && e.pinId) { moved << e; break; }
+        if (moved.isEmpty()) return false;
+        const QString key = currentTabs()[tab].key;
+        QPointer<FilesStrip> self = this;
+        QTimer::singleShot(0, this, [self, moved, key]() { if (self && self->onMoveToTab) self->onMoveToTab(moved, key); });
+        return true;
+    }
+
     // Свернуть сразу, без анимации (окно спряталось, понесли файл)
     void collapseNow()
     {
@@ -327,19 +352,10 @@ protected:
 
     void mouseMoveEvent(QMouseEvent *e) override
     {
-        if (m_carrying) {
-            // Файл в руке: пока над полоской — можно добавлять ещё (правый клик);
-            // вынес за полоску — начинается настоящее перетаскивание
-            const QPoint p = e->position().toPoint();
-            const QRect zone = QRect(0, top(), width(), curH()).adjusted(-s(6), -s(6), s(6), s(6));
-            if (!zone.contains(p)) { startCarryDrag(); return; }
-            const int h = itemAt(p);
+        if (carrying()) {
+            // В руке: только подсветка под курсором (добирать — правой, см. Carry.h)
+            const int h = itemAt(e->position().toPoint());
             if (h != m_hover) { m_hover = h; update(); }
-            // Зажал правую и ведёшь — собираешь (или убираешь) файлы подряд
-            if (m_sweeping && (e->buttons() & Qt::RightButton) && h >= 0 && !m_items[h].missing) {
-                const bool carried = isCarried(m_items[h]);
-                if (m_sweepAdd != carried) toggleCarry(m_items[h]);
-            }
             return;
         }
         if (!hitVisible(e->position().toPoint())) {  // Над полоской — прозрачно
@@ -356,25 +372,12 @@ protected:
         // Тянем файл мышкой — перетаскивание в другую программу
         if ((e->buttons() & Qt::LeftButton) && m_press >= 0 && m_press < m_items.size()
             && (e->position().toPoint() - m_pressPos).manhattanLength() > QApplication::startDragDistance())
-            pickUp(m_items[m_press]);
+            pickUp(m_press);
     }
 
     void mousePressEvent(QMouseEvent *e) override
     {
-        if (m_carrying) {
-            // Файл в руке, правый клик по другому файлу — добавить его в стопку
-            // (ещё раз — убрать), чтобы потом закинуть всё разом
-            if (e->button() == Qt::RightButton) {
-                const int i = itemAt(e->position().toPoint());
-                if (i >= 0 && !m_items[i].missing) {
-                    toggleCarry(m_items[i]);
-                    // Дальше, пока правая зажата, — так же со всеми, над чем проведёшь
-                    m_sweeping = true;
-                    m_sweepAdd = isCarried(m_items[i]);
-                }
-            }
-            return;
-        }
+        if (carrying()) return;  // Кнопками, пока несём, распоряжается рука
         m_press = -1;
         if (m_t < 0.9) return;  // Ещё раскрывается
         const QPoint p = e->position().toPoint();
@@ -433,22 +436,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *e) override
     {
         m_holdTimer.stop();
-        if (m_carrying) {
-            if (e->button() == Qt::RightButton) { m_sweeping = false; return; }
-            if (e->button() != Qt::LeftButton) return;
-            // Отпустил на вкладке в Закрепах — файлы перекладываются в неё
-            const int tab = tabAt(e->position().toPoint());
-            if (m_pinsMode && tab >= 0 && onMoveToTab) {
-                const QList<Files::Entry> moved = m_carry;
-                const QString key = currentTabs()[tab].key;
-                dropCarry(true);
-                onMoveToTab(moved, key);
-                return;
-            }
-            // Иначе передумал: файлы «кладутся» обратно
-            dropCarry(false);
-            return;
-        }
+        if (carrying()) return;  // Отпускание решает рука (см. carryDropAt)
         if (e->button() == Qt::LeftButton && m_press >= 0 && m_press < m_items.size()
             && itemAt(e->position().toPoint()) == m_press) {
             const Files::Entry entry = m_items[m_press];
@@ -822,7 +810,7 @@ private:
     void checkHover()
     {
         if (m_target <= 0) { m_hoverPoll.stop(); return; }
-        if (m_dragging || m_carrying || m_menuOpen || QApplication::activePopupWidget()) { m_outside = 0; return; }
+        if (carrying() || m_menuOpen || QApplication::activePopupWidget()) { m_outside = 0; return; }
         const QRect visible(mapToGlobal(QPoint(0, top())), QSize(width(), curH()));
         // Запас: по бокам немного, снизу — до поля поиска и чуть в него
         const QRect zone = visible.adjusted(-s(14), -s(10), s(14), s(28));
@@ -971,109 +959,36 @@ private:
         update();
     }
 
-    // ── Файлы «в руке» ──────────────────────────────────────────────────────
-    // Зажал файл (или потянул) — он берётся в руку: висит под курсором, а
-    // полоска остаётся открытой. Правым кликом по другим файлам их можно
-    // добавить в стопку. Вынес за полоску — SmartClip прижимается к краям, и
-    // стопку можно бросить в любую программу. Отпустил над полоской — отмена.
-    bool isCarried(const Files::Entry &e) const
+    // ── Файлы «в руке» (сама рука — Carry.h) ────────────────────────────────
+    // Зажал файл (или потянул) — он летит в руку, полоска остаётся открытой.
+    // Правым кликом по другим файлам (и фото в колонках) их можно добавить.
+    bool carrying() const { return carry && carry->active(); }
+    bool isCarried(const Files::Entry &e) const { return carry && carry->has(e.path); }
+
+    CarryItem carryItem(int i) const
     {
-        for (const Files::Entry &c : m_carry) if (c.path == e.path) return true;
-        return false;
+        const Files::Entry &e = m_items[i];
+        return CarryItem{e.path, m_thumbs.value(thumbKey(e)), e.display()};
     }
 
-    void pickUp(const Files::Entry &entry)
+    // Где нарисовано превью файла — на экране (отсюда он и вылетает)
+    QRectF thumbRectGlobal(int i) const
+    {
+        const QRect ir = itemRect(i).translated(0, top());
+        const QRect r = m_view == QLatin1String("list")
+            ? QRect(ir.left() + s(6), ir.center().y() - s(12) + 1, s(24), s(24))
+            : QRect(ir.center().x() - s(28), ir.top() + s(6), s(56), s(56));
+        return CarryUi::fit(m_thumbs.value(thumbKey(m_items[i])), QRectF(r.translated(mapToGlobal(QPoint(0, 0)))));
+    }
+
+    void pickUp(int i)
     {
         m_holdTimer.stop();
         m_press = -1;
-        if (entry.missing || m_carrying) return;
-        m_carrying = true;
-        m_carry = {entry};
+        if (!carry || i < 0 || i >= m_items.size() || m_items[i].missing || carrying()) return;
         m_outside = 0;
-        if (!m_ghost) m_ghost = new DragGhost(this, m_scale);
-        updateGhost();
-        m_ghost->start();
-        setCursor(Qt::ClosedHandCursor);
-        m_carryPoll.start();
+        carry->pickUp(carryItem(i), thumbRectGlobal(i));
         update();
-    }
-
-    // Левая кнопка мыши зажата прямо сейчас (с учётом «левши»: кнопки поменяны)
-    static bool leftHeld()
-    {
-        const int vk = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
-        return (GetAsyncKeyState(vk) & 0x8000) != 0;
-    }
-
-    void checkCarry()
-    {
-        if (!m_carrying) { m_carryPoll.stop(); return; }
-        if (m_dragging) return;  // Идёт перетаскивание Windows — она сама следит за кнопкой
-        // Отпустил кнопку — файлы просто пропадают из руки
-        if (!leftHeld()) { dropCarry(false); return; }
-        // Вынес за полоску — начинаем перетаскивание, даже если движения не пришли
-        const QPoint p = mapFromGlobal(QCursor::pos());
-        const QRect zone = QRect(0, top(), width(), curH()).adjusted(-s(6), -s(6), s(6), s(6));
-        if (!zone.contains(p)) startCarryDrag();
-    }
-
-    void toggleCarry(const Files::Entry &e)
-    {
-        for (int i = 0; i < m_carry.size(); ++i)
-            if (m_carry[i].path == e.path) {
-                if (i > 0) m_carry.removeAt(i);  // Первый (взятый) не убираем
-                updateGhost();
-                update();
-                return;
-            }
-        m_carry.append(e);
-        updateGhost();
-        update();
-    }
-
-    void updateGhost()
-    {
-        if (!m_ghost) return;
-        QList<DragGhost::Item> items;
-        for (const Files::Entry &e : m_carry) items.append({m_thumbs.value(thumbKey(e)), e.display()});
-        m_ghost->setItems(items);
-    }
-
-    // Положить обратно / бросили: убрать «руку»
-    void dropCarry(bool dropped)
-    {
-        m_carryPoll.stop();
-        if (m_ghost) { m_ghost->finish(dropped); m_ghost = nullptr; }
-        m_carrying = false;
-        m_carry.clear();
-        m_outside = 0;
-        setCursor(Qt::ArrowCursor);
-        update();
-    }
-
-    // Вынес за полоску — настоящее перетаскивание всей стопки в другую программу
-    void startCarryDrag()
-    {
-        auto *mime = new QMimeData;
-        QList<QUrl> urls;
-        for (const Files::Entry &e : m_carry) urls << QUrl::fromLocalFile(e.path);
-        mime->setUrls(urls);
-        auto *drag = new QDrag(this);
-        drag->setMimeData(mime);
-        // Картинку под курсором рисует «живая» карточка (DragGhost) — у Windows своей нет
-        QPixmap none(1, 1);
-        none.fill(Qt::transparent);
-        drag->setPixmap(none);
-        m_dragging = true;
-        QPointer<FilesStrip> self = this;
-        if (onDragStarted) onDragStarted();   // SmartClip прижимается к краям экрана
-        const Qt::DropAction act = drag->exec(Qt::CopyAction, Qt::CopyAction);
-        if (!self) return;
-        m_dragging = false;
-        // Бросили туда, где файлы не принимают, или отменили — рука всё равно пустеет
-        const bool dropped = act != Qt::IgnoreAction;
-        dropCarry(dropped);
-        if (onDragFinished) onDragFinished(dropped);  // …и отпрыгивает на место
     }
 
     int m_scale = 100;
@@ -1087,11 +1002,7 @@ private:
     QRect m_center;
     bool m_enabled = true;
     bool m_pinsMode = false;
-    bool m_dragging = false;
     bool m_menuOpen = false;
-    bool m_carrying = false;       // Файлы «в руке» (см. pickUp)
-    bool m_sweeping = false;       // Правая зажата — собираем файлы подряд
-    bool m_sweepAdd = true;        // ...добавляем (или убираем)
     QStringList m_folders;         // Папки Истории (вкладки)
     QStringList m_pinTabs;         // Вкладки текущей папки закрепов
     QString m_tabHistory, m_tabPins;  // Открытая вкладка
@@ -1102,10 +1013,7 @@ private:
     int m_bodyTarget = 0, m_growDuration = 1;
     QElapsedTimer m_growClock;
     QTimer m_growTick;
-    QList<Files::Entry> m_carry;   // Что в руке: первый — взятый, дальше — добавленные
-    QPointer<DragGhost> m_ghost;
     QTimer m_holdTimer;
-    QTimer m_carryPoll;            // Следит за кнопкой мыши, пока файлы в руке
     int m_gen = 0;
     int m_scroll = 0;
     int m_hover = -1;

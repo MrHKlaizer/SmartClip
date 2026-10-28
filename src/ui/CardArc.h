@@ -95,12 +95,30 @@ public:
         // (быстрое движение, прозрачная середина окна) — карточка «залипала»
         // выдвинутой, а другие больше не выдвигались. Пока мышь над колонкой,
         // сами сверяем, над какой карточкой курсор.
-        m_hoverCheck.setInterval(80);
-        connect(&m_hoverCheck, &QTimer::timeout, this, [this]() { syncHover(); });
+        m_hoverCheck.setInterval(50);
+        connect(&m_hoverCheck, &QTimer::timeout, this, [this]() {
+            syncHover();
+            // Страховка изгиба: иногда карточки оставались сдвинутыми вбок
+            // посреди колонки (изгиб посчитан по устаревшим размерам) —
+            // раз в четверть секунды ставим их заново (на месте — не двигаются)
+            if (++m_checks % 5 == 0 && !m_reflow && QApplication::mouseButtons() == Qt::NoButton) apply();
+        });
     }
 
     // Пересчитать (например, после смены оформления в настройках)
     void refresh() { if (!hoverOn()) setHovered(nullptr); apply(); }
+
+    // Пока окно SmartClip открыто — следим за курсором сами, всё время, а не
+    // только после сообщения «мышь зашла на карточку». Когда Windows нагружена
+    // или мышь держит другая программа, эти сообщения теряются, и выезд
+    // карточек «залипал» на одной.
+    void watchHover(bool on)
+    {
+        m_watching = on;
+        // Страховка изгиба (см. m_hoverCheck) нужна и без выезда под мышью
+        if (on) { m_hoverCheck.start(); syncHover(); }
+        else { m_hoverCheck.stop(); setHovered(nullptr); }
+    }
 
     // Плавная перестройка: карточки не прыгают на новые места, а доезжают до
     // них (перетаскивание закрепа — соседние аккуратно расступаются)
@@ -197,7 +215,7 @@ private:
     {
         QWidget *content = m_area->widget();
         if (!content || !m_area->isVisible() || !hoverOn()) {
-            m_hoverCheck.stop();
+            if (!m_watching || !content || !m_area->isVisible()) m_hoverCheck.stop();
             if (m_hovered) setHovered(nullptr);
             return;
         }
@@ -214,7 +232,8 @@ private:
             }
         }
         setHovered(under);
-        if (!inColumn && !m_hovered) m_hoverCheck.stop();  // Мышь ушла из колонки — проверять нечего
+        // Мышь ушла из колонки — проверять нечего (если не следим всё время)
+        if (!inColumn && !m_hovered && !m_watching) m_hoverCheck.stop();
     }
 
     void startTimer()
@@ -393,6 +412,8 @@ private:
     qreal             m_cross = 30;   // Линия у края для byCrossing: за ней карточка «уходит», px
     QPointer<QWidget> m_hovered;
     QTimer            m_hoverCheck;  // Страховка наведения (см. syncHover)
+    int               m_checks = 0;
+    bool              m_watching = false;  // Окно открыто — опрашиваем всегда (watchHover)
     QHash<QWidget *, qreal> m_hover;  // Карточки, которые выдвинуты или возвращаются
     QTimer            m_timer;
     QElapsedTimer     m_clock;
