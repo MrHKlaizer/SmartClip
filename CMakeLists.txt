@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 #  в «Программы и компоненты» и в имя файла релиза (make_release.bat).
 # ════════════════════════════════════════════════════════════════════════════
 #  Формат: «2.0» для больших версий, «2.0.1» для мелких правок.
-project(SmartClip VERSION 2.2.4 LANGUAGES CXX)
+project(SmartClip VERSION 2.2.5 LANGUAGES CXX)
 
 add_compile_definitions(SMARTCLIP_VERSION="${PROJECT_VERSION}")
 file(WRITE "${CMAKE_BINARY_DIR}/version.txt" "${PROJECT_VERSION}")
@@ -80,6 +80,8 @@ set(SOURCES
     src/ui/GhostCards.h
     src/ui/FolderSlide.h
     src/ui/DragGhost.h
+    src/ui/PhotoWindow.h
+    src/ui/Carry.h
     src/ui/NavTabs.h
     src/ui/HotkeyEdit.h
     src/ui/ImageViewer.h
@@ -122,6 +124,8 @@ target_link_libraries(SmartClip PRIVATE
     dwmapi
     advapi32
     shell32
+    ole32     # Перенос файлов в программы (Carry.h, DoDragDrop)
+    uuid
 )
 
 # ── Установщик ───────────────────────────────────────────────────────────────

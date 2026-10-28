@@ -239,6 +239,7 @@ private:
     void placeFoldersBar();       // Полоса папок — над левой колонкой, до правой
     void placeImportButtons();    // Кнопки импорта видео/аудио — по бокам полоски файлов
     void prewarm();               // Подготовить окно заранее, пока скрыто (быстрое первое открытие)
+    static void pasteWhenFocused(quintptr target, int tries);  // Вставить, когда окно станет активным
     void refreshPinnedFiles(bool allFolders = false);  // Закреплённые файлы и вкладки -> полоска
     QStringList pinFileTabs() const;  // Вкладки полоски в текущей папке закрепов
     void addFilesTab();                                         // «+» в полоске файлов
@@ -249,14 +250,27 @@ private:
     void importAudio();                         // Выбрать аудиофайл и добавить в закрепы
     void deleteCard(int id, QLabel *card);      // Удалить запись истории
     void deletePinCard(int pinId, QLabel *card);// Удалить закреп
+    void viewCard(class ClickableCard *card);  // Ctrl+клик по фото/видео
     void showImageViewer(const QString &filepath, QWidget *source = nullptr);          // Открыть полноэкранный просмотрщик
     void editPin(int id, const QString &content, QLabel *card);  // Редактировать текст закрепа
+    void editHistoryText(int id, QLabel *card);                  // Редактировать текст в Истории
+    void openPhotoWindow(const QString &filepath);               // Фото в отдельном обычном окне
+    // Несколько фото разом: зажал правую на фото — выбор, левой — добавить ещё,
+    // потом перетащить все в программу
+    bool pickEvent(class ClickableCard *card, QEvent *event);
+    void carryPhoto(class ClickableCard *card);
+    bool photoCarryItem(class ClickableCard *card, struct CarryItem &it, QRectF &from) const;
+    bool photoAt(const QPoint &global, struct CarryItem &it, QRectF &from) const;
+    bool carryZone(const QPoint &global) const;
+    void syncCarryMarks();
     void showTagsDialog(int pinId, QWidget *card);          // Диалог редактирования тегов закрепа
 
     // Диалог выбора папки (при закреплении или перемещении элемента).
     // Возвращает имя выбранной папки, или "" если выбрано «Без папки».
     // cancelled = true если пользователь нажал Отмена.
     QString askFolder(bool &cancelled);
+    // Закрепить: название и папка в ОДНОМ окне. false — передумали
+    bool askPin(const QString &title, const QString &defaultName, QString &name, QString &folder);
 
     // ─── Данные ───────────────────────────────────────────────────────────────
     Database    *m_db;                   // База данных SmartClip
@@ -292,6 +306,12 @@ private:
     class FilesStrip  *m_filesStrip = nullptr;  // Свежие файлы внизу по центру
     QPointer<QWidget>  m_squeeze;               // Сцена «прижались к краям» (DragSqueeze.h)
     bool               m_fileDrag = false;      // Сейчас несут файл из полоски
+    class QTimer      *m_topmostTimer = nullptr; // Держит окно поверх игр «без рамки»
+    class Carry       *m_carry = nullptr;       // Рука: фото и файлы, которые несёшь
+    QPointer<class ClickableCard> m_pickPressCard;
+    class QTimer      *m_pickHoldTimer = nullptr;
+    QPoint             m_pickPressPos;
+    bool               m_pickView = false;  // Ctrl+клик — просмотр, а не вставка
     class SmartButton *m_importVideoBtn = nullptr; // 🎬 / 🎵 — импорт в текущую папку закрепов
     class SmartButton *m_importAudioBtn = nullptr;
     class VideoViewer *m_videoViewer = nullptr; // Большой просмотр видео (2.1)

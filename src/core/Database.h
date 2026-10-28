@@ -190,6 +190,7 @@ public:
 
     // ─── Редактирование закрепа ───────────────────────────────────────────────
     bool updatePinContent(int id, const QString &content); // Изменить текст
+    bool updateHistoryContent(int id, const QString &content); // Изменить текст записи истории
     bool updatePinName(int id, const QString &name);       // Переименовать
     bool updatePinTags(int id, const QString &tags);       // Изменить теги (через пробел, без #)
 

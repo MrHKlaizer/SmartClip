@@ -46,6 +46,8 @@
 #include "DragSqueeze.h"
 #include "GhostCards.h"
 #include "FolderSlide.h"
+#include "PhotoWindow.h"
+#include "Carry.h"
 #include <QImageReader>       // Большой просмотр видео
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
 #include "core/Database.h"      // SQLite CRUD
@@ -1448,11 +1450,24 @@ void MainWindow::setupLayout()
         pasteFile(e.path);
     };
     m_filesStrip->onMenu = [this](const Files::Entry &e, const QPoint &globalPos) { showFileMenu(e, globalPos); };
-    m_filesStrip->onDragStarted  = [this]() { startFileDragSqueeze(); };
     m_filesStrip->onAddTab    = [this]() { addFilesTab(); };
     m_filesStrip->onTabMenu   = [this](const QString &key, const QPoint &g) { showFilesTabMenu(key, g); };
     m_filesStrip->onMoveToTab = [this](const QList<Files::Entry> &f, const QString &t) { moveFilesToTab(f, t); };
-    m_filesStrip->onDragFinished = [this](bool) { endFileDragSqueeze(); };
+
+    // Рука: фото из колонок и файлы из полоски, которые несёшь (Carry.h)
+    m_carry = new Carry(this, m_scale);
+    m_filesStrip->carry = m_carry;
+    m_carry->inZone = [this](const QPoint &g) { return carryZone(g); };
+    m_carry->itemAt = [this](const QPoint &g, CarryItem &it, QRectF &from) {
+        return m_filesStrip->carryItemAt(g, it, from) || photoAt(g, it, from);
+    };
+    m_carry->dropInside = [this](const QPoint &g, const QList<CarryItem> &items) {
+        return m_filesStrip->carryDropAt(g, items);
+    };
+    m_carry->onStart = [this]() { m_filesStrip->holdOpen(); };  // Чтобы добрать и файлы
+    m_carry->onChanged = [this]() { syncCarryMarks(); };
+    m_carry->onDragStarted = [this]() { startFileDragSqueeze(); };
+    m_carry->onDragFinished = [this](bool) { endFileDragSqueeze(); };
     m_centerSpacer->installEventFilter(this);  // Полоска стоит по центру середины окна
 
     // Импорт видео и аудио — только в Закрепах, маленькие квадратные кнопки
@@ -1674,17 +1689,17 @@ void MainWindow::addTextCard(const HistoryItem &entry, int insertAt)
     card->setProperty("itemId",      entry.id);
     DateRuler::setCardDate(card, entry.createdAt);  // Для шкалы дат
 
-    QString fullContent = entry.content;
-    connect(card, &ClickableCard::clicked, this, [this, fullContent]() {
-        pasteText(fullContent);
+    // Текст берём из карточки в момент клика: его могли отредактировать
+    connect(card, &ClickableCard::clicked, this, [this, card]() {
+        pasteText(card->property("fullText").toString());
     });
 
-    // Правый клик — контекстное меню (Закрепить / Удалить)
+    // Правый клик — контекстное меню (Редактировать / Закрепить / Удалить)
     int textId = entry.id;
     card->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(card, &QWidget::customContextMenuRequested, this,
-            [this, textId, fullContent, card](const QPoint &pos) {
-        showTextContextMenu(textId, fullContent, card, card->mapToGlobal(pos));
+            [this, textId, card](const QPoint &pos) {
+        showTextContextMenu(textId, card->property("fullText").toString(), card, card->mapToGlobal(pos));
     });
 
     m_leftLayout->insertWidget(insertAt, card);  // -1 — в конец
@@ -1734,18 +1749,9 @@ void MainWindow::addAudioCard(const HistoryItem &entry, int insertAt)
         });
         menu.addSeparator();
         menu.addAction(tr("📌  Закрепить"), [this, fp]() {
-            bool ok = false;
-            QString name = QInputDialog::getText(
-                this, tr("Закрепить аудио"), tr("Название:"),
-                QLineEdit::Normal, QFileInfo(fp).baseName(), &ok);
-            if (!ok || name.trimmed().isEmpty()) return;
-            QString folder = "";
-            if (!AppSettings::get().pinsNoFolder()) {
-                bool cancelled = false;
-                folder = askFolder(cancelled);
-                if (cancelled) return;
-            }
-            m_db->addPin(folder, name.trimmed(), "audio", "", fp);
+            QString name, folder;
+            if (!askPin(tr("Закрепить аудио"), QFileInfo(fp).baseName(), name, folder)) return;
+            m_db->addPin(folder, name, "audio", "", fp);
         });
         menu.addSeparator();
         menu.addAction(tr("🗑  Удалить"), [this, audioId, card]() { deleteCard(audioId, card); });
@@ -1771,9 +1777,11 @@ void MainWindow::addImageCard(const HistoryItem &entry, int insertAt)
     DateRuler::setCardDate(card, entry.createdAt);  // Для шкалы дат
 
     QString fp = entry.filepath;
-    connect(card, &ClickableCard::clicked, this, [this, fp]() {
-        pasteImage(fp);
-    });
+    connect(card, &ClickableCard::clicked, this, [this, fp]() { pasteImage(fp); });
+    // Зажал левой — фото летит в руку (см. pickEvent, Carry.h)
+    card->setProperty("pickable", true);
+    card->installEventFilter(this);
+    card->setPicked(m_carry && m_carry->has(fp));
 
     // Правый клик — контекстное меню (Просмотреть / Закрепить / Удалить)
     int imgId = entry.id;
@@ -1813,10 +1821,14 @@ void MainWindow::addVideoCard(const HistoryItem &entry, int insertAt)
     Media::VideoSurface *surface = setupVideoCard(card, name, fp, QString(), 0,
         [this, cardPtr, fp](Media::VideoSurface *s) { if (cardPtr) m_videoViewer->open(cardPtr, s, fp); });
 
-    // Клик по самой карточке (мимо кнопок) — вставить файл, как раньше
+    // Клик по самой карточке (мимо кнопок) — вставить файл, как раньше;
+    // зажал левой — видео летит в руку, как фото (см. pickEvent)
     connect(card, &ClickableCard::clicked, this, [this, fp]() {
         pasteFile(fp);
     });
+    card->setProperty("pickable", true);
+    card->installEventFilter(this);
+    card->setPicked(m_carry && m_carry->has(fp));
 
     int vidId = entry.id;
     card->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1834,18 +1846,9 @@ void MainWindow::addVideoCard(const HistoryItem &entry, int insertAt)
         });
         menu.addSeparator();
         menu.addAction(tr("📌  Закрепить"), [this, fp]() {
-            bool ok = false;
-            QString name = QInputDialog::getText(
-                this, tr("Закрепить видео"), tr("Название:"),
-                QLineEdit::Normal, QFileInfo(fp).baseName(), &ok);
-            if (!ok || name.trimmed().isEmpty()) return;
-            QString folder = "";
-            if (!AppSettings::get().pinsNoFolder()) {
-                bool cancelled = false;
-                folder = askFolder(cancelled);
-                if (cancelled) return;
-            }
-            m_db->addPin(folder, name.trimmed(), "video", "", fp);
+            QString name, folder;
+            if (!askPin(tr("Закрепить видео"), QFileInfo(fp).baseName(), name, folder)) return;
+            m_db->addPin(folder, name, "video", "", fp);
         });
         menu.addSeparator();
         menu.addAction(tr("🗑  Удалить"), [this, vidId, card]() {
@@ -1886,6 +1889,31 @@ void MainWindow::loadNextImage(int gen)
             }
         });
     }
+}
+
+// Поднять SmartClip поверх всего, если его перекрыло чужое окно (игра «без
+// рамки» ставит себя наверх). Свои окна, которые были выше SmartClip — меню,
+// диалоги, полоса «в руке», окошко руки — поднимаются следом в том же порядке:
+// раньше они «проваливались» под SmartClip.
+static void keepOnTop(HWND main)
+{
+    const DWORD self = GetCurrentProcessId();
+    RECT mr;
+    GetWindowRect(main, &mr);
+    QList<HWND> ownAbove;  // Снизу вверх
+    bool covered = false;
+    for (HWND h = GetWindow(main, GW_HWNDPREV); h; h = GetWindow(h, GW_HWNDPREV)) {
+        if (!IsWindowVisible(h)) continue;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        if (pid == self) { ownAbove.append(h); continue; }
+        RECT r, x;
+        if (GetWindowRect(h, &r) && IntersectRect(&x, &r, &mr)) covered = true;
+    }
+    if (!covered) return;
+    const UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+    SetWindowPos(main, HWND_TOPMOST, 0, 0, 0, 0, flags);
+    for (HWND h : ownAbove) SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, flags);
 }
 
 void MainWindow::showWindow()
@@ -1939,6 +1967,24 @@ void MainWindow::showWindow()
         SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
     installInputHooks();
+    if (m_leftArc)  m_leftArc->watchHover(true);
+    if (m_rightArc) m_rightArc->watchHover(true);
+    // Поверх всего — и держимся там: игры в режиме «без рамки» сами ставят себя
+    // наверх и перекрывали SmartClip. Поднимаемся сразу, чуть позже и потом раз
+    // в секунду (без активации — фокус не трогаем)
+    if (!m_topmostTimer) {
+        m_topmostTimer = new QTimer(this);
+        m_topmostTimer->setInterval(1000);
+        connect(m_topmostTimer, &QTimer::timeout, this, [this]() {
+            if (!isVisible()) { m_topmostTimer->stop(); return; }
+            keepOnTop(reinterpret_cast<HWND>(winId()));
+        });
+    }
+    m_topmostTimer->start();
+    for (int ms : {60, 250})
+        QTimer::singleShot(ms, this, [this]() {
+            if (isVisible()) keepOnTop(reinterpret_cast<HWND>(winId()));
+        });
 
 
     // Обновляем данные если нужно
@@ -2229,36 +2275,61 @@ static bool pastesWithShiftInsert(HWND fg)
 // Иначе хоткей профиля Ctrl+Shift+1 превращал вставку в Ctrl+Shift+V
 // (в Chrome/Word это «вставить без форматирования», в других программах —
 // вообще другое действие), а Alt+F2 — в Ctrl+Alt+V.
+// Одно нажатие или отпускание клавиши
+static void sendKey(WORD vk, bool up)
+{
+    INPUT in = {};
+    in.type       = INPUT_KEYBOARD;
+    in.ki.wVk     = vk;
+    // Скан-код нужен удалённому рабочему столу, виртуальным машинам, играм
+    // и части Java-программ: они смотрят на него, а не на код клавиши
+    in.ki.wScan   = WORD(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
+    in.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+    if (vk == VK_INSERT || vk == VK_LWIN || vk == VK_RWIN)
+        in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+    SendInput(1, &in, sizeof(INPUT));
+}
+
+// Нажать Ctrl+V (или Shift+Insert) «как рукой»: с паузами между нажатием и
+// отпусканием. Раньше всё уходило одной пачкой за одну миллисекунду — игры и
+// часть программ проверяют клавиши раз в кадр и такое нажатие не замечали,
+// хотя обычный Ctrl+V пальцами у них работает.
 static void sendPaste()
 {
     const bool shiftIns = pastesWithShiftInsert(GetForegroundWindow());
     const WORD mod = shiftIns ? VK_SHIFT : VK_CONTROL;
     const WORD key = shiftIns ? VK_INSERT : 'V';
-
-    INPUT inputs[12] = {};
-    int n = 0;
-    auto press = [&](WORD vk, bool up) {
-        inputs[n].type       = INPUT_KEYBOARD;
-        inputs[n].ki.wVk     = vk;
-        // Скан-код нужен удалённому рабочему столу, виртуальным машинам, играм
-        // и части Java-программ: они смотрят на него, а не на код клавиши
-        inputs[n].ki.wScan   = WORD(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
-        inputs[n].ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
-        if (vk == VK_INSERT || vk == VK_LWIN || vk == VK_RWIN)
-            inputs[n].ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
-        ++n;
-    };
     // Модификатор вставки нажимаем ПЕРВЫМ, а уже потом отпускаем Alt/Win:
     // одиночное нажатие-отпускание Alt открывает меню программы (как F10),
     // а Win — Пуск, и тогда вставка уходит в меню.
-    press(mod, false);
+    sendKey(mod, false);
     for (WORD vk : {WORD(VK_CONTROL), WORD(VK_SHIFT), WORD(VK_MENU), WORD(VK_LWIN), WORD(VK_RWIN)})
         if (vk != mod && (GetAsyncKeyState(vk) & 0x8000))
-            press(vk, true);
-    press(key, false);
-    press(key, true);
-    press(mod, true);
-    SendInput(n, inputs, sizeof(INPUT));
+            sendKey(vk, true);
+    QTimer::singleShot(25, [key]() { sendKey(key, false); });
+    QTimer::singleShot(25 + 45, [key]() { sendKey(key, true); });
+    QTimer::singleShot(25 + 45 + 25, [mod]() { sendKey(mod, true); });
+}
+
+// Вернуть фокус окну, куда вставляем. Windows не всегда даёт программе
+// переключать фокус — тогда «склеиваем» ввод с текущим активным окном
+// (известный обходной путь), и переключение разрешается.
+static bool forceForeground(HWND target)
+{
+    if (!target || !IsWindow(target)) return false;
+    HWND root = GetAncestor(target, GA_ROOT);
+    if (GetAncestor(GetForegroundWindow(), GA_ROOT) == root) return true;
+    if (IsIconic(root)) ShowWindow(root, SW_RESTORE);
+    if (!SetForegroundWindow(root)) {
+        const DWORD fgThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+        const DWORD me = GetCurrentThreadId();
+        if (fgThread && fgThread != me && AttachThreadInput(me, fgThread, TRUE)) {
+            BringWindowToTop(root);
+            SetForegroundWindow(root);
+            AttachThreadInput(me, fgThread, FALSE);
+        }
+    }
+    return GetAncestor(GetForegroundWindow(), GA_ROOT) == root;
 }
 
 // ─── Окно без захвата фокуса: глобальные хуки ────────────────────────────────
@@ -2271,6 +2342,7 @@ static void sendPaste()
 // мышь рваной и «замедленной» на всём компьютере.
 namespace {
 std::atomic<MainWindow *> s_hookOwner{nullptr};
+std::atomic<HMONITOR>     s_ownMonitor{nullptr};  // Монитор, где открыт SmartClip
 HANDLE        s_hookThread   = nullptr;
 DWORD         s_hookThreadId = 0;
 HWINEVENTHOOK s_fgHook       = nullptr;
@@ -2304,7 +2376,12 @@ LRESULT CALLBACK keyboardHook(int code, WPARAM wp, LPARAM lp)
                            || vk == VK_NUMLOCK || vk == VK_SCROLL || vk == VK_PAUSE || vk == VK_SLEEP;
         // Сочетания с Ctrl/Alt/Win (горячие клавиши, Alt+Tab) не трогаем
         MainWindow *owner = s_hookOwner;
-        if (owner && !(kb->flags & LLKHF_INJECTED) && !modifier && !weAreForeground()
+        // Пользователь работает в окне на ДРУГОМ мониторе (например, играет, а
+        // SmartClip открыт рядом с фото) — клавиши его, не перехватываем
+        HWND fg = GetForegroundWindow();
+        const bool otherMonitor = fg && s_ownMonitor
+            && MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != s_ownMonitor.load();
+        if (owner && !otherMonitor && !(kb->flags & LLKHF_INJECTED) && !modifier && !weAreForeground()
             && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_LWIN) && !held(VK_RWIN)) {
             const unsigned scan = kb->scanCode;
             const bool ext = (kb->flags & LLKHF_EXTENDED) != 0;
@@ -2388,6 +2465,7 @@ void MainWindow::installInputHooks()
     // перехватывать клавиатуру и мышь пользователя
     if (testAttribute(Qt::WA_DontShowOnScreen)) return;
     s_hookOwner = this;
+    s_ownMonitor = MonitorFromWindow(reinterpret_cast<HWND>(winId()), MONITOR_DEFAULTTONEAREST);
     if (!s_hookThread) {
         HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         s_hookThread = CreateThread(nullptr, 0, hookThreadProc, ready, 0, &s_hookThreadId);
@@ -2437,6 +2515,7 @@ void MainWindow::onHookKey(unsigned vk, unsigned scan, bool extended)
 {
     if (!isOpen()) return;
     if (vk == VK_ESCAPE) {
+        if (m_carry->active()) { m_carry->cancel(); return; }  // Сначала — положить всё из руки
         // Как Esc в окне: сначала закрываем просмотр картинки
         if (m_videoViewer && m_videoViewer->isVisible() && !m_videoViewer->isClosing())
             m_videoViewer->closeAnimated();
@@ -2461,7 +2540,7 @@ void MainWindow::onHookKey(unsigned vk, unsigned scan, bool extended)
 void MainWindow::onGlobalClick()
 {
     // Окно активно — клики мимо отследит WM_ACTIVATE, как и раньше
-    if (!isOpen() || weAreForeground() || m_fileDrag) return;
+    if (!isOpen() || weAreForeground() || m_fileDrag || (m_carry && m_carry->active())) return;
     POINT pt;
     GetCursorPos(&pt);
     // Прозрачный центр SmartClip клики пропускает, и WindowFromPoint вернёт
@@ -2477,7 +2556,7 @@ void MainWindow::onGlobalClick()
 void MainWindow::onForegroundChanged(quintptr hwnd)
 {
     HWND h = reinterpret_cast<HWND>(hwnd);
-    if (!isOpen() || !h || isOwnWindow(h) || m_fileDrag) return;
+    if (!isOpen() || !h || isOwnWindow(h) || m_fileDrag || (m_carry && m_carry->active())) return;
     // Фокус вернулся в программу, где работал пользователь (например, закрыли
     // наш диалог) — это не повод закрываться
     HWND prev = reinterpret_cast<HWND>(m_prevFocusHwnd);
@@ -2495,14 +2574,25 @@ void MainWindow::onForegroundChanged(quintptr hwnd)
 void MainWindow::finishPaste()
 {
     HWND target = reinterpret_cast<HWND>(m_prevFocusHwnd);
-    const bool wasActive = weAreForeground();
     hide();
     if (!isPasteTarget(target)) return;  // Вставлять некуда — данные уже в буфере обмена
-    // Если пользователь печатал в поиске, фокус у нас — возвращаем его.
-    // Иначе фокус и так у той программы: просто вставляем.
-    if (wasActive)
-        SetForegroundWindow(target);
-    QTimer::singleShot(wasActive ? 150 : 60, &sendPaste);
+    // Фокус должен быть у окна, куда вставляем: если пользователь печатал в
+    // поиске, фокус у нас; бывает, что Windows отдала его кому-то ещё.
+    // Ждём (до ~0,4 с), пока окно действительно станет активным, и только
+    // потом нажимаем Ctrl+V — иначе вставка уходила в никуда.
+    forceForeground(target);
+    const quintptr t = reinterpret_cast<quintptr>(target);
+    QTimer::singleShot(30, [t]() { pasteWhenFocused(t, 0); });
+}
+
+// Ждём, пока окно станет активным (каждые 50 мс, до 8 раз), и вставляем
+void MainWindow::pasteWhenFocused(quintptr targetPtr, int tries)
+{
+    HWND target = reinterpret_cast<HWND>(targetPtr);
+    const bool ready = GetAncestor(GetForegroundWindow(), GA_ROOT) == GetAncestor(target, GA_ROOT);
+    if (ready || tries >= 8) { QTimer::singleShot(ready ? 40 : 0, &sendPaste); return; }
+    forceForeground(target);
+    QTimer::singleShot(50, [targetPtr, tries]() { pasteWhenFocused(targetPtr, tries + 1); });
 }
 
 // ─── Файлы в полоске внизу ───────────────────────────────────────────────────
@@ -2648,22 +2738,10 @@ void MainWindow::showFileMenu(const Files::Entry &e, const QPoint &globalPos)
 
 void MainWindow::pinFile(const QString &filepath)
 {
-    QString name = "";
-    if (!AppSettings::get().pinsNoName()) {
-        bool ok = false;
-        name = askText(this, tr("Закрепить файл"), tr("Название:"), QFileInfo(filepath).fileName(), &ok);
-        if (!ok) return;
-        name = name.trimmed();
-        // Без своего названия — показываем имя файла. Именно "" (а не clear()):
-        // пустой QString уходит в базу как NULL, и закреп не сохранялся
-        if (name == QFileInfo(filepath).fileName()) name = QStringLiteral("");
-    }
-    QString folder = "";
-    if (!AppSettings::get().pinsNoFolder()) {
-        bool cancelled = false;
-        folder = askFolder(cancelled);
-        if (cancelled) return;
-    }
+    QString name, folder;
+    const QString fileName = QFileInfo(filepath).fileName();
+    if (!askPin(tr("Закрепить файл"), AppSettings::get().pinsNoName() ? QString() : fileName, name, folder)) return;
+    if (name == fileName) name = QStringLiteral("");  // Без своего названия — имя файла
     m_db->addPin(folder, name, "file", "", filepath);
 }
 
@@ -2840,6 +2918,7 @@ void MainWindow::showTextContextMenu(int id, const QString &content,
 {
     RoundedMenu menu(this);
 
+    menu.addAction(tr("📝  Редактировать"), [this, id, card]() { editHistoryText(id, card); });
     menu.addAction(tr("📌  Закрепить"), [this, content]() { pinText(content); });
     menu.addSeparator();
     menu.addAction(tr("🗑  Удалить"),   [this, id, card]() { deleteCard(id, card); });
@@ -2853,6 +2932,7 @@ void MainWindow::showImageContextMenu(int id, const QString &filepath,
     RoundedMenu menu(this);
 
     menu.addAction(tr("🔍  Просмотреть"), [this, filepath, card]() { showImageViewer(filepath, card); });
+    menu.addAction(tr("🗗  Открыть в окне"), [this, filepath]() { openPhotoWindow(filepath); });
     menu.addSeparator();
     menu.addAction(tr("📌  Закрепить"),   [this, filepath]() { pinImage(filepath); });
     menu.addSeparator();
@@ -2861,45 +2941,168 @@ void MainWindow::showImageContextMenu(int id, const QString &filepath,
     menu.exec(globalPos);
 }
 
+// ─── Рука: несём фото (и файлы) ──────────────────────────────────────────────
+// Зажал левой фото — оно «вытягивается» и летит в руку (Carry.h). Просто
+// кликнул — вставка, как раньше, только по отпусканию: иначе не отличить
+// клик от «зажал».
+bool MainWindow::pickEvent(ClickableCard *card, QEvent *event)
+{
+    switch (event->type()) {
+    case QEvent::MouseButtonPress: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() != Qt::LeftButton || m_carry->active()) return false;
+        m_pickPressCard = card;
+        m_pickPressPos = me->globalPosition().toPoint();
+        m_pickView = me->modifiers() & Qt::ControlModifier;
+        if (m_pickView) return true;  // Ctrl+клик — просмотр (по отпусканию)
+        if (!m_pickHoldTimer) {
+            m_pickHoldTimer = new QTimer(this);
+            m_pickHoldTimer->setSingleShot(true);
+            m_pickHoldTimer->setInterval(220);
+            connect(m_pickHoldTimer, &QTimer::timeout, this, [this]() {
+                if (m_pickPressCard && CarryUi::leftHeld()) carryPhoto(m_pickPressCard);
+            });
+        }
+        m_pickHoldTimer->start();
+        return true;
+    }
+    case QEvent::MouseMove: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (m_pickPressCard == card && !m_pickView && (me->buttons() & Qt::LeftButton)
+            && (me->globalPosition().toPoint() - m_pickPressPos).manhattanLength() > QApplication::startDragDistance()) {
+            carryPhoto(card);  // Потянул — тоже берём, не дожидаясь
+            return true;
+        }
+        break;
+    }
+    case QEvent::MouseButtonRelease: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton && m_pickPressCard == card) {
+            if (m_pickHoldTimer) m_pickHoldTimer->stop();
+            m_pickPressCard = nullptr;
+            if (!card->rect().contains(me->position().toPoint())) return true;
+            if (m_pickView) viewCard(card);
+            else emit card->clicked();
+            return true;
+        }
+        break;
+    }
+    default: break;
+    }
+    return false;
+}
+
+// Ctrl+клик: фото — просмотр (как «Просмотреть» в меню), видео — большой плеер
+void MainWindow::viewCard(ClickableCard *card)
+{
+    m_pickView = false;
+    const QString fp = card->property("filepath").toString();
+    if (fp.isEmpty()) return;
+    for (QObject *o : card->children())
+        if (auto *surface = dynamic_cast<Media::VideoSurface *>(o)) {
+            m_videoViewer->open(card, surface, fp);
+            return;
+        }
+    showImageViewer(fp, card);
+}
+
+void MainWindow::carryPhoto(ClickableCard *card)
+{
+    if (m_pickHoldTimer) m_pickHoldTimer->stop();
+    m_pickPressCard = nullptr;
+    CarryItem it;
+    QRectF from;
+    if (card && photoCarryItem(card, it, from)) m_carry->pickUp(it, from);
+}
+
+// Фото «вытягивается» ровно такого размера, как в карточке
+bool MainWindow::photoCarryItem(ClickableCard *card, CarryItem &it, QRectF &from) const
+{
+    const QString fp = card->property("filepath").toString();
+    if (fp.isEmpty() || !QFileInfo::exists(fp)) return false;
+    QPixmap thumb = card->pixmap();
+    QRectF cr(QPointF(card->mapToGlobal(QPoint(0, 0))), QSizeF(card->size()));
+    // Видео: в руку — кадр-превью (своим виджетом, у самой карточки картинки нет)
+    Media::VideoSurface *surface = nullptr;
+    for (QObject *o : card->children())
+        if ((surface = dynamic_cast<Media::VideoSurface *>(o))) break;
+    if (surface) {
+        thumb = surface->grab();
+        cr = QRectF(QPointF(surface->mapToGlobal(QPoint(0, 0))), QSizeF(surface->size()));
+    }
+    it = CarryItem{fp, thumb, QFileInfo(fp).fileName()};
+    QSizeF sz = it.thumb.isNull() ? cr.size() * 0.8 : QSizeF(it.thumb.size() / it.thumb.devicePixelRatio());
+    if (sz.width() > cr.width() || sz.height() > cr.height()) sz.scale(cr.size(), Qt::KeepAspectRatio);
+    from = QRectF(cr.center() - QPointF(sz.width() / 2, sz.height() / 2), sz);
+    return true;
+}
+
+// Фото в колонке под курсором (для руки: правым — добавить)
+bool MainWindow::photoAt(const QPoint &g, CarryItem &it, QRectF &from) const
+{
+    for (QScrollArea *sa : {m_leftScroll, m_rightScroll}) {
+        if (!sa || !sa->isVisible() || !sa->widget()) continue;
+        if (!QRect(sa->viewport()->mapToGlobal(QPoint(0, 0)), sa->viewport()->size()).contains(g)) continue;
+        for (ClickableCard *c : sa->widget()->findChildren<ClickableCard *>())
+            if (c->isVisible() && c->property("pickable").toBool()
+                && QRect(c->mapToGlobal(QPoint(0, 0)), c->size()).contains(g))
+                return photoCarryItem(c, it, from);
+    }
+    return false;
+}
+
+// Курсор над SmartClip: колонки, полоска файлов и полоса между ними на её
+// высоте — чтобы от фото дотянуться до файлов, не «бросив» всё в программу
+bool MainWindow::carryZone(const QPoint &g) const
+{
+    if (!isVisible()) return false;
+    const QPoint p = mapFromGlobal(g);
+    const int m = sc(24);
+    const QRect L = m_leftScroll->geometry(), R = m_rightScroll->geometry();
+    if (L.adjusted(-m, -m, m, m).contains(p) || R.adjusted(-m, -m, m, m).contains(p)) return true;
+    if (m_filesStrip && m_filesStrip->isVisible()) {
+        const QRect S = m_filesStrip->visibleRect();
+        const QRect band(L.left(), S.top() - m, R.right() - L.left(), height() - S.top() + m);
+        if (S.adjusted(-m, -m, m, m).contains(p) || band.contains(p)) return true;
+    }
+    return false;
+}
+
+// Что в руке — бледнеет на своём месте
+void MainWindow::syncCarryMarks()
+{
+    for (QScrollArea *sa : {m_leftScroll, m_rightScroll})
+        if (sa && sa->widget())
+            for (ClickableCard *c : sa->widget()->findChildren<ClickableCard *>())
+                if (c->property("pickable").toBool())
+                    c->setPicked(m_carry && m_carry->has(c->property("filepath").toString()));
+    if (m_filesStrip) m_filesStrip->update();
+}
+
+// Фото в отдельном обычном окне. SmartClip уходит, чтобы окно было видно
+// (иначе его закрывали бы колонки SmartClip — они всегда поверх всего).
+void MainWindow::openPhotoWindow(const QString &filepath)
+{
+    auto *w = new PhotoWindow(filepath);
+    hideAnimated();
+    w->show();
+    w->raise();
+    w->activateWindow();
+}
+
 void MainWindow::pinText(const QString &content)
 {
-    QString name;
-
-    if (AppSettings::get().pinsNoName()) {
-        // Без имени — пустая строка, сразу выбираем папку
-    } else {
-        bool ok = false;
-        name = askText(this, tr("Закрепить текст"), tr("Название:"), content.trimmed().left(40), &ok);
-        if (!ok || name.trimmed().isEmpty()) return;
-    }
-
-    QString folder = "";
-    if (!AppSettings::get().pinsNoFolder()) {
-        bool cancelled = false;
-        folder = askFolder(cancelled);
-        if (cancelled) return;
-    }
-
+    QString name, folder;
+    if (!askPin(tr("Закрепить текст"), AppSettings::get().pinsNoName() ? QString() : content.trimmed().left(40),
+                name, folder))
+        return;
     m_db->addPin(folder, name, "text", content, "");
 }
 
 void MainWindow::pinImage(const QString &filepath)
 {
-    QString name = "";
-    if (!AppSettings::get().pinsNoName()) {
-        bool ok = false;
-        name = askText(this, tr("Закрепить скриншот"), tr("Название:"), "", &ok);
-        if (!ok || name.trimmed().isEmpty()) return;
-        name = name.trimmed();
-    }
-
-    QString folder = "";
-    if (!AppSettings::get().pinsNoFolder()) {
-        bool cancelled = false;
-        folder = askFolder(cancelled);
-        if (cancelled) return;
-    }
-
+    QString name, folder;
+    if (!askPin(tr("Закрепить скриншот"), QString(), name, folder)) return;
     m_db->addPin(folder, name, "image", "", filepath);
 }
 
@@ -3259,6 +3462,107 @@ void MainWindow::loadFolderBar()
     });
     m_foldersLayout->addWidget(addBtn);
     m_foldersLayout->addStretch();
+}
+
+// ─── Закрепить: название и папка в одном окне ───────────────────────────────
+// Раньше было два окна подряд: «Название», потом «Папка». Пока первое
+// закрывалось, Windows на миг отдавала фокус другой программе, SmartClip
+// принимал это за «клик мимо» и тут же закрывал второе окно — отмену папки
+// считали отменой закрепа, и он не сохранялся (а папку будто не спрашивали).
+// Одно окно — закрыть «посередине» нечему.
+// Что спрашивать — по настройкам: «не спрашивать название» / «не спрашивать
+// папку»; папок нет — выбирать не из чего. Не о чем спросить — окна нет вовсе.
+bool MainWindow::askPin(const QString &title, const QString &defaultName, QString &name, QString &folder)
+{
+    name = defaultName;
+    folder = QString();
+    const bool askName = !AppSettings::get().pinsNoName();
+    const QList<FolderItem> folders = AppSettings::get().pinsNoFolder() ? QList<FolderItem>() : m_db->getAllFolders();
+    const bool askFolderToo = !folders.isEmpty();
+    if (!askName && !askFolderToo) return true;
+
+    AppDialog dlg(this);
+    dlg.setWindowTitle(title);
+    dlg.setMinimumWidth(360);
+    auto *vl = new QVBoxLayout(dlg.body());
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(8);
+    const QString lblCss = "color: #c0c0d0; font-size: 13px; background: transparent;";
+
+    QLineEdit *edit = nullptr;
+    if (askName) {
+        auto *lbl = new QLabel(tr("Название:"), dlg.body());
+        lbl->setStyleSheet(lblCss);
+        edit = new QLineEdit(defaultName, dlg.body());
+        edit->setStyleSheet(
+            "background: rgba(28,28,44,245); color: #f0f0f0;"
+            "border: 1px solid rgba(255,255,255,55); border-radius: 6px;"
+            "padding: 5px 10px; font-size: 13px;"
+            "selection-background-color: rgba(100,150,255,150);");
+        edit->selectAll();
+        vl->addWidget(lbl);
+        vl->addWidget(edit);
+    }
+
+    QComboBox *combo = nullptr;
+    if (askFolderToo) {
+        auto *lbl = new QLabel(tr("Папка:"), dlg.body());
+        lbl->setStyleSheet(lblCss);
+        combo = new QComboBox(dlg.body());
+        combo->addItem(tr("Без папки"), QString());
+        int current = 0;
+        for (const FolderItem &f : folders) {
+            combo->addItem(f.name, f.name);
+            if (f.name == m_currentFolder) current = combo->count() - 1;
+        }
+        combo->setCurrentIndex(current);
+        combo->setStyleSheet(
+            "QComboBox { background: rgba(28,28,44,245); color: #f0f0f0;"
+            "  border: 1px solid rgba(255,255,255,55); border-radius: 6px;"
+            "  padding: 5px 10px; font-size: 13px; }"
+            "QComboBox:hover { border: 1px solid rgba(255,255,255,90); }"
+            "QComboBox::drop-down { border: none; width: 24px; }"
+            "QComboBox::down-arrow { image: none; width: 0; }"
+            "QComboBox QAbstractItemView {"
+            "  background: rgba(22,22,36,252); color: #e0e0e0;"
+            "  border: 1px solid rgba(255,255,255,55); border-radius: 6px;"
+            "  selection-background-color: rgba(255,255,255,18);"
+            "  outline: none; padding: 2px; }");
+        if (askName) vl->addSpacing(4);
+        vl->addWidget(lbl);
+        vl->addWidget(combo);
+    }
+
+    auto *btnRow = new QHBoxLayout();
+    btnRow->setSpacing(8);
+    auto *cancelBtn = new QPushButton(QObject::tr("Отмена"), dlg.body());
+    auto *okBtn     = new QPushButton(tr("📌  Закрепить"), dlg.body());
+    okBtn->setStyleSheet(
+        "QPushButton{background:rgba(28,28,44,245);color:rgba(160,200,255,240);"
+        "border:1px solid rgba(120,160,255,160);border-radius:6px;"
+        "padding:5px 18px;font-size:13px;min-width:70px;}"
+        "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}");
+    cancelBtn->setStyleSheet(
+        "QPushButton{background:rgba(28,28,44,245);color:rgba(255,255,255,200);"
+        "border:1px solid rgba(255,255,255,55);border-radius:6px;"
+        "padding:5px 18px;font-size:13px;min-width:70px;}"
+        "QPushButton:hover{background:rgba(40,40,62,245);color:#fff;}");
+    okBtn->setCursor(Qt::PointingHandCursor);
+    cancelBtn->setCursor(Qt::PointingHandCursor);
+    okBtn->setDefault(true);
+    btnRow->addStretch();
+    btnRow->addWidget(cancelBtn);
+    btnRow->addWidget(okBtn);
+    vl->addSpacing(6);
+    vl->addLayout(btnRow);
+    QObject::connect(okBtn,     &QPushButton::clicked, &dlg, &QDialog::accept);
+    QObject::connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
+    if (edit) QObject::connect(edit, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
+
+    if (dlg.exec() != QDialog::Accepted) return false;
+    if (edit) name = edit->text().trimmed();
+    if (combo) folder = combo->currentData().toString();
+    return true;
 }
 
 QString MainWindow::askFolder(bool &cancelled)
@@ -3687,6 +3991,7 @@ void MainWindow::loadPins(bool allFolders)
                 }
                 RoundedMenu menu(this);
 
+                menu.addAction(tr("🗗  Открыть в окне"), [this, fp = pin.filepath]() { openPhotoWindow(fp); });
                 menu.addAction(tr("🔍  Просмотреть"), [this, fp = pin.filepath, card]() {
                     showImageViewer(fp, card);
                 });
@@ -4647,17 +4952,19 @@ void MainWindow::showProfileManager()
     dialog.exec();
 }
 
-void MainWindow::editPin(int id, const QString &content, QLabel *card)
+// Окно правки длинного текста (закреп, запись Истории). false — передумали
+static bool editTextDialog(QWidget *parent, const QString &title, const QString &label,
+                           const QString &content, QString &result)
 {
-    AppDialog dialog(this);
-    dialog.setWindowTitle(tr("Редактировать закреп"));
+    AppDialog dialog(parent);
+    dialog.setWindowTitle(title);
     dialog.setMinimumSize(420, 300);
 
     QVBoxLayout *layout = new QVBoxLayout(dialog.body());
     layout->setContentsMargins(16, 16, 16, 16);
     layout->setSpacing(10);
 
-    QLabel *hint = new QLabel(tr("Текст закрепа:"), &dialog);
+    QLabel *hint = new QLabel(label, &dialog);
     layout->addWidget(hint);
 
     QTextEdit *edit = new QTextEdit(&dialog);
@@ -4672,14 +4979,14 @@ void MainWindow::editPin(int id, const QString &content, QLabel *card)
     QHBoxLayout *btnRow = new QHBoxLayout();
     btnRow->setSpacing(8);
 
-    QPushButton *cancelBtn = new QPushButton(tr("Отмена"), &dialog);
+    QPushButton *cancelBtn = new QPushButton(QObject::tr("Отмена"), &dialog);
     cancelBtn->setStyleSheet(
         "QPushButton { background: rgba(60,60,60,200); color: #aaaaaa; "
         "border-radius: 6px; padding: 6px 20px; border: none; }"
         "QPushButton:hover { background: rgba(80,80,80,220); color: #dddddd; }"
     );
 
-    QPushButton *saveBtn = new QPushButton(tr("Сохранить"), &dialog);
+    QPushButton *saveBtn = new QPushButton(QObject::tr("Сохранить"), &dialog);
     saveBtn->setStyleSheet(
         "QPushButton { background: rgba(40,100,40,200); color: #ccffcc; "
         "border-radius: 6px; padding: 6px 20px; border: none; }"
@@ -4687,17 +4994,23 @@ void MainWindow::editPin(int id, const QString &content, QLabel *card)
     );
     saveBtn->setDefault(true);
 
-    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
-    connect(saveBtn,   &QPushButton::clicked, &dialog, &QDialog::accept);
+    QObject::connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    QObject::connect(saveBtn,   &QPushButton::clicked, &dialog, &QDialog::accept);
 
     btnRow->addStretch();
     btnRow->addWidget(cancelBtn);
     btnRow->addWidget(saveBtn);
     layout->addLayout(btnRow);
 
-    if (dialog.exec() != QDialog::Accepted) return;
+    if (dialog.exec() != QDialog::Accepted) return false;
+    result = edit->toPlainText();
+    return true;
+}
 
-    QString newContent = edit->toPlainText();
+void MainWindow::editPin(int id, const QString &content, QLabel *card)
+{
+    QString newContent;
+    if (!editTextDialog(this, tr("Редактировать закреп"), tr("Текст закрепа:"), content, newContent)) return;
     if (newContent == content) return; // ничего не изменилось
 
     m_db->updatePinContent(id, newContent);
@@ -4715,6 +5028,27 @@ void MainWindow::editPin(int id, const QString &content, QLabel *card)
         card->setTextFormat(Qt::PlainText);
         card->setText(pinDisplay);
         card->setProperty("displayText", pinDisplay);
+    }
+}
+
+// Редактировать текст записи Истории (как у закрепов)
+void MainWindow::editHistoryText(int id, QLabel *card)
+{
+    const QString content = card ? card->property("fullText").toString() : QString();
+    QString newContent;
+    if (!editTextDialog(this, tr("Редактировать текст"), tr("Текст:"), content, newContent)) return;
+    if (newContent == content || newContent.trimmed().isEmpty()) return;
+    m_db->updateHistoryContent(id, newContent);
+    m_searchIndexValid = false;
+    if (card) {
+        QString display = newContent;
+        if (display.length() > 300) display = display.left(300) + "...";
+        const QString wrapped = softWrap(display);
+        card->setTextFormat(Qt::PlainText);
+        card->setText(wrapped);
+        card->setProperty("fullText", newContent);
+        card->setProperty("displayText", wrapped);
+        if (m_searching) applyHighlight(card, m_searchEdit->text());
     }
 }
 
@@ -4856,6 +5190,10 @@ void MainWindow::closeAllOnDeactivate()
 // Кнопки История/Закрепы сдвинулись или изменили размер — «пилюля» за ними
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
+    if (obj->property("pickable").toBool())
+        if (auto *card = qobject_cast<ClickableCard *>(obj))
+            if (pickEvent(card, event)) return true;
+
     // Клик в поиск — забираем фокус, чтобы туда можно было печатать
     if (obj == m_searchEdit && event->type() == QEvent::MouseButtonPress)
         activateForInput();
@@ -4882,6 +5220,10 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 void MainWindow::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
+    if (m_carry && m_carry->holding()) m_carry->cancel();  // Спрятались, пока держали
+    if (m_leftArc)  m_leftArc->watchHover(false);
+    if (m_rightArc) m_rightArc->watchHover(false);
+    if (m_topmostTimer) m_topmostTimer->stop();
     dropSqueeze();
     removeInputHooks();
     Media::Playback::get().stop();  // Закрыли SmartClip — звук и видео останавливаются
@@ -4898,6 +5240,7 @@ void MainWindow::hideEvent(QHideEvent *event)
 // keyPressEvent — клавиша Escape скрывает окно SmartClip.
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
+    if (event->key() == Qt::Key_Escape && m_carry->active()) { m_carry->cancel(); return; }
     if (event->key() == Qt::Key_Escape) {
         // Сначала закрываем просмотр картинки, если он открыт. Раньше Esc прятал
         // всё окно, а просмотрщик оставался «открытым» и при следующем показе

@@ -84,6 +84,22 @@ public:
     // Проверить выбрана ли карточка.
     bool isSelected() const { return m_selected; }
 
+    // Фото сейчас «в руке» (см. Carry.h) — карточка бледнеет
+    void setPicked(bool on)
+    {
+        if (m_picked == on) return;
+        m_picked = on;
+        // Затемнение — отдельным слоем поверх всего: у видео кадр и кнопки —
+        // свои виджеты, нарисованное в самой карточке они бы закрыли
+        if (on && !m_shade) m_shade = new PickedShade(this);
+        if (m_shade) {
+            m_shade->setGeometry(rect());
+            m_shade->setVisible(on);
+            m_shade->raise();
+        }
+    }
+    bool isPicked() const { return m_picked; }
+
 // ─── Сигналы ─────────────────────────────────────────────────────────────────
 signals:
     // Карточка кликнута (короткое нажатие).
@@ -254,6 +270,29 @@ private:
     // ─── Состояния режима редактирования ─────────────────────────────────────
     bool   m_editMode = false;   // Включён режим мультивыбора
     bool   m_selected = false;   // Карточка выбрана (галочка/оверлей)
+    bool   m_picked = false;     // Фото «в руке» (бледнеет)
+
+    // Место карточки «в руке» бледнеет, как у файлов в полоске (см. Carry.h)
+    class PickedShade : public QWidget
+    {
+    public:
+        explicit PickedShade(ClickableCard *card) : QWidget(card), m_card(card)
+        {
+            setAttribute(Qt::WA_TransparentForMouseEvents);
+        }
+    protected:
+        void paintEvent(QPaintEvent *) override
+        {
+            QPainter p(this);
+            p.setRenderHint(QPainter::Antialiasing);
+            QPainterPath path;
+            path.addRoundedRect(QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0), m_card->m_radius, m_card->m_radius);
+            p.fillPath(path, QColor(14, 14, 24, 185));
+        }
+    private:
+        ClickableCard *m_card;
+    };
+    PickedShade *m_shade = nullptr;
 
     // ─── Состояния drag-to-reorder ────────────────────────────────────────────
     bool   m_pressing  = false;  // Кнопка зажата (ожидаем таймер или движение)
