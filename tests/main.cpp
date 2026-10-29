@@ -84,11 +84,15 @@ static int runInEnv(int argc, char **argv, const std::function<int(Check::Env &)
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, tmp.path() + "/ini");
     QApplication app(argc, argv);
     app.setOrganizationName("SmartClipTests");
-    app.setApplicationName("SmartClipTests");
+    // Своё имя у каждого запуска — своя база (QStandardPaths) и в конце она
+    // удаляется: раньше закрепы и история копились от прогона к прогону
+    app.setApplicationName(QString("SmartClipTests_%1").arg(QCoreApplication::applicationPid()));
     QStandardPaths::setTestModeEnabled(true);
+    const QString data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     Check::Env env;
     env.tmp = &tmp;
     const int rc = body(env);
+    Check::removeTestData(data);
     std::fprintf(stderr, "RESULT checks passed=%d failed=%d\n", Check::passed(), Check::failures());
     return rc != 0 ? rc : (Check::failures() ? 1 : 0);
 }

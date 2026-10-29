@@ -3020,14 +3020,24 @@ bool MainWindow::dropToFolder(const QPoint &global, const QList<CarryItem> &item
 void MainWindow::placeBottom()
 {
     const QRect c = m_centerSpacer->geometry();
-    int shelfH = 0;
+    int shelfH = 0;   // Сколько места снизу занимают полки
     if (m_shelves[0] && c.width() > sc(260)) {
-        shelfH = m_shelves[0]->shelfHeight();
+        const int h = m_shelves[0]->shelfHeight();
         const int m = sc(8), gap = sc(8);
         const int w = (c.width() - 2 * m - gap) / 2;
-        const int y = c.bottom() - sc(6) - shelfH + 1;
-        m_shelves[0]->setGeometry(c.left() + m, y, w, shelfH);
-        m_shelves[1]->setGeometry(c.right() - m - w + 1, y, w, shelfH);
+        const int y = c.bottom() - sc(6) - h + 1;
+        if (w >= sc(300)) {  // Рядом: левая и правая половина
+            shelfH = h;
+            m_shelves[0]->setGeometry(c.left() + m, y, w, h);
+            m_shelves[1]->setGeometry(c.right() - m - w + 1, y, w, h);
+        } else {
+            // Узкая середина (повёрнутый экран) — друг над другом, каждая во всю
+            // ширину: в половине влезало две папки, а в открытой — даже не шапка
+            shelfH = 2 * h + sc(6);
+            const int fw = c.width() - 2 * m;
+            m_shelves[0]->setGeometry(c.left() + m, y - h - sc(6), fw, h);
+            m_shelves[1]->setGeometry(c.left() + m, y, fw, h);
+        }
         for (FolderShelf *sh : m_shelves) if (!sh->isVisible()) { sh->show(); sh->raise(); }
     } else {
         for (FolderShelf *sh : m_shelves) if (sh) sh->hide();
@@ -3348,6 +3358,8 @@ bool MainWindow::pickEvent(ClickableCard *card, QEvent *event)
     case QEvent::MouseButtonPress: {
         auto *me = static_cast<QMouseEvent *>(event);
         if (me->button() != Qt::LeftButton || m_carry->active()) return false;
+        // Закрепы в режиме редактирования: зажал — меняешь порядок, клик — выбор
+        if (card->editMode()) return false;
         m_pickPressCard = card;
         m_pickPressPos = me->globalPosition().toPoint();
         m_pickView = me->modifiers() & Qt::ControlModifier;
@@ -3419,6 +3431,14 @@ bool MainWindow::photoCarryItem(ClickableCard *card, CarryItem &it, QRectF &from
     if (fp.isEmpty() || !QFileInfo::exists(fp)) return false;
     QPixmap thumb = card->pixmap();
     QRectF cr(QPointF(card->mapToGlobal(QPoint(0, 0))), QSizeF(card->size()));
+    // Фото-закреп: картинка — во вложенной надписи (сверху строка с названием)
+    if (thumb.isNull())
+        for (QLabel *l : card->findChildren<QLabel *>(Qt::FindDirectChildrenOnly))
+            if (!l->pixmap().isNull()) {
+                thumb = l->pixmap();
+                cr = QRectF(QPointF(l->mapToGlobal(QPoint(0, 0))), QSizeF(l->size()));
+                break;
+            }
     // Видео: в руку — кадр-превью (своим виджетом, у самой карточки картинки нет)
     Media::VideoSurface *surface = nullptr;
     for (QObject *o : card->children())
@@ -4354,6 +4374,10 @@ void MainWindow::loadPins(bool allFolders)
             // ── Изображение-закреп ─────────────────────────────────────────────
             // Раскладка: тот же фон что у текстовых закрепов, сверху "⭐ Название"
             ClickableCard *card = new ClickableCard();
+            // Зажал — фото в руку, как в Истории (в режиме редактирования — перестановка)
+            card->setProperty("filepath", pin.filepath);
+            card->setProperty("pickable", true);
+            card->installEventFilter(this);
             applyCardShadow(card);
             card->setFixedSize(sc(BASE_RIGHT) - 36, sc(148));
             card->setCardStyle(QColor(42, 30, 8, 245));
@@ -4498,6 +4522,9 @@ void MainWindow::loadPins(bool allFolders)
         } else if (pin.type == "video") {
             // ── Видео-закреп ───────────────────────────────────────────────────
             ClickableCard *card = new ClickableCard();
+            card->setProperty("filepath", pin.filepath);
+            card->setProperty("pickable", true);  // Зажал — в руку, как в Истории
+            card->installEventFilter(this);
             applyCardShadow(card);
             card->setFixedSize(sc(BASE_RIGHT) - 36, sc(148));
             card->setCardStyle(QColor(10, 20, 48, 245));

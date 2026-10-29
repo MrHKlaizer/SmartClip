@@ -473,3 +473,133 @@ TEST(shelf_reorder)
     a.settle();
     CHECK(names(sh) == "B,C,A" && names(other) == "D,E", "в пустоте — ничего не потерялось: %1 | %2", names(sh), names(other));
 }
+
+// ═══ Закрепы: фото и видео — «рукой», как в Истории ══════════════════════════
+
+TEST(pins_carry)
+{
+    App a(env);
+    const QString img = env.dir() + "/закреп.png";
+    QImage pic(120, 80, QImage::Format_RGB32);
+    pic.fill(Qt::darkCyan);
+    pic.save(img);
+    a.db.addPin("", "фото", "image", "", img);
+    a.start();
+    a.w->switchView(MainWindow::ViewMode::Pins);
+    Check::Env::wait(1200);
+    ClickableCard *card = nullptr;
+    for (ClickableCard *c : a.w->m_rightScroll->widget()->findChildren<ClickableCard *>())
+        if (c->property("filepath").toString() == img) card = c;
+    CHECK(card != nullptr, "карточка закреплённого фото");
+    if (!card) return;
+    CHECK(card->property("pickable").toBool(), "закреп-фото можно брать");
+    // Потянул — фото в руке (отпускаем уже после — иначе рука «бросит» его в программу)
+    auto send = [&](QEvent::Type t, const QPoint &pos, Qt::MouseButtons b) {
+        QMouseEvent e(t, pos, card->mapToGlobal(pos), Qt::LeftButton, b, Qt::NoModifier);
+        QApplication::sendEvent(card, &e);
+        QApplication::processEvents();
+    };
+    const QPoint c0 = card->rect().center();
+    send(QEvent::MouseButtonPress, c0, Qt::LeftButton);
+    send(QEvent::MouseMove, c0 + QPoint(30, 10), Qt::LeftButton);
+    CHECK(a.w->m_carry->active() && a.w->m_carry->has(img), "потянул закреплённое фото — оно в руке");
+    CHECK(!a.w->m_carry->items().isEmpty() && !a.w->m_carry->items().first().thumb.isNull(), "в руке — с картинкой, а не пустое");
+    a.w->m_carry->cancel();
+    Check::Env::wait(400);
+    send(QEvent::MouseButtonRelease, c0 + QPoint(30, 10), Qt::NoButton);
+    CHECK(!a.w->m_carry->active(), "рука пустая после отмены");
+
+    // Режим редактирования: зажал и тянешь — это перестановка, а не рука
+    a.w->toggleEditMode();
+    Check::Env::wait(300);
+    CHECK(card->editMode(), "режим редактирования включился");
+    send(QEvent::MouseButtonPress, c0, Qt::LeftButton);
+    send(QEvent::MouseMove, c0 + QPoint(30, 10), Qt::LeftButton);
+    CHECK(!a.w->m_carry->active(), "в режиме редактирования фото в руку не берётся");
+    send(QEvent::MouseButtonRelease, c0 + QPoint(30, 10), Qt::NoButton);
+    a.w->toggleEditMode();
+}
+
+// ═══ Полки на любом экране: не тесные, не налезают ═══════════════════════════
+
+TEST(shelves_layout)
+{
+    App a(env);
+    for (const QString &n : {"A", "B", "C"}) QDir().mkpath(env.dir() + "/" + n);
+    AppSettings::get().setShelf(0, {env.dir() + "/A", env.dir() + "/B"}, {});
+    AppSettings::get().setShelf(1, {env.dir() + "/C"}, {});
+    a.start();
+    FolderShelf *s0 = a.w->m_shelves[0], *s1 = a.w->m_shelves[1];
+    FilesStrip *fs = a.w->m_filesStrip;
+    const QRect g0 = s0->geometry(), g1 = s1->geometry();
+    std::fprintf(stderr, "окно %dx%d: полки %s и %s\n", a.w->width(), a.w->height(),
+                 qUtf8Printable(rectText(g0)), qUtf8Printable(rectText(g1)));
+    CHECK(s0->isVisible() && s1->isVisible(), "полки видны");
+    CHECK(!g0.intersects(g1), "полки налезают друг на друга: %1 и %2", rectText(g0), rectText(g1));
+    // В полке помещается хотя бы 3 папки и «+»
+    const int need = s0->s(8) + 3 * s0->pitch() + s0->s(40);
+    CHECK(g0.width() >= need && g1.width() >= need, "полка тесная: %1 и %2 при нужных %3", g0.width(), g1.width(), need);
+    const QRect strip = fs->geometry();
+    CHECK(strip.bottom() < qMin(g0.top(), g1.top()), "полоска файлов налезает на полки: %1", rectText(strip));
+    CHECK(a.w->rect().contains(g0) && a.w->rect().contains(g1), "полки за краем окна");
+    // Открытая папка — от своей полки, шапка влезает
+    a.openShelf(0);
+    QString why;
+    CHECK(panelOk(a.w->m_folderPanel, &why), "папка с верхней/левой полки: %1", why);
+    a.w->m_folderPanel->close();
+    a.settle();
+    a.openShelf(1);
+    CHECK(panelOk(a.w->m_folderPanel, &why), "папка с нижней/правой полки: %1", why);
+}
+
+// ═══ Скорость: переход в Закрепы ═════════════════════════════════════════════
+// Много закрепов — переход не должен подвисать (раньше жаловались, что медленно)
+TEST(pins_speed)
+{
+    App a(env);
+    QImage pic(800, 600, QImage::Format_RGB32);
+    pic.fill(Qt::darkMagenta);
+    for (int i = 0; i < 30; ++i) {
+        const QString f = env.dir() + QString("/p%1.jpg").arg(i);
+        pic.save(f, "JPG");
+        a.db.addPin("", QString("фото %1").arg(i), "image", "", f);
+    }
+    const QString mp4 = "C:/Windows/SystemApps/Microsoft.Windows.CloudExperienceHost_cw5n1h2txyewy/media/oobe-intro.mp4";
+    if (QFileInfo::exists(mp4))
+        for (int i = 0; i < 10; ++i) {
+            const QString f = env.dir() + QString("/v%1.mp4").arg(i);
+            QFile::copy(mp4, f);
+            a.db.addPin("", QString("видео %1").arg(i), "video", "", f);
+        }
+    for (int i = 0; i < 60; ++i)
+        a.db.addPin("", QString("текст %1").arg(i), "text", QString("Текст закрепа номер %1 — немного слов, чтобы карточка была как настоящая").arg(i).repeated(2), "");
+    a.start();
+    // Самая долгая «заминка» окна (сколько оно не отвечало) за 1.5 с после перехода
+    auto stall = []() {
+        QElapsedTimer t, gap;
+        t.start();
+        gap.start();
+        qint64 worst = 0;
+        while (t.elapsed() < 1500) {
+            QApplication::processEvents(QEventLoop::AllEvents, 5);
+            worst = qMax(worst, gap.restart());
+        }
+        return worst;
+    };
+    QList<qint64> times, stalls;
+    for (int round = 0; round < 3; ++round) {
+        QElapsedTimer t;
+        t.start();
+        a.w->switchView(MainWindow::ViewMode::Pins);
+        times << t.elapsed();   // Сам переход
+        stalls << qMax(times.last(), stall());
+        a.w->switchView(MainWindow::ViewMode::History);
+        Check::Env::wait(500);
+    }
+    std::fprintf(stderr, "переход в Закрепы: %lld / %lld / %lld мс, заминка до %lld / %lld / %lld мс\n",
+                 times[0], times[1], times[2], stalls[0], stalls[1], stalls[2]);
+    // Сейчас ~130 мс на 100 закрепов (Qt раскладывает сразу все карточки);
+    // сторож — чтобы не стало заметно хуже
+    CHECK(stalls[1] < 250 && stalls[2] < 250, "повторный переход: окно не отвечало %1 / %2 мс", stalls[1], stalls[2]);
+    CHECK(stalls[0] < 300, "первый переход: окно не отвечало %1 мс", stalls[0]);
+}

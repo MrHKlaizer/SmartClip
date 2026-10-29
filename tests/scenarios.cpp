@@ -4,6 +4,8 @@
 //   uitest anim <closeMs>  — открыть окно на экране, закрыть через closeMs и
 //                            вывести яркость участка первой карточки по времени
 #include <QApplication>
+#include "Check.h"
+#include <QDir>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QStandardPaths>
@@ -69,8 +71,13 @@ int scenarioMain(int argc, char **argv)
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, tmp.path() + "/ini");
     QApplication app(argc, argv);
     app.setOrganizationName("SmartClipUiTest");
-    app.setApplicationName("SmartClipUiTest");
+    app.setApplicationName(QString("SmartClipUiTest_%1").arg(QCoreApplication::applicationPid()));
     QStandardPaths::setTestModeEnabled(true);
+    // Своя база у каждого запуска — и удаляется в конце (раньше копилась)
+    struct DataCleanup {
+        QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        ~DataCleanup() { Check::removeTestData(dir); }
+    } dataCleanup;
 
     const QString out = argc > 1 ? argv[1] : "shot";
     const bool pins = argc > 2 && QString(argv[2]) == "pins";

@@ -52,7 +52,7 @@ public:
         setMouseTracking(true);
         setAttribute(Qt::WA_Hover);
         m_anim.setTimerType(Qt::PreciseTimer);
-        connect(&m_anim, &QTimer::timeout, this, [this]() { animStep(); });
+        connect(&m_anim, &QTimer::timeout, this, [this]() { animStep(true); });
         // Долго грузится (сетевая папка, тысячи файлов) — показываем «Загрузка…»
         m_slowLoad.setSingleShot(true);
         m_slowLoad.setInterval(150);
@@ -818,13 +818,17 @@ private:
         m_animMs = qMax(1, Anim::ms(Anim::Kind::Menu, m_closing ? 200 : 260));
         if (!Anim::enabled(Anim::Kind::Menu)) { finishAnim(); return; }
         m_clock.restart();
+        m_animTicked = false;
         m_anim.setInterval(Anim::frameMs(this));
         m_anim.start();
         animStep();
     }
-    void animStep()
+    void animStep(bool fromTimer = false)
     {
-        m_k = qMin(1.0, m_clock.elapsed() / qreal(m_animMs));
+        // Время — с первого кадра таймера: сразу после запуска программа ещё
+        // перестраивает раскладку, и без этого первый кадр был уже на трети пути
+        if (!m_animTicked && fromTimer) { m_animTicked = true; m_clock.restart(); }
+        m_k = m_animTicked ? qMin(1.0, m_clock.elapsed() / qreal(m_animMs)) : 0.0;
         placeSearch();
         update();
         if (m_k >= 1.0) finishAnim();
@@ -1245,6 +1249,7 @@ private:
     bool m_sortDesc = true;
     QRect m_layoutGeo;  // Итоговое место (координаты родителя)
     bool m_holdH = false;   // Дерево: раскрыли подпапку — размер не меняем
+    bool m_animTicked = false;  // Анимация: первый кадр таймера уже был
     bool m_glide = false;   // Открыли другую папку, когда эта была открыта — переезжаем плавно
     bool m_reveal = false;  // Идёт раскрытие из плитки (содержимое проявляется)
     // Дерево (настройка «Список деревом»): раскрытые подпапки и их содержимое

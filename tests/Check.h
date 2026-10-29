@@ -12,6 +12,9 @@
 #include <QTemporaryDir>
 #include <QString>
 #include <QMap>
+#include <QDir>
+#include <QFileInfo>
+#include <QSqlDatabase>
 #include <cstdio>
 #include <functional>
 
@@ -51,6 +54,18 @@ struct Env {
         return cond();
     }
 };
+
+// Удалить базу и данные теста (сначала закрыть соединения — иначе файл занят)
+inline void removeTestData(const QString &dir)
+{
+    if (!dir.contains("qttest")) return;  // Только тестовые папки
+    for (const QString &n : QSqlDatabase::connectionNames()) {
+        { QSqlDatabase db = QSqlDatabase::database(n, false); db.close(); }
+        QSqlDatabase::removeDatabase(n);
+    }
+    QDir(dir).removeRecursively();
+    QDir().rmdir(QFileInfo(dir).absolutePath());  // Папка «организации» — если пустая
+}
 
 using TestFn = std::function<void(Env &)>;
 inline QMap<QString, TestFn> &registry() { static QMap<QString, TestFn> r; return r; }

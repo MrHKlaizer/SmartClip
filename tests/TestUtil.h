@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #define private public    // Тестам можно смотреть внутрь
 #define protected public
+#include "ui/ClickableCard.h"
 #include "ui/FilesStrip.h"
 #include "ui/FolderShelf.h"
 #include "ui/FolderPanel.h"
@@ -236,8 +237,11 @@ struct UxTracker {
                 *why = "рывок панели без анимации: " + rectText(lastPanel) + " → " + rectText(v);
                 return false;
             }
-            if (anim && !lastPanelAnim && d > 2) {
-                *why = "анимация началась не оттуда, где панель была: " + rectText(lastPanel) + " → " + rectText(v);
+            // Анимация стартовала с того места, где панель стояла (первый кадр
+            // уже может быть чуть дальше — в начале она быстрая)
+            if (anim && !lastPanelAnim && !fp->m_closing && diff(fp->m_revealFrom, lastPanel) > 2) {
+                *why = "анимация началась не оттуда, где панель была: " + rectText(lastPanel) + " → старт "
+                     + rectText(fp->m_revealFrom);
                 return false;
             }
         }

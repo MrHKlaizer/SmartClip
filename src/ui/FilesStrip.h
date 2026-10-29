@@ -814,12 +814,15 @@ private:
         } else m_hover = -1;
         if (!Anim::enabled(Anim::Kind::Menu)) { m_t = target; finish(); return; }
         m_clock.restart();
+        m_ticked = false;
         m_tick.setInterval(Anim::frameMs(this));  // По частоте монитора
         m_tick.start();
     }
 
     void tick()
     {
+        // Время — с первого кадра (а не с запуска: тогда ещё перестраивается раскладка)
+        if (!m_ticked) { m_ticked = true; m_clock.restart(); }
         const qreal k = qMin(1.0, m_clock.elapsed() / qreal(m_duration));
         // Раскрытие — плавный старт и долгое мягкое торможение;
         // сворачивание — плавно разгоняется и плавно садится на место
@@ -1282,6 +1285,7 @@ private:
     bool m_searchOpen = false;
     bool m_hoverSearch = false;
     bool m_hoverSort = false;
+    bool m_ticked = false;         // Анимация раскрытия: первый кадр уже был
     bool m_blocked = false;        // Поверх раскрыта папка с полки
     int m_dropTab = -1;            // Вкладка-папка подсвечена для «руки»
     bool m_pressView = false;      // Нажали с Ctrl по фото/видео — отпустим, будет просмотр

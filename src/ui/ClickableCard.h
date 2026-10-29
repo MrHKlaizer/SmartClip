@@ -77,6 +77,7 @@ public:
         if (!on) setCursor(Qt::PointingHandCursor);
         update();
     }
+    bool editMode() const { return m_editMode; }  // Режим редактирования Закрепов (выбор, перестановка)
 
     // Установить/снять состояние «выбрано» (золотая рамка + оверлей).
     void setSelected(bool sel) { m_selected = sel; update(); }
