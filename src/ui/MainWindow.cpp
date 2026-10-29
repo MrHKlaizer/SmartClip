@@ -43,6 +43,9 @@
 #include "MediaCards.h"        // Аудио и видео прямо в карточках (2.1)
 #include "VideoViewer.h"
 #include "FilesStrip.h"
+#include "FolderShelf.h"
+#include "FolderPanel.h"
+#include "ShellMenu.h"
 #include "DragSqueeze.h"
 #include "GhostCards.h"
 #include "FolderSlide.h"
@@ -745,10 +748,24 @@ public:
         lay->setContentsMargins(12, 0, 12, 0);
         lay->addWidget(m_edit);
         // Перерисовка при смене фокуса (рамка меняет яркость)
-        connect(m_edit, &QLineEdit::textChanged, this, [this](){ update(); });
+        connect(m_edit, &QLineEdit::textChanged, this, [this](){ fit(); update(); });
         m_edit->installEventFilter(this);
     }
     QLineEdit *edit() { return m_edit; }
+
+    // Обычная ширина (как у кнопок рядом) и сколько можно занять при длинном тексте
+    std::function<int()> maxWidth;
+    void setBaseWidth(int w) { m_base = w; fit(); }
+
+    // Текст не влезает — поле расширяется вправо, влезает — возвращается к обычной ширине
+    void fit()
+    {
+        const QMargins m = layout()->contentsMargins();
+        const int need = m_edit->fontMetrics().horizontalAdvance(m_edit->text()) + m.left() + m.right() + 14;
+        int w = qMax(m_base, need);
+        if (maxWidth) w = qMin(w, qMax(m_base, maxWidth()));
+        if (w != width()) setFixedWidth(w);
+    }
 
     bool eventFilter(QObject *o, QEvent *e) override {
         if (o == m_edit && (e->type() == QEvent::FocusIn || e->type() == QEvent::FocusOut))
@@ -771,6 +788,7 @@ protected:
     }
 private:
     QLineEdit *m_edit;
+    int m_base = 0;
 };
 
 // QMenu с настоящими скруглёнными углами через QPainter — без артефактов
@@ -1125,7 +1143,6 @@ MainWindow::MainWindow(Database *db, QWidget *parent)
     , m_leftScroll(nullptr)
     , m_rightScroll(nullptr)
     , m_topPanel(nullptr)
-    , m_bottomPanel(nullptr)
     , m_centerSpacer(nullptr)
     , m_searchEdit(nullptr)
     , m_scale(AppSettings::get().uiScale())
@@ -1187,7 +1204,8 @@ void MainWindow::setupLayout()
     m_topPanel->setObjectName("topPanel");
     m_topPanel->setFixedHeight(sc(BASE_TOP));
     QHBoxLayout *topLayout = new QHBoxLayout(m_topPanel);
-    topLayout->setContentsMargins(12, 8, 12, 18);
+    // Слева — ровно по краю карточек колонки текстов
+    topLayout->setContentsMargins(16, 8, 12, 18);
     topLayout->setSpacing(8);
 
     // Группа «переключатели вида» — слева, одинаковая ширина по самому длинному
@@ -1386,19 +1404,28 @@ void MainWindow::setupLayout()
     middleLayout->addWidget(centerSpacer);
     middleLayout->addWidget(rightScroll);
 
-    // ── Нижняя панель ───────────────────────────────────────────────────────────
-    m_bottomPanel = new QWidget(this);
-    m_bottomPanel->setObjectName("bottomPanel");
-    m_bottomPanel->setFixedHeight(sc(BASE_BOT));
-    QHBoxLayout *bottomLayout = new QHBoxLayout(m_bottomPanel);
-    bottomLayout->setContentsMargins(12, 6, 12, 14);
-    auto *searchBar = new SearchBar(m_bottomPanel);
+    // ── Поиск — наверху, рядом с История/Закрепы ─────────────────────────────
+    // Три одинаковые по ширине и вместе — ровно по ширине карточек текстов
+    auto *searchBar = new SearchBar(m_topPanel);
+    searchBar->setFixedHeight(BTN_H);
     applyBtnShadow(searchBar);
     m_searchEdit = searchBar->edit();
     m_searchEdit->setObjectName("searchEdit");
     m_searchEdit->installEventFilter(this);  // Клик — забрать фокус (окно без активации)
-    m_searchEdit->setPlaceholderText(tr("Поиск по тексту..."));
-    bottomLayout->addWidget(searchBar);
+    m_searchEdit->setPlaceholderText(tr("Поиск"));
+    {
+        const int cardW = sc(BASE_LEFT) - 36;  // Ширина карточки текста
+        const int w3 = (cardW - 2 * topLayout->spacing()) / 3;
+        m_historyBtn->setFixedWidth(w3);
+        m_pinsBtn->setFixedWidth(w3);
+        // Длинный запрос — расширяемся до кнопок справа
+        searchBar->maxWidth = [this, searchBar, topLayout]() {
+            QWidget *next = m_editBtn->isVisible() ? static_cast<QWidget *>(m_editBtn) : m_profilesBtn;
+            return next->x() - topLayout->spacing() - searchBar->x();
+        };
+        searchBar->setBaseWidth(cardW - 2 * w3 - 2 * topLayout->spacing());  // Остаток от деления — поиску
+    }
+    topLayout->insertWidget(2, searchBar);
 
     // Поиск по истории идёт по ВСЕЙ базе (раньше — только по 40 карточкам на экране,
     // и всё скопированное раньше просто не находилось). Чтобы не тормозить на
@@ -1441,7 +1468,6 @@ void MainWindow::setupLayout()
     m_rightScroll->installEventFilter(this);
     m_topPanel->installEventFilter(this);
     mainLayout->addLayout(middleLayout);
-    mainLayout->addWidget(m_bottomPanel);
 
     // ── Свежие файлы — внизу по центру, над поиском (и в Истории, и в Закрепах)
     m_filesStrip = new FilesStrip(this, m_scale, &fileThumbWork);
@@ -1453,19 +1479,79 @@ void MainWindow::setupLayout()
     m_filesStrip->onAddTab    = [this]() { addFilesTab(); };
     m_filesStrip->onTabMenu   = [this](const QString &key, const QPoint &g) { showFilesTabMenu(key, g); };
     m_filesStrip->onMoveToTab = [this](const QList<Files::Entry> &f, const QString &t) { moveFilesToTab(f, t); };
+    m_filesStrip->onSearchFocus = [this]() { activateForInput(); };
+    m_filesStrip->onView = [this](const QString &path) { viewFile(path); };
+    m_filesStrip->onSortMenu = [this](const QPoint &g, const QString &k, bool d,
+                                      const std::function<void(const QString &, bool)> &apply) { showFilesSortMenu(g, k, d, apply); };
+
+    // Полки с папками — под полоской, левая и правая половина середины
+    for (int side = 0; side < 2; ++side) {
+        auto *sh = new FolderShelf(this, m_scale);
+        sh->onAdd  = [this, side]() { addShelfFolder(side); };
+        sh->onOpen = [this, side](int i, const QRect &tile) { openShelfFolder(side, i, tile); };
+        sh->onMenu = [this, side](int i, const QPoint &g) { showShelfMenu(side, i, g); };
+        sh->onReorder = [this, side]() { saveShelf(side); };
+        // Тащим папку — над другой полкой видно, куда она встанет
+        sh->onDragMove = [this, side](const QPoint &g) { m_shelves[1 - side]->setInsertHint(m_shelves[1 - side]->slotAt(g)); };
+        sh->onDropOut = [this, side](int i, const QPoint &g) {
+            FolderShelf *other = m_shelves[1 - side];
+            const int slot = other->slotAt(g);
+            other->setInsertHint(-1);
+            QList<FolderShelf::Folder> from = m_shelves[side]->folders();
+            if (slot < 0 || i < 0 || i >= from.size()) return false;
+            QList<FolderShelf::Folder> to = other->folders();
+            to.insert(qMin(slot, int(to.size())), from.takeAt(i));
+            m_shelves[side]->setFolders(from);
+            other->setFolders(to);
+            saveShelf(side);
+            saveShelf(1 - side);
+            if (m_folderPanel->isOpen() && m_folderPanel->side() == side) m_folderPanel->close();
+            return true;
+        };
+        m_shelves[side] = sh;
+    }
+    loadShelves();
+    // Папка с полки — раскрывается прямо здесь (FolderPanel.h)
+    m_folderPanel = new FolderPanel(this, m_scale, &fileThumbWork);
+    m_folderPanel->onPickFile   = [this](const QString &path) { pasteFile(path); };
+    m_folderPanel->onView       = [this](const QString &path) { viewFile(path); };
+    m_folderPanel->onSortMenu   = [this](const QPoint &g, const QString &k, bool d,
+                                         const std::function<void(const QString &, bool)> &apply) { showFilesSortMenu(g, k, d, apply); };
+    m_folderPanel->onFileMenu   = [this](const Files::Entry &e, const QPoint &) { showShellMenu(e.path, false); };
+    m_folderPanel->onFolderMenu = [this](const QString &path, const QPoint &) { showShellMenu(path, true); };
+    m_folderPanel->onSearchFocus = [this]() { activateForInput(); };
+    m_folderPanel->onLayoutChanged = [this]() {
+        // Раскрылась больше полки — полоска файлов под ней не раскрывается
+        m_filesStrip->setBlocked(m_folderPanel->isOpen() && m_folderPanel->mode() != FolderPanel::Inline);
+        if (m_folderPanel->isVisible()) m_folderPanel->raise();
+    };
 
     // Рука: фото из колонок и файлы из полоски, которые несёшь (Carry.h)
     m_carry = new Carry(this, m_scale);
     m_filesStrip->carry = m_carry;
+    m_folderPanel->carry = m_carry;  // Из папки с полки — тоже в руку
     m_carry->inZone = [this](const QPoint &g) { return carryZone(g); };
     m_carry->itemAt = [this](const QPoint &g, CarryItem &it, QRectF &from) {
-        return m_filesStrip->carryItemAt(g, it, from) || photoAt(g, it, from);
+        return m_filesStrip->carryItemAt(g, it, from) || (m_folderPanel && m_folderPanel->carryItemAt(g, it, from))
+            || photoAt(g, it, from);
     };
+    // Отпустили над SmartClip: вкладка закрепов в полоске или папка (полка,
+    // открытая папка) — туда копия (с Shift — перенос)
     m_carry->dropInside = [this](const QPoint &g, const QList<CarryItem> &items) {
-        return m_filesStrip->carryDropAt(g, items);
+        return m_filesStrip->carryDropAt(g, items) || dropToFolder(g, items);
+    };
+    m_carry->onHover = [this](const QPoint &g) {
+        for (FolderShelf *sh : m_shelves) if (sh) sh->setDropHint(g);
+        if (m_folderPanel) m_folderPanel->setDropHint(g);
+        m_filesStrip->setDropHint(g);
     };
     m_carry->onStart = [this]() { m_filesStrip->holdOpen(); };  // Чтобы добрать и файлы
     m_carry->onChanged = [this]() { syncCarryMarks(); };
+    m_carry->onEnd = [this]() {
+        for (FolderShelf *sh : m_shelves) if (sh) sh->clearDropHint();
+        if (m_folderPanel) m_folderPanel->clearDropHint();
+        m_filesStrip->clearDropHint();
+    };
     m_carry->onDragStarted = [this]() { startFileDragSqueeze(); };
     m_carry->onDragFinished = [this](bool) { endFileDragSqueeze(); };
     m_centerSpacer->installEventFilter(this);  // Полоска стоит по центру середины окна
@@ -1488,6 +1574,7 @@ void MainWindow::setupLayout()
                                  tr("Импортировать видео в закрепы"));
     m_importAudioBtn = importBtn(QStringLiteral("🎵"), QColor(32,14,55,245), QColor(210,160,255,220),
                                  tr("Импортировать аудио в закрепы"));
+    m_filesStrip->pinsInset = m_importVideoBtn->width() + 2 * sc(8);  // Кнопки импорта — по бокам полоски
     connect(m_importVideoBtn, &QPushButton::clicked, this, &MainWindow::importVideo);
     connect(m_importAudioBtn, &QPushButton::clicked, this, &MainWindow::importAudio);
     m_filesStrip->installEventFilter(this);  // Полоска сдвинулась/появилась — кнопки за ней
@@ -2038,10 +2125,9 @@ QList<Anim::Piece> MainWindow::buildOpenPieces()
     const QRect top = m_topPanel->geometry();
     // Полоса папок — только над левой колонкой: правая начинается сразу под панелью
     const QRect fold = m_foldersBar->isVisible() ? m_foldersBar->geometry() : QRect();
-    const QRect bottom = m_bottomPanel->geometry();
     const int colTop = top.bottom() + 1;
     const int leftTop = fold.isEmpty() ? colTop : fold.bottom() + 1;
-    const int colBot = bottom.top();
+    const int colBot = height();
 
     QList<Anim::Piece> pcs;
     auto add = [&](QRect r, QPointF from, qreal delay, qreal scale) {
@@ -2054,14 +2140,16 @@ QList<Anim::Piece> MainWindow::buildOpenPieces()
     };
     add(top,    QPointF(0, -top.height() - 20),    0.00, 0.98);
     add(fold,   QPointF(0, -fold.bottom() - 20),   0.02, 0.98);
-    add(bottom, QPointF(0, bottom.height() + 20),  0.06, 0.98);
-    // Полоска файлов (и кнопки импорта рядом) — уезжает вниз следом за поиском
+    // Полоска файлов (и кнопки импорта рядом) — уезжает вниз
     if (m_filesStrip && m_filesStrip->isVisible()) {
         QRect st = m_filesStrip->visibleRect();
         if (m_importVideoBtn && m_importVideoBtn->isVisible())
             st = st.united(m_importVideoBtn->geometry()).united(m_importAudioBtn->geometry());
         add(st, QPointF(0, height() - st.top() + 20), 0.09, 0.98);
     }
+    for (FolderShelf *sh : m_shelves)  // Полки — вниз вместе с полоской
+        if (sh && sh->isVisible())
+            add(sh->geometry(), QPointF(0, height() - sh->y() + 20), 0.07, 0.98);
 
     // Колонку режем на горизонтальные полосы по середине промежутков между
     // карточками: каждая полоса = одна карточка со своей тенью, и полосы не
@@ -2516,6 +2604,10 @@ void MainWindow::onHookKey(unsigned vk, unsigned scan, bool extended)
     if (!isOpen()) return;
     if (vk == VK_ESCAPE) {
         if (m_carry->active()) { m_carry->cancel(); return; }  // Сначала — положить всё из руки
+        if (m_filesStrip && m_filesStrip->closeSearch()) return;  // Потом — поиск в полоске файлов
+        for (FolderShelf *sh : m_shelves)                          // Тащим папку на полке — положить обратно
+            if (sh && sh->cancelDrag()) { m_shelves[0]->setInsertHint(-1); m_shelves[1]->setInsertHint(-1); return; }
+        if (m_folderPanel && m_folderPanel->escape()) return;     // Потом — открытая папка с полки
         // Как Esc в окне: сначала закрываем просмотр картинки
         if (m_videoViewer && m_videoViewer->isVisible() && !m_videoViewer->isClosing())
             m_videoViewer->closeAnimated();
@@ -2674,6 +2766,21 @@ void MainWindow::showFilesTabMenu(const QString &key, const QPoint &globalPos)
         });
     } else {
         menu.addAction(tr("📂  Открыть папку"), [key]() { QDesktopServices::openUrl(QUrl::fromLocalFile(key)); });
+        menu.addAction(tr("🔄  Сменить папку"), [this, key]() {
+            const QString dir = QFileDialog::getExistingDirectory(this, tr("Папка с файлами"), key);
+            if (dir.isEmpty()) return;
+            QStringList folders = Files::configuredFolders();
+            for (int i = folders.size() - 1; i >= 0; --i)
+                if (QDir::cleanPath(folders[i]).compare(QDir::cleanPath(dir), Qt::CaseInsensitive) == 0)
+                    folders.removeAt(i);  // Такая папка уже была — не дублируем
+            bool replaced = false;
+            for (QString &f : folders)
+                if (QDir::cleanPath(f).compare(QDir::cleanPath(key), Qt::CaseInsensitive) == 0) { f = dir; replaced = true; }
+            if (!replaced) folders << dir;
+            AppSettings::get().setFilesFolders(folders);
+            m_filesStrip->renameTab(key, dir);
+            m_filesStrip->reload();
+        });
         menu.addSeparator();
         menu.addAction(tr("✕  Убрать вкладку"), [this, key]() {
             QStringList folders = Files::configuredFolders();
@@ -2687,6 +2794,254 @@ void MainWindow::showFilesTabMenu(const QString &key, const QPoint &globalPos)
     menu.exec(globalPos);
 }
 
+// ─── Полки с папками ─────────────────────────────────────────────────────────
+void MainWindow::loadShelves()
+{
+    for (int side = 0; side < 2; ++side) {
+        if (!m_shelves[side]) continue;
+        const QStringList paths = AppSettings::get().shelfPaths(side);
+        const QStringList names = AppSettings::get().shelfNames(side);
+        QList<FolderShelf::Folder> folders;
+        for (int i = 0; i < paths.size(); ++i)
+            folders.append({paths[i], i < names.size() ? names[i] : QString()});
+        m_shelves[side]->setFolders(folders);
+    }
+}
+
+void MainWindow::saveShelf(int side)
+{
+    QStringList paths, names;
+    for (const FolderShelf::Folder &f : m_shelves[side]->folders()) { paths << f.path; names << f.name; }
+    AppSettings::get().setShelf(side, paths, names);
+}
+
+void MainWindow::addShelfFolder(int side)
+{
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Папка для полки"));
+    if (dir.isEmpty()) return;
+    // Уже есть на какой-то полке — второй раз не добавляем
+    for (FolderShelf *sh : m_shelves)
+        for (const FolderShelf::Folder &f : sh->folders())
+            if (QDir::cleanPath(f.path).compare(QDir::cleanPath(dir), Qt::CaseInsensitive) == 0) return;
+    QList<FolderShelf::Folder> folders = m_shelves[side]->folders();
+    folders.append({dir, QString()});
+    m_shelves[side]->setFolders(folders);
+    saveShelf(side);
+}
+
+void MainWindow::showShelfMenu(int side, int index, const QPoint &globalPos)
+{
+    RoundedMenu menu(this);
+    QList<FolderShelf::Folder> folders = m_shelves[side]->folders();
+    if (index < 0 || index >= folders.size()) {
+        menu.addAction(tr("➕  Добавить папку"), [this, side]() { addShelfFolder(side); });
+        menu.exec(globalPos);
+        return;
+    }
+    const FolderShelf::Folder f = folders[index];
+    menu.addAction(tr("📂  Открыть в проводнике"), [f]() { QDesktopServices::openUrl(QUrl::fromLocalFile(f.path)); });
+    menu.addAction(tr("🏷  Переименовать"), [this, side, index, f]() {
+        bool ok = false;
+        const QString name = askText(this, tr("Переименовать папку"), tr("Название:"),
+                                     FolderShelf::label(f), &ok).trimmed();
+        if (!ok) return;
+        QList<FolderShelf::Folder> l = m_shelves[side]->folders();
+        if (index >= l.size()) return;
+        // Пустое или как у папки на диске — снова просто имя папки
+        l[index].name = (name.isEmpty() || name == QDir(QDir::cleanPath(f.path)).dirName()) ? QString() : name;
+        m_shelves[side]->setFolders(l);
+        saveShelf(side);
+    });
+    menu.addAction(side == 0 ? tr("➡  На правую полку") : tr("⬅  На левую полку"), [this, side, index]() {
+        QList<FolderShelf::Folder> from = m_shelves[side]->folders();
+        if (index >= from.size()) return;
+        QList<FolderShelf::Folder> to = m_shelves[1 - side]->folders();
+        to.append(from.takeAt(index));
+        m_shelves[side]->setFolders(from);
+        m_shelves[1 - side]->setFolders(to);
+        saveShelf(side);
+        saveShelf(1 - side);
+        if (m_folderPanel->isOpen() && m_folderPanel->side() == side) m_folderPanel->closeNow();
+    });
+    menu.addSeparator();
+    menu.addAction(tr("✕  Убрать с полки"), [this, side, index]() {
+        // Сама папка на диске не трогается — только пропадает с полки
+        QList<FolderShelf::Folder> l = m_shelves[side]->folders();
+        if (index >= l.size()) return;
+        l.removeAt(index);
+        m_shelves[side]->setFolders(l);
+        saveShelf(side);
+        if (m_folderPanel->isOpen() && m_folderPanel->side() == side) m_folderPanel->closeNow();
+    });
+    menu.exec(globalPos);
+}
+
+// Клик по папке на полке — открыть её прямо здесь (тот же клик ещё раз — закрыть)
+void MainWindow::openShelfFolder(int side, int index, const QRect &tile)
+{
+    const QList<FolderShelf::Folder> folders = m_shelves[side]->folders();
+    if (index < 0 || index >= folders.size()) return;
+    const FolderShelf::Folder f = folders[index];
+    if (m_folderPanel->isOpen() && m_folderPanel->side() == side
+        && QDir::cleanPath(m_folderPanel->root()).compare(QDir::cleanPath(f.path), Qt::CaseInsensitive) == 0) {
+        m_folderPanel->close();
+        return;
+    }
+    if (!QFileInfo(f.path).isDir()) {
+        // Папку удалили или переименовали — предлагаем убрать её с полки
+        if (confirmDialog(this, tr("Папка не найдена"),
+                          tr("Папки «%1» больше нет. Убрать её с полки?").arg(QDir::toNativeSeparators(f.path)))) {
+            QList<FolderShelf::Folder> l = m_shelves[side]->folders();
+            if (index < l.size()) l.removeAt(index);
+            m_shelves[side]->setFolders(l);
+            saveShelf(side);
+        }
+        return;
+    }
+    // Открыта другая папка — не закрываем рывком: панель переедет на новое место
+    if (!m_folderPanel->isVisible()) {
+        m_folderPanel->closeNow();
+        placeBottom();  // Где раскрываться — по месту полки этой стороны
+    }
+    const QRect from(m_shelves[side]->mapTo(this, tile.topLeft()), tile.size());
+    m_folderPanel->open(side, f.path, FolderShelf::label(f), from);
+    placeBottom();
+}
+
+// ПКМ в открытой папке: по файлу — то же меню, что в полоске (showFileMenu),
+// по подпапке — своё (зайти, на полку) и те же «Переименовать / Удалить / Ещё…»
+void MainWindow::showShellMenu(const QString &path, bool dir)
+{
+    if (!dir) {
+        Files::Entry e;
+        const QFileInfo fi(path);
+        e.path = path;
+        e.name = fi.fileName();
+        e.size = fi.size();
+        e.mtime = fi.lastModified();
+        showFileMenu(e, QCursor::pos());
+        return;
+    }
+    RoundedMenu menu(this);
+    const HWND hwnd = reinterpret_cast<HWND>(winId());
+    menu.addAction(tr("📂  Открыть здесь"), [this, path]() { m_folderPanel->enter(path); });
+    menu.addAction(tr("🗔  Открыть в проводнике"), [path]() { QDesktopServices::openUrl(QUrl::fromLocalFile(path)); });
+    const int side = m_folderPanel->side();
+    menu.addAction(tr("➕  На полку"), [this, side, path]() {
+        for (FolderShelf *sh : m_shelves)
+            for (const FolderShelf::Folder &f : sh->folders())
+                if (QDir::cleanPath(f.path).compare(QDir::cleanPath(path), Qt::CaseInsensitive) == 0) return;
+        QList<FolderShelf::Folder> l = m_shelves[side]->folders();
+        l.append({path, QString()});
+        m_shelves[side]->setFolders(l);
+        saveShelf(side);
+    });
+    menu.addSeparator();
+    menu.addAction(tr("🏷  Переименовать"), [this, path]() { renameOnDisk(path); });
+    menu.addAction(tr("❌  Удалить"), [this, path]() { recycleOnDisk(path); });
+    menu.addSeparator();
+    menu.addAction(tr("⋯  Ещё…"), [this, hwnd, path]() {
+        activateForInput();
+        ShellMenu::show(hwnd, path, {}, [this](const QString &p) { renameOnDisk(p); });
+    });
+    menu.exec(QCursor::pos());
+}
+
+void MainWindow::renameOnDisk(const QString &path)
+{
+    const QFileInfo fi(path);
+    bool ok = false;
+    const QString name = askText(this, tr("Переименовать"), tr("Новое имя:"), fi.fileName(), &ok).trimmed();
+    if (!ok || name.isEmpty() || name == fi.fileName()) return;
+    static const QString bad = QStringLiteral("\\/:*?\"<>|");  // Нельзя в именах файлов Windows
+    if (std::any_of(name.cbegin(), name.cend(), [](QChar ch) { return bad.contains(ch); })) {
+        confirmDialog(this, tr("Переименовать"), tr("В имени нельзя использовать символы \\ / : * ? \" < > |"));
+        return;
+    }
+    if (!QDir(fi.absolutePath()).rename(fi.fileName(), name)) {
+        confirmDialog(this, tr("Переименовать"), tr("Не получилось переименовать: файл открыт в другой программе "
+                                                    "или такое имя уже есть."));
+        return;
+    }
+    m_db->renameFilePath(path, QDir(fi.absolutePath()).filePath(name));  // Закрепы и история — на новое имя
+    refreshAfterDiskChange();
+}
+
+// Папка под рукой: подпапка/сама открытая папка, иначе папка на полке
+QString MainWindow::carryDropFolder(const QPoint &global) const
+{
+    if (m_folderPanel) {
+        const QString t = m_folderPanel->dropTargetAt(global);
+        if (!t.isEmpty()) return t;
+        if (m_folderPanel->isVisible() && m_folderPanel->geometry().contains(mapFromGlobal(global))) return QString();
+    }
+    for (FolderShelf *sh : m_shelves)
+        if (sh) {
+            const QString t = sh->folderAt(global);
+            if (!t.isEmpty()) return t;
+        }
+    return m_filesStrip ? m_filesStrip->dropFolderAt(global) : QString();  // Вкладка-папка полоски
+}
+
+// Бросили файлы из руки на папку — копия туда (с Shift — перенос), в фоне
+bool MainWindow::dropToFolder(const QPoint &global, const QList<CarryItem> &items)
+{
+    const QString target = carryDropFolder(global);
+    if (target.isEmpty()) return false;
+    const QString t = QDir::cleanPath(target);
+    QStringList paths;
+    for (const CarryItem &it : items) {
+        const QString src = QDir::cleanPath(it.path);
+        if (!QFileInfo::exists(src)) continue;
+        // Уже лежит в этой папке, или это сама папка / папка над ней — пропускаем
+        if (QFileInfo(src).absolutePath().compare(t, Qt::CaseInsensitive) == 0) continue;
+        if (t.compare(src, Qt::CaseInsensitive) == 0 || t.startsWith(src + '/', Qt::CaseInsensitive)) continue;
+        paths << src;
+    }
+    if (paths.isEmpty()) return true;  // Бросили туда же, где лежит, — ничего не делаем, но и не вставляем
+    const bool move = GetKeyState(VK_SHIFT) < 0;
+    QPointer<MainWindow> self = this;
+    Thumbs::runAsync(this, [paths, t, move]() {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        const bool ok = ShellMenu::copyTo(paths, t, move);
+        if (SUCCEEDED(co)) CoUninitialize();
+        return QVariant(ok);
+    }, [self, move](const QVariant &v) {
+        if (!self) return;
+        if (!v.toBool())
+            confirmDialog(self, move ? tr("Перенос файлов") : tr("Копирование файлов"),
+                          tr("Не все файлы получилось скопировать: нет доступа к папке или файл занят."));
+        if (move) self->m_filesStrip->reload();  // Перенесли из «Загрузок» — там их больше нет
+    });
+    return true;
+}
+
+// Низ середины: полки в самом низу (по половине ширины), полоска файлов — над ними
+void MainWindow::placeBottom()
+{
+    const QRect c = m_centerSpacer->geometry();
+    int shelfH = 0;
+    if (m_shelves[0] && c.width() > sc(260)) {
+        shelfH = m_shelves[0]->shelfHeight();
+        const int m = sc(8), gap = sc(8);
+        const int w = (c.width() - 2 * m - gap) / 2;
+        const int y = c.bottom() - sc(6) - shelfH + 1;
+        m_shelves[0]->setGeometry(c.left() + m, y, w, shelfH);
+        m_shelves[1]->setGeometry(c.right() - m - w + 1, y, w, shelfH);
+        for (FolderShelf *sh : m_shelves) if (!sh->isVisible()) { sh->show(); sh->raise(); }
+    } else {
+        for (FolderShelf *sh : m_shelves) if (sh) sh->hide();
+    }
+    m_filesStrip->place(shelfH ? c.adjusted(0, 0, 0, -(shelfH + sc(2))) : c);
+    // Открытая папка: своя полка и вся середина над полками
+    if (m_folderPanel && shelfH) {
+        const QRect sh = m_shelves[m_folderPanel->side()]->geometry();
+        m_folderPanel->setArea(sh, QRect(c.left() + sc(8), c.top() + sc(10), c.width() - 2 * sc(8), sh.bottom() - c.top() - sc(10)));
+    } else if (m_folderPanel && m_folderPanel->isOpen()) {
+        m_folderPanel->closeNow();  // Середина слишком узкая — полок нет
+    }
+}
+
 // Переложить закреплённые файлы на другую вкладку («Все» — key пустой)
 void MainWindow::moveFilesToTab(const QList<Files::Entry> &files, const QString &tab)
 {
@@ -2694,21 +3049,24 @@ void MainWindow::moveFilesToTab(const QList<Files::Entry> &files, const QString 
         if (e.pinId) m_db->updatePinContent(e.pinId, tab);
     refreshPinnedFiles(!m_searchEdit->text().isEmpty());
 }
+// ПКМ по файлу — одно меню для полоски файлов и открытой папки с полки.
+// Всё редкое, что умеет Проводник (архиваторы, «Отправить»…) — в «Ещё…»
 void MainWindow::showFileMenu(const Files::Entry &e, const QPoint &globalPos)
 {
     RoundedMenu menu(this);
     const QString f = e.path;
+    const HWND hwnd = reinterpret_cast<HWND>(winId());
     if (!e.missing) {
         menu.addAction(tr("📋  Вставить"), [this, e]() {
             if (e.pinId) m_db->touchPin(e.pinId);
             pasteFile(e.path);
         });
         menu.addAction(tr("Открыть"), [f]() { QDesktopServices::openUrl(QUrl::fromLocalFile(f)); });
+        menu.addAction(tr("Открыть с помощью…"), [hwnd, f]() { ShellMenu::openWith(hwnd, f); });
         menu.addAction(tr("📂  Показать в папке"), [f]() {
             QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(f)});
         });
     }
-    menu.addAction(tr("ℹ  Свойства"), [this, f]() { fileInfoDialog(this, f); });
     menu.addSeparator();
     if (e.pinId) {
         const int pinId = e.pinId;
@@ -2733,7 +3091,40 @@ void MainWindow::showFileMenu(const Files::Entry &e, const QPoint &globalPos)
     } else {
         menu.addAction(tr("📌  Закрепить"), [this, f]() { pinFile(f); });
     }
+    if (!e.missing) {
+        menu.addSeparator();
+        menu.addAction(tr("🏷  Переименовать"), [this, f]() { renameOnDisk(f); });
+        menu.addAction(tr("❌  Удалить"), [this, f]() { recycleOnDisk(f); });
+    }
+    menu.addAction(tr("ℹ  Свойства"), [this, f]() { fileInfoDialog(this, f); });
+    if (!e.missing) {
+        menu.addSeparator();
+        menu.addAction(tr("⋯  Ещё…"), [this, hwnd, f]() {
+            activateForInput();  // Меню Проводника закрывается кликом мимо, только если мы активны
+            ShellMenu::show(hwnd, f, {}, [this](const QString &p) { renameOnDisk(p); });
+        });
+    }
     menu.exec(globalPos);
+}
+
+// Удалить в корзину (из меню файла или папки). Закрепы с этим файлом остаются —
+// их видно как «файла нет», открепить можно в любой момент
+void MainWindow::recycleOnDisk(const QString &path)
+{
+    if (!confirmDialog(this, tr("Удалить"), tr("Удалить «%1» в корзину?").arg(QFileInfo(path).fileName()), true))
+        return;
+    if (!ShellMenu::recycle(path)) {
+        confirmDialog(this, tr("Удалить"), tr("Не получилось удалить: файл открыт в другой программе."));
+        return;
+    }
+    refreshAfterDiskChange();
+}
+
+// Что-то переименовали или удалили на диске — обновить полоску и закрепы
+void MainWindow::refreshAfterDiskChange()
+{
+    if (m_viewMode == ViewMode::Pins) refreshPinnedFiles(!m_searchEdit->text().isEmpty());
+    else m_filesStrip->reload();
 }
 
 void MainWindow::pinFile(const QString &filepath)
@@ -2767,15 +3158,21 @@ void MainWindow::startFileDragSqueeze()
     const QRect L = m_leftScroll->geometry(), Rr = m_rightScroll->geometry();
     add(L,  QPointF(-L.right() * 0.62, 0),        0.88, 1.0, QPointF(0, L.center().y()));
     add(Rr, QPointF((W - Rr.left()) * 0.62, 0),   0.88, 1.0, QPointF(W, Rr.center().y()));
-    const QRect B = m_bottomPanel->geometry();
-    const qreal down = (H - B.top()) * 0.55;
-    add(B, QPointF(0, down), 1.0, 0.92, QPointF(B.center().x(), H));
     if (m_filesStrip->isVisible()) {
-        // Полоска прижимается вплотную к полю поиска и уезжает вместе с ним
+        // Полоска уезжает вниз, к краю экрана
         QRect S = m_filesStrip->collapsedRect();
         if (m_importVideoBtn && m_importVideoBtn->isVisible())
             S = S.united(m_importVideoBtn->geometry()).united(m_importAudioBtn->geometry());
-        add(S, QPointF(0, down + (B.top() - S.bottom()) + sc(2)), 1.0, 0.9, QPointF(S.center().x(), H));
+        add(S, QPointF(0, (H - S.top()) * 0.55), 1.0, 0.9, QPointF(S.center().x(), H));
+    }
+    for (FolderShelf *sh : m_shelves)
+        if (sh && sh->isVisible()) {
+            const QRect Sh = sh->geometry();
+            add(Sh, QPointF(0, (H - Sh.top()) * 0.55), 1.0, 0.9, QPointF(Sh.center().x(), H));
+        }
+    if (m_folderPanel && m_folderPanel->isVisible()) {  // Открытая папка — вниз вместе с полками
+        const QRect P = m_folderPanel->geometry();
+        add(P, QPointF(0, (H - P.top()) * 0.55), 1.0, 0.9, QPointF(P.center().x(), H));
     }
     auto *sq = new DragSqueeze(this, pcs);
     m_squeeze = sq;
@@ -2993,10 +3390,10 @@ bool MainWindow::pickEvent(ClickableCard *card, QEvent *event)
 }
 
 // Ctrl+клик: фото — просмотр (как «Просмотреть» в меню), видео — большой плеер
-void MainWindow::viewCard(ClickableCard *card)
+void MainWindow::viewCard(ClickableCard *card, QString fp)
 {
     m_pickView = false;
-    const QString fp = card->property("filepath").toString();
+    if (fp.isEmpty()) fp = card->property("filepath").toString();
     if (fp.isEmpty()) return;
     for (QObject *o : card->children())
         if (auto *surface = dynamic_cast<Media::VideoSurface *>(o)) {
@@ -3060,6 +3457,11 @@ bool MainWindow::carryZone(const QPoint &g) const
     const int m = sc(24);
     const QRect L = m_leftScroll->geometry(), R = m_rightScroll->geometry();
     if (L.adjusted(-m, -m, m, m).contains(p) || R.adjusted(-m, -m, m, m).contains(p)) return true;
+    // Открытая папка и полки — тоже SmartClip (оттуда берут и туда бросают)
+    if (m_folderPanel && m_folderPanel->isVisible()
+        && m_folderPanel->geometry().adjusted(-m, -m, m, m).contains(p)) return true;
+    for (FolderShelf *sh : m_shelves)
+        if (sh && sh->isVisible() && sh->geometry().adjusted(-m, -m, m, m).contains(p)) return true;
     if (m_filesStrip && m_filesStrip->isVisible()) {
         const QRect S = m_filesStrip->visibleRect();
         const QRect band(L.left(), S.top() - m, R.right() - L.left(), height() - S.top() + m);
@@ -3077,6 +3479,7 @@ void MainWindow::syncCarryMarks()
                 if (c->property("pickable").toBool())
                     c->setPicked(m_carry && m_carry->has(c->property("filepath").toString()));
     if (m_filesStrip) m_filesStrip->update();
+    if (m_folderPanel) m_folderPanel->update();
 }
 
 // Фото в отдельном обычном окне. SmartClip уходит, чтобы окно было видно
@@ -3138,6 +3541,39 @@ void MainWindow::deleteCard(int id, QLabel *card)
 void MainWindow::showImageViewer(const QString &filepath, QWidget *source)
 {
     m_imageViewer->showImage(filepath, source);
+}
+
+// Порядок файлов — у каждой папки свой (запоминает тот, кто спросил: apply).
+// Выбрал тот же пункт ещё раз — порядок переворачивается
+void MainWindow::showFilesSortMenu(const QPoint &globalPos, const QString &cur, bool desc,
+                                   const std::function<void(const QString &, bool)> &apply)
+{
+    RoundedMenu menu(this);
+    const QList<QPair<QString, QString>> keys = {
+        {"date", tr("По дате")}, {"name", tr("По имени")}, {"size", tr("По размеру")}, {"type", tr("По типу")},
+    };
+    for (const auto &k : keys) {
+        const bool on = k.first == cur;
+        const QString label = on ? QStringLiteral("✓  ") + k.second + (desc ? QStringLiteral("  ↓") : QStringLiteral("  ↑"))
+                                 : k.second;
+        // Новый порядок: дата и размер — сначала новые/большие, имя и тип — от А
+        const bool firstDesc = k.first == QLatin1String("date") || k.first == QLatin1String("size");
+        const QString key = k.first;
+        menu.addAction(label, [apply, key, on, desc, firstDesc]() { apply(key, on ? !desc : firstDesc); });
+    }
+    menu.addSeparator();
+    menu.addAction(desc ? tr("⇅  По возрастанию") : tr("⇅  По убыванию"), [apply, cur, desc]() { apply(cur, !desc); });
+    menu.exec(globalPos);
+}
+
+// Ctrl+клик по фото или видео в полоске файлов / папке с полки — как в карточках
+void MainWindow::viewFile(const QString &filepath)
+{
+    if (Files::category(filepath) == QLatin1String("video")) {
+        if (m_videoViewer) m_videoViewer->openFile(filepath);
+    } else {
+        showImageViewer(filepath);
+    }
 }
 
 // confirmTwice — двойное подтверждение для опасных действий.
@@ -3640,6 +4076,8 @@ void MainWindow::goToFolder(const QString &folder)
         // Полоса папок, полоска файлов и кнопки — поверх анимации
         m_foldersBar->raise();
         if (m_filesStrip) m_filesStrip->raise();
+        for (FolderShelf *sh : m_shelves) if (sh) sh->raise();
+        if (m_folderPanel && m_folderPanel->isVisible()) m_folderPanel->raise();
         placeImportButtons();
     }
 }
@@ -3691,8 +4129,7 @@ void MainWindow::switchView(ViewMode mode)
     if (m_searchEdit) {
         m_searchEdit->clear();
         m_searchEdit->setPlaceholderText(
-            mode == ViewMode::History ? tr("Поиск по тексту...") : tr("Поиск по названию...")
-        );
+            tr("Поиск"));
     }
 
     // Кнопка мультивыбора видна только в Закрепах
@@ -3707,6 +4144,7 @@ void MainWindow::switchView(ViewMode mode)
 
     // Полоска внизу: в Истории — свежие файлы, в Закрепах — закреплённые
     if (m_filesStrip) m_filesStrip->setPinsMode(mode == ViewMode::Pins);
+    if (m_folderPanel) m_folderPanel->closeNow();
     placeImportButtons();
 
     if (mode == ViewMode::History) {
@@ -3976,6 +4414,10 @@ void MainWindow::loadPins(bool allFolders)
                     card->setSelected(sel);
                     return;
                 }
+                if (card->clickModifiers() & Qt::ControlModifier) {
+                    showImageViewer(fp, card);  // Ctrl+клик — просмотр, как в Истории
+                    return;
+                }
                 m_db->touchPin(pid);
                 pasteImage(fp);
             });
@@ -4082,6 +4524,10 @@ void MainWindow::loadPins(bool allFolders)
                     bool sel = !m_selectedPinIds.contains(pid);
                     if (sel) m_selectedPinIds.insert(pid); else m_selectedPinIds.remove(pid);
                     card->setSelected(sel);
+                    return;
+                }
+                if (card->clickModifiers() & Qt::ControlModifier) {
+                    viewCard(card, fp);  // Ctrl+клик — большой плеер, как в Истории
                     return;
                 }
                 m_db->touchPin(pid);
@@ -5089,6 +5535,7 @@ void MainWindow::showSettings()
     if (m_leftRuler)  m_leftRuler->refresh();
     if (m_rightRuler) m_rightRuler->refresh();
     if (m_filesStrip) m_filesStrip->reload();  // Папки, типы, вид полоски файлов
+    if (m_folderPanel) m_folderPanel->settingsChanged();  // Список деревом
     update();
 }
 
@@ -5200,7 +5647,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 
     if (obj == m_centerSpacer && m_filesStrip &&
         (event->type() == QEvent::Move || event->type() == QEvent::Resize))
-        m_filesStrip->place(m_centerSpacer->geometry());
+        placeBottom();
     if ((obj == m_rightScroll || obj == m_topPanel) &&
         (event->type() == QEvent::Move || event->type() == QEvent::Resize))
         placeFoldersBar();
@@ -5229,6 +5676,7 @@ void MainWindow::hideEvent(QHideEvent *event)
     Media::Playback::get().stop();  // Закрыли SmartClip — звук и видео останавливаются
     if (m_videoViewer) m_videoViewer->hideNow();
     if (m_imageViewer) m_imageViewer->hide();  // Отдельное окно — прячем вместе с SmartClip
+    if (m_folderPanel) m_folderPanel->closeNow();  // Папка с полки — в следующий раз закрыта
     // Окно спрятано без анимации ухода (вставка по клику на карточку) —
     // убираем пустую сцену. Прозрачное окно поверх экрана в полноэкранной
     // игре может снижать FPS, держать его без дела нельзя.
@@ -5284,14 +5732,11 @@ void MainWindow::paintEvent(QPaintEvent *event)
 
         // ── Левая колонка (с полосой папок сверху) ────────────────────
         int colTop = sc(BASE_TOP);
-        int colH   = H - colTop - sc(BASE_BOT);
+        int colH   = H - colTop;
         p.fillRect(0, colTop, sc(BASE_LEFT) + 18, colH, panelColor);
 
         // ── Правая колонка ────────────────────────────────────────────
         p.fillRect(W - sc(BASE_RIGHT) - 18, colTop, sc(BASE_RIGHT) + 18, colH, panelColor);
-
-        // ── Нижняя панель ─────────────────────────────────────────────
-        p.fillRect(0, H - sc(BASE_BOT), W, sc(BASE_BOT), panelColor);
     }
 
     QWidget::paintEvent(event);

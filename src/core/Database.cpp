@@ -1184,6 +1184,21 @@ bool Database::updatePinContent(int id, const QString &content)
 }
 
 // Переименовать закреп.
+// Файл переименовали на диске (из SmartClip) — закрепы и история с ним
+// указывают на новое имя, а не «файл не найден»
+void Database::renameFilePath(const QString &from, const QString &to)
+{
+    const QString a = QDir::fromNativeSeparators(from), b = QDir::toNativeSeparators(to);
+    for (const char *table : {"pins", "history"}) {
+        QSqlQuery q;
+        q.prepare(QStringLiteral("UPDATE %1 SET filepath = :to WHERE REPLACE(filepath, '\\', '/') = :from")
+                      .arg(QLatin1String(table)));
+        q.bindValue(":to", b);
+        q.bindValue(":from", a);
+        if (!q.exec()) qDebug() << "Ошибка смены пути файла:" << q.lastError().text();
+    }
+}
+
 bool Database::updatePinName(int id, const QString &name)
 {
     QSqlQuery query;

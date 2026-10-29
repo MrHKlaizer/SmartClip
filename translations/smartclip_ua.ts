@@ -4,6 +4,130 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>По дате</source>
+        <translation>За датою</translation>
+    </message>
+    <message>
+        <source>По имени</source>
+        <translation>За назвою</translation>
+    </message>
+    <message>
+        <source>По размеру</source>
+        <translation>За розміром</translation>
+    </message>
+    <message>
+        <source>По типу</source>
+        <translation>За типом</translation>
+    </message>
+    <message>
+        <source>⇅  По возрастанию</source>
+        <translation>⇅  За зростанням</translation>
+    </message>
+    <message>
+        <source>⇅  По убыванию</source>
+        <translation>⇅  За спаданням</translation>
+    </message>
+    <message>
+        <source>❌  Удалить</source>
+        <translation>❌  Видалити</translation>
+    </message>
+    <message>
+        <source>📂  Открыть здесь</source>
+        <translation>📂  Відкрити тут</translation>
+    </message>
+    <message>
+        <source>🗔  Открыть в проводнике</source>
+        <translation>🗔  Відкрити в провіднику</translation>
+    </message>
+    <message>
+        <source>Открыть с помощью…</source>
+        <translation>Відкрити за допомогою…</translation>
+    </message>
+    <message>
+        <source>Удалить «%1» в корзину?</source>
+        <translation>Видалити «%1» у кошик?</translation>
+    </message>
+    <message>
+        <source>Не получилось удалить: файл открыт в другой программе.</source>
+        <translation>Не вдалося видалити: файл відкритий в іншій програмі.</translation>
+    </message>
+    <message>
+        <source>⋯  Ещё…</source>
+        <translation>⋯  Ще…</translation>
+    </message>
+    <message>
+        <source>Переименовать</source>
+        <translation>Перейменувати</translation>
+    </message>
+    <message>
+        <source>Новое имя:</source>
+        <translation>Нове ім’я:</translation>
+    </message>
+    <message>
+        <source>В имени нельзя использовать символы \ / : * ? " &lt; &gt; |</source>
+        <translation>В імені не можна використовувати символи \ / : * ? " &lt; &gt; |</translation>
+    </message>
+    <message>
+        <source>Не получилось переименовать: файл открыт в другой программе или такое имя уже есть.</source>
+        <translation>Не вдалося перейменувати: файл відкритий в іншій програмі або таке ім’я вже є.</translation>
+    </message>
+    <message>
+        <source>Перенос файлов</source>
+        <translation>Перенесення файлів</translation>
+    </message>
+    <message>
+        <source>Копирование файлов</source>
+        <translation>Копіювання файлів</translation>
+    </message>
+    <message>
+        <source>Не все файлы получилось скопировать: нет доступа к папке или файл занят.</source>
+        <translation>Не всі файли вдалося скопіювати: немає доступу до папки або файл зайнятий.</translation>
+    </message>
+    <message>
+        <source>Папка не найдена</source>
+        <translation>Папку не знайдено</translation>
+    </message>
+    <message>
+        <source>Папки «%1» больше нет. Убрать её с полки?</source>
+        <translation>Папки «%1» більше немає. Прибрати її з полиці?</translation>
+    </message>
+    <message>
+        <source>➕  На полку</source>
+        <translation>➕  На полицю</translation>
+    </message>
+    <message>
+        <source>Папка для полки</source>
+        <translation>Папка для полиці</translation>
+    </message>
+    <message>
+        <source>➕  Добавить папку</source>
+        <translation>➕  Додати папку</translation>
+    </message>
+    <message>
+        <source>📂  Открыть в проводнике</source>
+        <translation>📂  Відкрити в провіднику</translation>
+    </message>
+    <message>
+        <source>Переименовать папку</source>
+        <translation>Перейменувати папку</translation>
+    </message>
+    <message>
+        <source>➡  На правую полку</source>
+        <translation>➡  На праву полицю</translation>
+    </message>
+    <message>
+        <source>⬅  На левую полку</source>
+        <translation>⬅  На ліву полицю</translation>
+    </message>
+    <message>
+        <source>✕  Убрать с полки</source>
+        <translation>✕  Прибрати з полиці</translation>
+    </message>
+    <message>
+        <source>🔄  Сменить папку</source>
+        <translation>🔄  Змінити папку</translation>
+    </message>
+    <message>
         <source>История</source>
         <translation>Історія</translation>
     </message>
@@ -24,12 +148,8 @@
         <translation>Налаштування</translation>
     </message>
     <message>
-        <source>Поиск по тексту...</source>
-        <translation>Пошук по тексту...</translation>
-    </message>
-    <message>
-        <source>Поиск по названию...</source>
-        <translation>Пошук за назвою...</translation>
+        <source>Поиск</source>
+        <translation>Пошук</translation>
     </message>
     <message>
         <source>Изображение</source>
@@ -764,6 +884,42 @@
 </context>
 <context>
     <name>SettingsDialog</name>
+    <message>
+        <source>Список файлов</source>
+        <translation>Список файлів</translation>
+    </message>
+    <message>
+        <source>Показывать деревом, как в Directory Opus</source>
+        <translation>Показувати деревом, як у Directory Opus</translation>
+    </message>
+    <message>
+        <source>В папке с полки подпапки раскрываются стрелкой прямо в списке — не нужно заходить внутрь.</source>
+        <translation>У папці з полиці підпапки розкриваються стрілкою прямо у списку — не треба заходити всередину.</translation>
+    </message>
+    <message>
+        <source>Таблицы (Excel, CSV…)</source>
+        <translation>Таблиці (Excel, CSV…)</translation>
+    </message>
+    <message>
+        <source>Презентации (PowerPoint…)</source>
+        <translation>Презентації (PowerPoint…)</translation>
+    </message>
+    <message>
+        <source>Код и данные (PY, JS, JSON…)</source>
+        <translation>Код і дані (PY, JS, JSON…)</translation>
+    </message>
+    <message>
+        <source>Графика и 3D (PSD, AI, Blender…)</source>
+        <translation>Графіка і 3D (PSD, AI, Blender…)</translation>
+    </message>
+    <message>
+        <source>Шрифты (TTF, OTF…)</source>
+        <translation>Шрифти (TTF, OTF…)</translation>
+    </message>
+    <message>
+        <source>Торренты</source>
+        <translation>Торенти</translation>
+    </message>
     <message>
         <source>Настройки SmartClip</source>
         <translation>Налаштування SmartClip</translation>
@@ -1583,8 +1739,8 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <translation>Додати теку, файли з якої показувати</translation>
     </message>
     <message>
-        <source>Документы (PDF, Word, Excel…)</source>
-        <translation>Документи (PDF, Word, Excel…)</translation>
+        <source>Документы (PDF, Word, TXT…)</source>
+        <translation>Документи (PDF, Word, TXT…)</translation>
     </message>
     <message>
         <source>За последние:</source>
@@ -1615,8 +1771,8 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
         <translation>Показувати свіжі файли внизу вікна</translation>
     </message>
     <message>
-        <source>Полоска над поиском: наведи мышь — раскроется. Клик вставляет файл, его можно и перетащить мышкой в Telegram, Discord и т.д.</source>
-        <translation>Смужка над пошуком: наведи мишу — розгорнеться. Клік вставляє файл, його можна й перетягнути мишею в Telegram, Discord тощо.</translation>
+        <source>Полоска внизу окна: наведи мышь — раскроется. Клик вставляет файл, его можно и перетащить мышкой в Telegram, Discord и т.д. Папки — вкладками в самой полоске: «+» добавляет, ПКМ по вкладке — сменить или убрать.</source>
+        <translation>Смужка внизу вікна: наведи мишу — розгорнеться. Клік вставляє файл, його можна й перетягнути мишкою в Telegram, Discord тощо. Папки — вкладками в самій смужці: «+» додає, ПКМ по вкладці — змінити або прибрати.</translation>
     </message>
     <message>
         <source>Полоска файлов</source>
@@ -1642,12 +1798,16 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
 <context>
     <name>FilesStrip</name>
     <message>
+        <source>Поиск файлов</source>
+        <translation>Пошук файлів</translation>
+    </message>
+    <message>
         <source>Ничего не найдено</source>
         <translation>Нічого не знайдено</translation>
     </message>
     <message>
-        <source>Свежие файлы · %1</source>
-        <translation>Свіжі файли · %1</translation>
+        <source>Файлы · %1</source>
+        <translation>Файли · %1</translation>
     </message>
 </context>
 <context>
@@ -1880,6 +2040,32 @@ Snipping Tool) з&apos;явиться в історії SmartClip автомат
     <message>
         <source>Перетащи — порядок вставки  ·  «−» — убрать  ·  зажми мышь вне окна — снова в руку  ·  Esc — отмена</source>
         <translation>Перетягни — порядок вставлення  ·  «−» — прибрати  ·  затисни мишу поза вікном — знову в руку  ·  Esc — скасувати</translation>
+    </message>
+</context>
+<context>
+    <name>FolderShelf</name>
+    <message>
+        <source>Добавь папку — она будет здесь под рукой</source>
+        <translation>Додай папку — вона буде тут під рукою</translation>
+    </message>
+</context>
+<context>
+    <name>FolderPanel</name>
+    <message>
+        <source>Поиск в папке</source>
+        <translation>Пошук у папці</translation>
+    </message>
+    <message>
+        <source>Папка пустая</source>
+        <translation>Папка порожня</translation>
+    </message>
+    <message>
+        <source>Загрузка…</source>
+        <translation>Завантаження…</translation>
+    </message>
+    <message>
+        <source>Ничего не найдено</source>
+        <translation>Нічого не знайдено</translation>
     </message>
 </context>
 </TS>

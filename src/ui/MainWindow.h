@@ -244,14 +244,29 @@ private:
     QStringList pinFileTabs() const;  // Вкладки полоски в текущей папке закрепов
     void addFilesTab();                                         // «+» в полоске файлов
     void showFilesTabMenu(const QString &key, const QPoint &globalPos);  // Правый клик по вкладке
+    void loadShelves();                                         // Полки с папками — из настроек
+    void saveShelf(int side);
+    void addShelfFolder(int side);                              // «+» на полке
+    void showShelfMenu(int side, int index, const QPoint &globalPos);  // ПКМ по полке
+    void placeBottom();                                         // Полоска файлов и полки — внизу середины
+    void openShelfFolder(int side, int index, const QRect &tile);  // Клик по папке на полке
+    void showShellMenu(const QString &path, bool dir);         // ПКМ в открытой папке — меню Проводника
+    void renameOnDisk(const QString &path);                    // «Переименовать» (меню файла или папки)
+    void recycleOnDisk(const QString &path);                   // «Удалить» — в корзину
+    void refreshAfterDiskChange();                             // Переименовали/удалили — обновить файлы
+    QString carryDropFolder(const QPoint &global) const;       // Папка под рукой (полка или открытая папка)
+    bool dropToFolder(const QPoint &global, const QList<struct CarryItem> &items);  // Бросили файлы на папку
     void moveFilesToTab(const QList<Files::Entry> &files, const QString &tab);
     void goToFolder(const QString &folder);  // Открыть папку закрепов (с анимацией)
     void importVideo();                         // Выбрать видеофайл и добавить в закрепы
     void importAudio();                         // Выбрать аудиофайл и добавить в закрепы
     void deleteCard(int id, QLabel *card);      // Удалить запись истории
     void deletePinCard(int pinId, QLabel *card);// Удалить закреп
-    void viewCard(class ClickableCard *card);  // Ctrl+клик по фото/видео
+    void viewCard(class ClickableCard *card, QString fp = QString());  // Ctrl+клик по фото/видео
     void showImageViewer(const QString &filepath, QWidget *source = nullptr);          // Открыть полноэкранный просмотрщик
+    void viewFile(const QString &filepath);  // Ctrl+клик по фото/видео в полоске файлов или папке с полки
+    void showFilesSortMenu(const QPoint &globalPos, const QString &cur, bool desc,  // Кнопка сортировки в полоске
+                           const std::function<void(const QString &, bool)> &apply);  // и папке с полки
     void editPin(int id, const QString &content, QLabel *card);  // Редактировать текст закрепа
     void editHistoryText(int id, QLabel *card);                  // Редактировать текст в Истории
     void openPhotoWindow(const QString &filepath);               // Фото в отдельном обычном окне
@@ -304,6 +319,8 @@ private:
     class QTimer *m_searchTimer = nullptr; // Задержка поиска по истории (не искать на каждую букву)
     ImageViewer *m_imageViewer  = nullptr; // Полноэкранный просмотрщик (создаётся при первом использовании)
     class FilesStrip  *m_filesStrip = nullptr;  // Свежие файлы внизу по центру
+    class FolderShelf *m_shelves[2] = {nullptr, nullptr};  // Полки с папками под ней (левая, правая)
+    class FolderPanel *m_folderPanel = nullptr;  // Папка с полки, открытая прямо в SmartClip
     QPointer<QWidget>  m_squeeze;               // Сцена «прижались к краям» (DragSqueeze.h)
     bool               m_fileDrag = false;      // Сейчас несут файл из полоски
     class QTimer      *m_topmostTimer = nullptr; // Держит окно поверх игр «без рамки»
@@ -363,7 +380,6 @@ private:
     QWidget     *m_topPanel;             // Верхняя панель (кнопки режима и поиск)
     QWidget     *m_foldersBar   = nullptr; // Полоса вкладок папок (только в режиме Pins)
     QHBoxLayout *m_foldersLayout = nullptr;// Лейаут внутри полосы папок
-    QWidget     *m_bottomPanel;          // Нижняя панель (История/Закрепы, профили, настройки)
     QWidget     *m_centerSpacer;         // Центральная прозрачная область между колонками
     QLineEdit   *m_searchEdit;           // Строка поиска (реально RoundedLineEdit из .cpp)
     SmartButton *m_historyBtn  = nullptr; // Кнопка «История»
@@ -380,7 +396,6 @@ private:
     // static    — принадлежат классу (одни для всех объектов MainWindow).
     static constexpr int BASE_TOP   = 60;  // Высота верхней панели, px
     static constexpr int BASE_FOLD  = 44;  // Высота полосы папок, px
-    static constexpr int BASE_BOT   = 54;  // Высота нижней панели, px
     static constexpr int BASE_LEFT  = 300; // Ширина левой колонки, px
     static constexpr int BASE_RIGHT = 300; // Ширина правой колонки, px
     static constexpr int ARC_AMP    = 26;  // Запас колонки к центру под выдвинутую мышью карточку, px

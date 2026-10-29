@@ -157,6 +157,9 @@ QJsonObject exportAll(Database *db)
     files["days"]  = s.filesDays();
     files["max"]   = s.filesMax();
     files["view"]  = s.filesView();
+    files["sort"]  = s.filesSort();
+    files["sortDesc"] = s.filesSortDesc();
+    files["tree"]  = s.filesTree();
     files["types"] = QJsonArray::fromStringList(s.filesTypes());
     cfg["files"] = files;
     root["settings"] = cfg;
@@ -329,6 +332,8 @@ ImportResult importFromFile(Database *db, const QString &path)
             if (files.contains("days"))  s.setFilesDays(files["days"].toInt());
             if (files.contains("max"))   s.setFilesMax(files["max"].toInt());
             if (files.contains("view"))  s.setFilesView(files["view"].toString());
+            if (files.contains("sort"))  s.setFilesSort(files["sort"].toString(), files["sortDesc"].toBool(true));
+            if (files.contains("tree"))  s.setFilesTree(files["tree"].toBool());
             if (files.contains("types")) {
                 QStringList types;
                 for (const QJsonValue &t : files["types"].toArray()) types << t.toString();
