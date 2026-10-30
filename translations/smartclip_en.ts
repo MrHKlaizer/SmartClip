@@ -885,6 +885,14 @@ Turn on: Settings → Accessibility → Visual effects → Animation effects.</t
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Не закрывать SmartClip самому</source>
+        <translation>Don't close SmartClip by itself</translation>
+    </message>
+    <message>
+        <source>Переключился в другое окно или кликнул мимо — SmartClip остаётся открытым. Закрывается только по Esc или той же горячей клавишей.</source>
+        <translation>Switched to another window or clicked outside — SmartClip stays open. It closes only with Esc or the same hotkey.</translation>
+    </message>
+    <message>
         <source>Список файлов</source>
         <translation>File list</translation>
     </message>

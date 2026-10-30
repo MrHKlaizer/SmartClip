@@ -20,6 +20,8 @@
 #include "core/Database.h"
 #include "core/AppSettings.h"
 #include "ui/MainWindow.h"
+#include "ui/VideoWindow.h"
+#include "ui/ImageViewer.h"
 #undef protected
 #undef private
 #include "Check.h"

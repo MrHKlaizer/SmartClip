@@ -59,6 +59,13 @@ public:
     // m_s.sync() — записать на диск немедленно (иначе Qt делает это сам при закрытии)
 
     // Автозапуск при входе в Windows. По умолчанию: выключен.
+    // Не закрываться самому (переключился в другое окно, кликнул мимо) —
+    // только Esc или горячей клавишей
+    bool stayOpen() const
+        { return m_s.value("window/stayOpen", false).toBool(); }
+    void setStayOpen(bool b)
+        { m_s.setValue("window/stayOpen", b); m_s.sync(); }
+
     bool autostart() const
         { return m_s.value("system/autostart", false).toBool(); }
     void setAutostart(bool b)

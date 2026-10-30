@@ -28,6 +28,36 @@
 
 #include "SmartButton.h"
 
+// Круглая полупрозрачная кнопка с булавкой («поверх всех окон»); нажата —
+// светится. Общая для окна фото и окна видео
+class WindowPinButton : public QAbstractButton
+{
+public:
+    explicit WindowPinButton(QWidget *parent) : QAbstractButton(parent)
+    {
+        setFixedSize(30, 30);
+        setCursor(Qt::PointingHandCursor);
+    }
+    bool on = false;
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const bool hot = underMouse();
+        p.setPen(QPen(QColor(255, 255, 255, on ? 160 : (hot ? 110 : 60)), 1));
+        p.setBrush(on ? QColor(60, 110, 200, 220) : QColor(20, 20, 30, hot ? 210 : 150));
+        p.drawEllipse(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5));
+        QFont f(SmartButton::iconFontFamily());
+        f.setPixelSize(13);
+        p.setFont(f);
+        p.setPen(QColor(255, 255, 255, on ? 255 : 200));
+        p.drawText(rect(), Qt::AlignCenter, QString(QChar(on ? 0xE841 : 0xE718)));  // Закреплено / булавка
+    }
+    void enterEvent(QEnterEvent *e) override { update(); QAbstractButton::enterEvent(e); }
+    void leaveEvent(QEvent *e) override { update(); QAbstractButton::leaveEvent(e); }
+};
+
 class PhotoWindow : public QWidget
 {
 public:
@@ -44,7 +74,7 @@ public:
         m_pix = QPixmap::fromImage(reader.read());
 
         // Кнопка «поверх всех окон»
-        m_pin = new PinButton(this);
+        m_pin = new WindowPinButton(this);
         m_pin->setToolTip(QApplication::translate("PhotoWindow", "Поверх всех окон"));
         QObject::connect(m_pin, &QAbstractButton::clicked, this, [this]() { setOnTop(!m_onTop); });
 
@@ -129,35 +159,6 @@ protected:
     }
 
 private:
-    // Круглая полупрозрачная кнопка с булавкой; нажата — светится
-    class PinButton : public QAbstractButton
-    {
-    public:
-        explicit PinButton(QWidget *parent) : QAbstractButton(parent)
-        {
-            setFixedSize(30, 30);
-            setCursor(Qt::PointingHandCursor);
-        }
-        bool on = false;
-    protected:
-        void paintEvent(QPaintEvent *) override
-        {
-            QPainter p(this);
-            p.setRenderHint(QPainter::Antialiasing);
-            const bool hot = underMouse();
-            p.setPen(QPen(QColor(255, 255, 255, on ? 160 : (hot ? 110 : 60)), 1));
-            p.setBrush(on ? QColor(60, 110, 200, 220) : QColor(20, 20, 30, hot ? 210 : 150));
-            p.drawEllipse(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5));
-            QFont f(SmartButton::iconFontFamily());
-            f.setPixelSize(13);
-            p.setFont(f);
-            p.setPen(QColor(255, 255, 255, on ? 255 : 200));
-            p.drawText(rect(), Qt::AlignCenter, QString(QChar(on ? 0xE841 : 0xE718)));  // Закреплено / булавка
-        }
-        void enterEvent(QEnterEvent *e) override { update(); QAbstractButton::enterEvent(e); }
-        void leaveEvent(QEvent *e) override { update(); QAbstractButton::leaveEvent(e); }
-    };
-
     // Поверх всех окон — через Windows, без пересоздания окна
     void setOnTop(bool on)
     {
@@ -171,6 +172,6 @@ private:
     }
 
     QPixmap    m_pix;
-    PinButton *m_pin = nullptr;
+    WindowPinButton *m_pin = nullptr;
     bool       m_onTop = false;
 };

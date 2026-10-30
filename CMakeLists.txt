@@ -84,6 +84,7 @@ set(SOURCES
     src/ui/FolderSlide.h
     src/ui/DragGhost.h
     src/ui/PhotoWindow.h
+    src/ui/VideoWindow.h
     src/ui/Carry.h
     src/ui/NavTabs.h
     src/ui/HotkeyEdit.h

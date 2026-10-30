@@ -18,6 +18,11 @@
 using namespace TestUtil;
 
 static int s4(FolderShelf *s) { return s->s(4); }
+// Окно h — на другом мониторе, чем our (как в MainWindow.cpp)
+static bool onOtherMonitor(HWND our, HWND h)
+{
+    return MonitorFromWindow(our, MONITOR_DEFAULTTONEAREST) != MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+}
 
 // ═══ Логика без окон ═════════════════════════════════════════════════════════
 
@@ -217,7 +222,11 @@ TEST(panel_layout)
     fp->setView("list");
     a.settle();
     CHECK(fp->mode() == FolderPanel::Half, "список — не во всю ширину: %1", int(fp->mode()));
-    CHECK(fp->width() == a.w->m_shelves[0]->width(), "список — шириной в свою половину");
+    // Список — в свою половину; узкая половина (ноутбук, повёрнутый экран) — во
+    // всю середину, иначе не влезает шапка
+    const int half = a.w->m_shelves[0]->width();
+    const int wantW = half < fp->s(420) ? fp->m_fullRect.width() : half;
+    CHECK(fp->width() == wantW, "ширина списка %1, ждали %2 (половина %3)", fp->width(), wantW, half);
     CHECK(panelOk(fp, &why), "%1", why);
 
     // Вид запоминается у папки, подпапка наследует, своё — только у неё
@@ -602,4 +611,115 @@ TEST(pins_speed)
     // сторож — чтобы не стало заметно хуже
     CHECK(stalls[1] < 250 && stalls[2] < 250, "повторный переход: окно не отвечало %1 / %2 мс", stalls[1], stalls[2]);
     CHECK(stalls[0] < 300, "первый переход: окно не отвечало %1 мс", stalls[0]);
+}
+
+// ═══ Ctrl+Alt+клик — в отдельном окне; окно видео ═══════════════════════════
+
+TEST(open_in_window)
+{
+    App a(env);
+    const QString img = env.dir() + "/фото.png";
+    QImage pic(160, 90, QImage::Format_RGB32);
+    pic.fill(Qt::darkGreen);
+    pic.save(img);
+    const QString dl = env.dir() + "/dl";
+    QDir().mkpath(dl);
+    QFile::copy(img, dl + "/в полоске.png");
+    AppSettings::get().setFilesFolders({dl});
+    a.db.addHistory("image", "", img, "app");
+    a.start();
+    QStringList opened;
+    QString pasted;
+    a.w->onOpenWindow = [&](const QString &p) { opened << QFileInfo(p).fileName(); };
+    a.w->m_filesStrip->onPick = [&](const Files::Entry &e) { pasted = e.name; };
+    // Карточка фото в Истории
+    ClickableCard *card = nullptr;
+    for (ClickableCard *c : a.w->findChildren<ClickableCard *>())
+        if (c->property("filepath").toString() == img) card = c;
+    CHECK(card != nullptr, "карточка фото в Истории");
+    if (card) {
+        const QPoint c0 = card->rect().center();
+        const Qt::KeyboardModifiers ca = Qt::ControlModifier | Qt::AltModifier;
+        QMouseEvent pr(QEvent::MouseButtonPress, c0, card->mapToGlobal(c0), Qt::LeftButton, Qt::LeftButton, ca);
+        QApplication::sendEvent(card, &pr);
+        QMouseEvent rl(QEvent::MouseButtonRelease, c0, card->mapToGlobal(c0), Qt::LeftButton, Qt::NoButton, ca);
+        QApplication::sendEvent(card, &rl);
+        Check::Env::wait(100);
+        CHECK(opened == QStringList({"фото.png"}), "Ctrl+Alt+клик по карточке — в окне: %1", opened.join(","));
+        CHECK(!a.w->m_imageViewer->isVisible(), "а не большой просмотр");
+    }
+    // Полоска файлов: Ctrl+Alt — тоже окно (Alt проверяется у клавиатуры — здесь подставим сами)
+    opened.clear();
+    a.w->onOpenWindow = [&](const QString &p) { opened << QFileInfo(p).fileName(); };
+    a.w->openInWindow(dl + "/в полоске.png");
+    CHECK(opened == QStringList({"в полоске.png"}), "из полоски/папки — тоже окно");
+    CHECK(pasted.isEmpty(), "ничего не вставилось");
+}
+
+TEST(video_window)
+{
+    const QString mp4 = "C:/Windows/SystemApps/Microsoft.Windows.CloudExperienceHost_cw5n1h2txyewy/media/oobe-intro.mp4";
+    if (!QFileInfo::exists(mp4)) { std::fprintf(stderr, "нет тестового видео — пропуск\n"); CHECK(true); return; }
+    const QString f = env.dir() + "/ролик.mp4";
+    QFile::copy(mp4, f);
+    auto *w = new VideoWindow(f, true);  // Без звука
+    w->setAttribute(Qt::WA_DontShowOnScreen);
+    w->show();
+    CHECK(Check::Env::waitFor([&]() { return !w->m_frame.isNull(); }, 5000), "кадры видео не пришли");
+    if (!w->m_frame.isNull()) {
+        const double va = double(w->m_frame.width()) / w->m_frame.height(), wa = double(w->width()) / w->height();
+        CHECK(qAbs(va - wa) < 0.05, "окно не под пропорции видео: %1 и %2", va, wa);
+    }
+    CHECK(w->m_player.playbackState() == QMediaPlayer::PlayingState, "играет");
+    CHECK(w->m_audio.isMuted(), "в тесте — без звука");
+    QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+    QApplication::sendEvent(w, &space);
+    Check::Env::wait(200);
+    CHECK(w->m_player.playbackState() == QMediaPlayer::PausedState, "пробел — пауза");
+    // Перемотка по полосе (на паузе она видна)
+    const QRect bar = w->barRect();
+    const QPoint mid(bar.left() + bar.width() / 2, bar.center().y());
+    QMouseEvent pr(QEvent::MouseButtonPress, mid, w->mapToGlobal(mid), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(w, &pr);
+    QMouseEvent rl(QEvent::MouseButtonRelease, mid, w->mapToGlobal(mid), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(w, &rl);
+    Check::Env::wait(300);
+    const qint64 d = w->m_player.duration();
+    CHECK(d > 0 && qAbs(w->m_player.position() - d / 2) < d / 10 + 500, "перемотка на середину: %1 из %2", w->m_player.position(), d);
+    CHECK(w->m_player.playbackState() == QMediaPlayer::PausedState, "клик по полосе — не пауза/плей");
+    QPointer<VideoWindow> guard = w;
+    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(w, &esc);
+    Check::Env::wait(200);
+    CHECK(guard.isNull(), "Esc закрыл окно");
+}
+
+// ═══ Настройка «не закрывать SmartClip самому» ═══════════════════════════════
+
+TEST(stay_open)
+{
+    App a(env);
+    a.start();
+    HWND other = GetShellWindow();  // Чужое окно (рабочий стол)
+    CHECK(a.w->isOpen(), "открыт");
+    AppSettings::get().setStayOpen(true);
+    a.w->onGlobalClick();
+    a.w->onForegroundChanged(reinterpret_cast<quintptr>(other));
+    a.w->closeAllOnDeactivate();
+    Check::Env::wait(600);
+    CHECK(a.w->isOpen() && a.w->isVisible(), "с галочкой — клик мимо и смена окна не закрывают");
+    // Без галочки — закрывается, как раньше. Но только если активное окно на
+    // том же мониторе (на другом SmartClip и раньше не закрывался)
+    AppSettings::get().setStayOpen(false);
+    a.w->m_prevFocusHwnd = 0;
+    HWND fg = GetForegroundWindow();
+    DWORD pid = 0;
+    if (fg) GetWindowThreadProcessId(fg, &pid);
+    if (fg && pid != GetCurrentProcessId() && !onOtherMonitor(reinterpret_cast<HWND>(a.w->winId()), fg)) {
+        a.w->onForegroundChanged(reinterpret_cast<quintptr>(other));
+        Check::Env::wait(800);
+        CHECK(!a.w->isOpen(), "без галочки — закрывается, как раньше");
+    } else {
+        std::fprintf(stderr, "активное окно на другом мониторе — проверку «без галочки» пропускаем\n");
+    }
 }

@@ -265,6 +265,8 @@ private:
     void viewCard(class ClickableCard *card, QString fp = QString());  // Ctrl+клик по фото/видео
     void showImageViewer(const QString &filepath, QWidget *source = nullptr);          // Открыть полноэкранный просмотрщик
     void viewFile(const QString &filepath);  // Ctrl+клик по фото/видео в полоске файлов или папке с полки
+    void openInWindow(const QString &filepath);  // Фото/видео в отдельном окне (Ctrl+Alt+клик)
+    std::function<void(const QString &)> onOpenWindow;  // Только для тестов: вместо окна — сюда
     void showFilesSortMenu(const QPoint &globalPos, const QString &cur, bool desc,  // Кнопка сортировки в полоске
                            const std::function<void(const QString &, bool)> &apply);  // и папке с полки
     void editPin(int id, const QString &content, QLabel *card);  // Редактировать текст закрепа
@@ -329,6 +331,7 @@ private:
     class QTimer      *m_pickHoldTimer = nullptr;
     QPoint             m_pickPressPos;
     bool               m_pickView = false;  // Ctrl+клик — просмотр, а не вставка
+    bool               m_pickWindow = false;  // Ctrl+Alt+клик — в отдельном окне
     class SmartButton *m_importVideoBtn = nullptr; // 🎬 / 🎵 — импорт в текущую папку закрепов
     class SmartButton *m_importAudioBtn = nullptr;
     class VideoViewer *m_videoViewer = nullptr; // Большой просмотр видео (2.1)

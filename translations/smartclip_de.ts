@@ -885,6 +885,14 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Не закрывать SmartClip самому</source>
+        <translation>SmartClip nicht von selbst schließen</translation>
+    </message>
+    <message>
+        <source>Переключился в другое окно или кликнул мимо — SmartClip остаётся открытым. Закрывается только по Esc или той же горячей клавишей.</source>
+        <translation>In ein anderes Fenster gewechselt oder daneben geklickt — SmartClip bleibt offen. Es schließt nur mit Esc oder demselben Tastenkürzel.</translation>
+    </message>
+    <message>
         <source>Список файлов</source>
         <translation>Dateiliste</translation>
     </message>

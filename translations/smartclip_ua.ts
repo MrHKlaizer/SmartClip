@@ -885,6 +885,14 @@
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Не закрывать SmartClip самому</source>
+        <translation>Не закривати SmartClip самому</translation>
+    </message>
+    <message>
+        <source>Переключился в другое окно или кликнул мимо — SmartClip остаётся открытым. Закрывается только по Esc или той же горячей клавишей.</source>
+        <translation>Перейшов в інше вікно або клікнув повз — SmartClip лишається відкритим. Закривається лише по Esc або тією ж гарячою клавішею.</translation>
+    </message>
+    <message>
         <source>Список файлов</source>
         <translation>Список файлів</translation>
     </message>

@@ -50,6 +50,7 @@
 #include "GhostCards.h"
 #include "FolderSlide.h"
 #include "PhotoWindow.h"
+#include "VideoWindow.h"     // Видео в отдельном окне (Ctrl+Alt+клик, «Открыть в окне»)
 #include "Carry.h"
 #include <QImageReader>       // Большой просмотр видео
 #include "SettingsDialog.h"     // Диалог настроек (5 вкладок)
@@ -1925,6 +1926,7 @@ void MainWindow::addVideoCard(const HistoryItem &entry, int insertAt)
         menu.addAction(tr("▶  Смотреть"), [this, card, surface, fp]() {
             m_videoViewer->open(card, surface, fp);
         });
+        menu.addAction(tr("🗗  Открыть в окне"), [this, fp]() { openInWindow(fp); });
         menu.addAction(tr("Открыть в плеере"), [fp]() {
             QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
         });
@@ -2633,6 +2635,7 @@ void MainWindow::onGlobalClick()
 {
     // Окно активно — клики мимо отследит WM_ACTIVATE, как и раньше
     if (!isOpen() || weAreForeground() || m_fileDrag || (m_carry && m_carry->active())) return;
+    if (AppSettings::get().stayOpen()) return;  // Настройка: клик мимо не закрывает
     POINT pt;
     GetCursorPos(&pt);
     // Прозрачный центр SmartClip клики пропускает, и WindowFromPoint вернёт
@@ -2653,6 +2656,12 @@ void MainWindow::onForegroundChanged(quintptr hwnd)
     // наш диалог) — это не повод закрываться
     HWND prev = reinterpret_cast<HWND>(m_prevFocusHwnd);
     if (prev && GetAncestor(h, GA_ROOT) == GetAncestor(prev, GA_ROOT)) return;
+    // Настройка «не закрываться самому»: остаёмся, а вставлять будем туда,
+    // куда пользователь перешёл
+    if (AppSettings::get().stayOpen()) {
+        if (isPasteTarget(h)) m_prevFocusHwnd = hwnd;
+        return;
+    }
     // Перешли в окно на другом мониторе — остаёмся открытыми, а вставлять
     // теперь будем туда, где пользователь работает
     if (onOtherMonitor(reinterpret_cast<HWND>(winId()), h)) {
@@ -3363,7 +3372,9 @@ bool MainWindow::pickEvent(ClickableCard *card, QEvent *event)
         m_pickPressCard = card;
         m_pickPressPos = me->globalPosition().toPoint();
         m_pickView = me->modifiers() & Qt::ControlModifier;
-        if (m_pickView) return true;  // Ctrl+клик — просмотр (по отпусканию)
+        // Ctrl+Alt+клик — в отдельном окне, Ctrl+клик — просмотр (по отпусканию)
+        m_pickWindow = m_pickView && (me->modifiers() & Qt::AltModifier);
+        if (m_pickView) return true;
         if (!m_pickHoldTimer) {
             m_pickHoldTimer = new QTimer(this);
             m_pickHoldTimer->setSingleShot(true);
@@ -3390,7 +3401,8 @@ bool MainWindow::pickEvent(ClickableCard *card, QEvent *event)
             if (m_pickHoldTimer) m_pickHoldTimer->stop();
             m_pickPressCard = nullptr;
             if (!card->rect().contains(me->position().toPoint())) return true;
-            if (m_pickView) viewCard(card);
+            if (m_pickWindow) { m_pickView = m_pickWindow = false; openInWindow(card->property("filepath").toString()); }
+            else if (m_pickView) viewCard(card);
             else emit card->clicked();
             return true;
         }
@@ -3504,6 +3516,21 @@ void MainWindow::syncCarryMarks()
 
 // Фото в отдельном обычном окне. SmartClip уходит, чтобы окно было видно
 // (иначе его закрывали бы колонки SmartClip — они всегда поверх всего).
+// Фото или видео в отдельном окне (Ctrl+Alt+клик где угодно, «Открыть в окне»)
+void MainWindow::openInWindow(const QString &filepath)
+{
+    if (filepath.isEmpty() || !QFileInfo::exists(filepath)) return;
+    if (onOpenWindow) { onOpenWindow(filepath); return; }  // Тесты: окно на экран не выводим
+    if (Files::category(filepath) != QLatin1String("video")) { openPhotoWindow(filepath); return; }
+    auto &pb = Media::Playback::get();
+    pb.stop();  // Чтобы не играло два раза (в карточке и в окне)
+    auto *w = new VideoWindow(filepath);
+    hideAnimated();
+    w->show();
+    w->raise();
+    w->activateWindow();
+}
+
 void MainWindow::openPhotoWindow(const QString &filepath)
 {
     auto *w = new PhotoWindow(filepath);
@@ -3589,6 +3616,8 @@ void MainWindow::showFilesSortMenu(const QPoint &globalPos, const QString &cur, 
 // Ctrl+клик по фото или видео в полоске файлов / папке с полки — как в карточках
 void MainWindow::viewFile(const QString &filepath)
 {
+    // Ctrl+Alt+клик — в отдельном окне
+    if (QGuiApplication::queryKeyboardModifiers() & Qt::AltModifier) { openInWindow(filepath); return; }
     if (Files::category(filepath) == QLatin1String("video")) {
         if (m_videoViewer) m_videoViewer->openFile(filepath);
     } else {
@@ -4574,6 +4603,7 @@ void MainWindow::loadPins(bool allFolders)
                 menu.addAction(tr("▶  Смотреть"), [this, card, surface, fp]() {
                     m_videoViewer->open(card, surface, fp);
                 });
+                menu.addAction(tr("🗗  Открыть в окне"), [this, fp]() { openInWindow(fp); });
                 menu.addAction(tr("Открыть в плеере"), [fp]() {
                     QDesktopServices::openUrl(QUrl::fromLocalFile(fp));
                 });
@@ -5615,7 +5645,7 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
                 GetWindowThreadProcessId(activating, &activatingPid);
 
             // Фокус ушёл в окно на другом мониторе — не прячемся
-            if (activatingPid != GetCurrentProcessId()
+            if (activatingPid != GetCurrentProcessId() && !AppSettings::get().stayOpen()
                 && !onOtherMonitor(reinterpret_cast<HWND>(winId()), activating))
                 hideAnimated();
         }
@@ -5628,7 +5658,7 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
 // SmartClip потерял фокус, пока поверх него было открыто окно/меню.
 void MainWindow::closeAllOnDeactivate()
 {
-    if (!isVisible() || m_fileDrag) return;
+    if (!isVisible() || m_fileDrag || AppSettings::get().stayOpen()) return;
     // Фокус ушёл в окно нашего же процесса (например, системное окно выбора
     // файла или папки) — это не «клик мимо», ничего не закрываем
     DWORD pid = 0;

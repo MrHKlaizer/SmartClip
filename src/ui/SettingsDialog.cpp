@@ -822,6 +822,17 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     hotkeyEdit->setText(AppSettings::get().mainHotkey());
     hkLayout->addWidget(hkHint);
     hkLayout->addWidget(hotkeyEdit);
+    // Не закрываться самому: работаешь в другом окне — SmartClip остаётся
+    auto *stayOpenCheck = new SdCheckBox(tr("Не закрывать SmartClip самому"), hkGroup);
+    stayOpenCheck->setChecked(AppSettings::get().stayOpen());
+    auto *stayOpenHint = new QLabel(
+        tr("Переключился в другое окно или кликнул мимо — SmartClip остаётся открытым. "
+           "Закрывается только по Esc или той же горячей клавишей."), hkGroup);
+    stayOpenHint->setWordWrap(true);
+    stayOpenHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
+    hkLayout->addSpacing(6);
+    hkLayout->addWidget(stayOpenCheck);
+    hkLayout->addWidget(stayOpenHint);
 
     // ── Автозапуск ────────────────────────────────────────────────────────────
     auto *startGroup  = new QGroupBox(tr("Запуск системы"), sysTab);
@@ -1767,6 +1778,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         if (newHotkey.isEmpty()) newHotkey = "Ctrl+Shift+V";
         bool hotkeyChanged = (newHotkey != AppSettings::get().mainHotkey());
         AppSettings::get().setMainHotkey(newHotkey);
+        AppSettings::get().setStayOpen(stayOpenCheck->isChecked());
 
         // Автозапуск (записывает/удаляет ключ реестра)
         bool autostartOn = autostartCheck->isChecked();
