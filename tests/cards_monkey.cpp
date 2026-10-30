@@ -153,6 +153,16 @@ int cardsMonkeyMain(int argc, char **argv, Check::Env &env)
             if (w->m_viewMode == MainWindow::ViewMode::History) w->refreshHistory();
         }
         log << QString("%1: %2").arg(step).arg(what);
+        // Ни одного окна теста на экране пользователя (анимации — тоже)
+        for (int k = 0; k < 6; ++k) {
+            Check::Env::wait(15);
+            QString shown;
+            if (Check::visibleOwnWindows(&shown)) {
+                std::fprintf(stderr, "MONKEY cards seed=%u шаг=%d: окно теста видно на экране: %s\n", seed, step, qUtf8Printable(shown));
+                CHECK(false, "окно теста на экране: %1", shown);
+                return 1;
+            }
+        }
         static const int pauses[] = {0, 10, 40, 120, 300, 700};
         Check::Env::wait(pauses[rnd.bounded(6)]);
         // Каждые 4 шага — дождаться, пока всё встанет, и проверить

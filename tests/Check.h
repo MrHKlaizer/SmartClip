@@ -15,6 +15,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QSqlDatabase>
+#include <QWidget>
+#include <QStringList>
+#include <windows.h>
 #include <cstdio>
 #include <functional>
 
@@ -54,6 +57,44 @@ struct Env {
         return cond();
     }
 };
+
+// Ни одного окна теста на экране пользователя: любое окно (и сцены анимаций,
+// и «рука», и окна фото) перед первым показом помечаем «не показывать»
+struct ScreenGuard : QObject {
+    bool eventFilter(QObject *o, QEvent *e) override
+    {
+        if (e->type() == QEvent::Polish)
+            if (auto *w = qobject_cast<QWidget *>(o))
+                if (w->isWindow()) w->setAttribute(Qt::WA_DontShowOnScreen);
+        return false;
+    }
+};
+inline void keepOffScreen()
+{
+    static ScreenGuard guard;
+    qApp->installEventFilter(&guard);
+}
+// Сколько окон этого процесса видно на экране (должно быть 0); names — какие
+inline int visibleOwnWindows(QString *names = nullptr)
+{
+    struct Ctx { int n = 0; QStringList names; } ctx;
+    EnumWindows([](HWND h, LPARAM p) -> BOOL {
+        auto *c = reinterpret_cast<Ctx *>(p);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        if (pid != GetCurrentProcessId() || !IsWindowVisible(h) || IsIconic(h)) return TRUE;
+        RECT r;
+        GetWindowRect(h, &r);
+        if (r.right - r.left <= 1 || r.bottom - r.top <= 1) return TRUE;  // Служебные невидимые точки
+        wchar_t cls[128] = {};
+        GetClassNameW(h, cls, 127);
+        ++c->n;
+        c->names << QString::fromWCharArray(cls);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&ctx));
+    if (names) *names = ctx.names.join(", ");
+    return ctx.n;
+}
 
 // Удалить базу и данные теста (сначала закрыть соединения — иначе файл занят)
 inline void removeTestData(const QString &dir)

@@ -73,6 +73,11 @@ int scenarioMain(int argc, char **argv)
     app.setOrganizationName("SmartClipUiTest");
     app.setApplicationName(QString("SmartClipUiTest_%1").arg(QCoreApplication::applicationPid()));
     QStandardPaths::setTestModeEnabled(true);
+    // Окна сценариев — тоже не на экран (кроме тех, что нарочно показывают: anim, click…)
+    if (!QStringList({"anim", "target", "click", "noact", "idlecpu"}).contains(QString(argv[1] ? argv[1] : "")))
+        Check::keepOffScreen();
+    QDir().mkpath(tmp.path() + "/downloads");  // Не настоящие «Загрузки» пользователя
+    AppSettings::get().setFilesFolders({tmp.path() + "/downloads"});
     // Своя база у каждого запуска — и удаляется в конце (раньше копилась)
     struct DataCleanup {
         QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);

@@ -293,6 +293,9 @@ int monkeyMain(int argc, char **argv, Check::Env &env)
             ok = false;
         }
         if (ok && !ux.endAction(&why)) ok = false;
+        // Ни одного окна теста на экране пользователя
+        QString shown;
+        if (ok && Check::visibleOwnWindows(&shown)) { why = "окно теста видно на экране: " + shown; ok = false; }
         if (ok && shelfSet() != shelvesAtStart) { why = "папки на полках пропали или задвоились: " + shelfSet().join(", "); ok = false; }
         if (ok) for (FolderShelf *sh : a.w->m_shelves)
             if (sh->dragging()) { why = "папка на полке осталась «поднятой» после отпускания"; ok = false; }

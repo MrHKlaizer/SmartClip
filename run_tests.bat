@@ -35,6 +35,8 @@ if errorlevel 1 (
     type "%TBUILD%\build.log"
     goto :fail
 )
+:: Monitor in the tray (test progress, like Task Manager) - starts once
+if exist "%TBUILD%\smartclip_testmon.exe" start "" "%TBUILD%\smartclip_testmon.exe"
 "%TBUILD%\smartclip_tests.exe" %*
 if errorlevel 1 goto :fail
 endlocal

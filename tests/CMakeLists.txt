@@ -31,3 +31,8 @@ target_compile_definitions(smartclip_tests PRIVATE SMARTCLIP_VERSION="0.0-test")
 target_compile_options(smartclip_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(smartclip_tests PRIVATE Qt6::Widgets Qt6::Sql Qt6::Network Qt6::Multimedia
     user32 dwmapi advapi32 shell32 ole32 uuid)
+
+# Монитор тестов — значок в трее и окно с ходом прогона (monitor.cpp).
+# Отдельная программа: run_tests.bat запускает её сам
+add_executable(smartclip_testmon WIN32 monitor.cpp)
+target_link_libraries(smartclip_testmon PRIVATE Qt6::Widgets)

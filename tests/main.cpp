@@ -26,6 +26,11 @@
 #include <QElapsedTimer>
 #include <QStringList>
 #include <QDir>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QSaveFile>
+#include <QDateTime>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QCursor>
@@ -34,6 +39,7 @@
 #include <cstdio>
 #include <windows.h>
 #include "Check.h"
+#include "core/AppSettings.h"
 
 int scenarioMain(int argc, char **argv);              // scenarios.cpp
 int monkeyMain(int argc, char **argv, Check::Env &);  // monkey.cpp
@@ -89,6 +95,10 @@ static int runInEnv(int argc, char **argv, const std::function<int(Check::Env &)
     // удаляется: раньше закрепы и история копились от прогона к прогону
     app.setApplicationName(QString("SmartClipTests_%1").arg(QCoreApplication::applicationPid()));
     QStandardPaths::setTestModeEnabled(true);
+    Check::keepOffScreen();
+    // Папка «Загрузок» по умолчанию — пустая временная (не настоящая у пользователя)
+    QDir().mkpath(tmp.path() + "/downloads");
+    AppSettings::get().setFilesFolders({tmp.path() + "/downloads"});
     const QString data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     Check::Env env;
     env.tmp = &tmp;
@@ -97,6 +107,50 @@ static int runInEnv(int argc, char **argv, const std::function<int(Check::Env &)
     std::fprintf(stderr, "RESULT checks passed=%d failed=%d\n", Check::passed(), Check::failures());
     return rc != 0 ? rc : (Check::failures() ? 1 : 0);
 }
+
+// ── Состояние прогона для монитора (smartclip_testmon.exe) ─────────────────
+// status.json — рядом с exe: что идёт сейчас и результаты; last_results.json —
+// чем закончился прошлый прогон (монитор показывает «прошлый раз»)
+struct StatusFile {
+    QString dir, mode;
+    QDateTime started;
+    QJsonObject prev;  // Прошлый прогон: название → {state, sec}
+    QJsonArray jobs;
+    QString current;
+    QDateTime currentStarted;
+    bool finished = false;
+    void load()
+    {
+        QFile f(dir + "/last_results.json");
+        if (f.open(QIODevice::ReadOnly)) prev = QJsonDocument::fromJson(f.readAll()).object();
+    }
+    void write() const
+    {
+        QJsonObject o;
+        o["mode"] = mode;
+        o["started"] = started.toString(Qt::ISODate);
+        o["now"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        o["current"] = current;
+        o["currentStarted"] = currentStarted.toString(Qt::ISODate);
+        o["finished"] = finished;
+        o["pid"] = qint64(GetCurrentProcessId());
+        o["jobs"] = jobs;
+        QSaveFile f(dir + "/status.json");  // Целиком или никак: монитор не прочтёт половину
+        if (f.open(QIODevice::WriteOnly)) { f.write(QJsonDocument(o).toJson()); f.commit(); }
+    }
+    void saveResults() const
+    {
+        QJsonObject r = prev;  // Не прогнанные в этот раз (quick) — остаются от прошлых
+        for (const QJsonValue &v : jobs) {
+            const QJsonObject j = v.toObject();
+            if (j["state"] == "ok" || j["state"] == "fail")
+                r[j["title"].toString()] = QJsonObject{{"state", j["state"]}, {"sec", j["sec"]},
+                                                       {"when", QDateTime::currentDateTime().toString(Qt::ISODate)}};
+        }
+        QSaveFile f(dir + "/last_results.json");
+        if (f.open(QIODevice::WriteOnly)) { f.write(QJsonDocument(r).toJson()); f.commit(); }
+    }
+};
 
 // Прогнать всё (quick — быстро: проверки и одна короткая обезьяна, без
 // сценариев; полный прогон — перед выпуском). Каждый тест — своим процессом
@@ -132,12 +186,34 @@ static int runAll(const QString &self, bool quick, const QList<Screen> &screens)
     for (const Screen &sc : screens) std::printf("%s;  ", qUtf8Printable(sc.title));
     std::printf("\n\n");
 
+    StatusFile st;
+    st.dir = QFileInfo(self).absolutePath();
+    st.mode = quick ? "быстрый" : "полный";
+    st.started = QDateTime::currentDateTime();
+    st.load();
+    for (const Job &j : jobs) {
+        const QJsonObject pv = st.prev.value(j.title).toObject();
+        st.jobs.append(QJsonObject{{"title", j.title}, {"state", "wait"}, {"sec", 0},
+                                   {"prevState", pv.value("state")}, {"prevSec", pv.value("sec")}, {"details", ""}});
+    }
+    st.write();
+
     QTemporaryDir shots;  // Сценарии сохраняют сюда снимки — удаляются вместе с папкой
     int bad = 0;
+    int idx = -1;
     QStringList failed;
     QElapsedTimer total;
     total.start();
     for (const Job &j : jobs) {
+        ++idx;
+        {
+            QJsonObject jo = st.jobs[idx].toObject();
+            jo["state"] = "run";
+            st.jobs[idx] = jo;
+            st.current = j.title;
+            st.currentStarted = QDateTime::currentDateTime();
+            st.write();
+        }
         QProcess p;
         QProcessEnvironment pe = QProcessEnvironment::systemEnvironment();
         pe.insert("SHOT_DIR", shots.path());
@@ -155,6 +231,7 @@ static int runAll(const QString &self, bool quick, const QList<Screen> &screens)
         const bool ok = finished && !crashed && p.exitCode() == 0;
         std::printf("%s  %-58s %5.1f s%s\n", ok ? "  ok " : " FAIL", qUtf8Printable(j.title), t.elapsed() / 1000.0,
                     !finished ? "  (завис)" : crashed ? "  (упал)" : "");
+        QStringList details;  // Что не так — для монитора
         if (!ok) {
             ++bad;
             failed << j.title;
@@ -162,16 +239,37 @@ static int runAll(const QString &self, bool quick, const QList<Screen> &screens)
             const QStringList lines = out.split('\n');
             int shown = 0;
             for (const QString &l : lines)
-                if (l.startsWith("FAIL") || l.startsWith("MONKEY")) { std::printf("        %s\n", qUtf8Printable(l.trimmed())); ++shown; }
+                if (l.startsWith("FAIL") || l.startsWith("MONKEY") || l.startsWith("    ")) {
+                    if (!l.startsWith("    ")) std::printf("        %s\n", qUtf8Printable(l.trimmed()));
+                    details << l.trimmed();
+                    ++shown;
+                }
             if (!shown)
                 for (int i = qMax(0, int(lines.size()) - 8); i < lines.size(); ++i)
-                    if (!lines[i].trimmed().isEmpty()) std::printf("        | %s\n", qUtf8Printable(lines[i].trimmed()));
+                    if (!lines[i].trimmed().isEmpty()) {
+                        std::printf("        | %s\n", qUtf8Printable(lines[i].trimmed()));
+                        details << lines[i].trimmed();
+                    }
+            if (!finished) details.prepend("Завис: не закончился за " + QString::number(j.timeoutMs / 1000) + " с");
+            else if (crashed) details.prepend("Упал (программа теста аварийно завершилась)");
+        }
+        {
+            QJsonObject jo = st.jobs[idx].toObject();
+            jo["state"] = ok ? "ok" : "fail";
+            jo["sec"] = qRound(t.elapsed() / 100.0) / 10.0;
+            jo["details"] = details.join("\n");
+            st.jobs[idx] = jo;
+            st.current.clear();
+            st.write();
         }
         std::fflush(stdout);
     }
     std::printf("\n%s: %d из %d, %.0f с\n", bad ? "ЕСТЬ ОШИБКИ" : "ВСЁ ХОРОШО", int(jobs.size()) - bad, int(jobs.size()),
                 total.elapsed() / 1000.0);
     if (bad) std::printf("Упали: %s\n", qUtf8Printable(failed.join(", ")));
+    st.finished = true;
+    st.write();
+    st.saveResults();
     return bad ? 1 : 0;
 }
 
