@@ -1,5 +1,6 @@
 <a name="lang-ru"></a>
 ### Что нового
+- **Исправлено: карточки иногда оставались сдвинутыми вбок посреди колонки.** Нашли настоящую причину: в редкий момент «родное» место карточки запоминалось с изгибом дуги. Теперь такого не бывает — это проверяет отдельный тест.
 - **Ctrl+Alt+клик по фото или видео** — где угодно (История, Закрепы, полоска, папки) — открывает его в отдельном окне. Для видео теперь тоже есть своё окно: со звуком, пауза по клику или пробелу, перемотка стрелками и полосой снизу.
 - **«Не закрывать SmartClip самому»** (Настройки → Система): переключился в другое окно или кликнул мимо — SmartClip остаётся открытым, закрывается только по Esc или горячей клавишей.
 - **Закреплённые фото и видео** тоже берутся «рукой», как в Истории.
@@ -15,6 +16,7 @@
 
 <a name="lang-en"></a>
 ### What's new
+- **Fixed: cards sometimes stayed shifted sideways in the middle of a column.** Found the real cause: at a rare moment a card's home position was remembered with the arc bend. This can no longer happen — a dedicated test checks it.
 - **Ctrl+Alt+click on a photo or video** — anywhere (History, Pins, strip, folders) — opens it in its own window. Videos now have their own window too: with sound, pause by click or Space, seek with arrows and the bar at the bottom.
 - **«Don't close SmartClip by itself»** (Settings → System): switch to another window or click outside — SmartClip stays open and closes only with Esc or the hotkey.
 - **Pinned photos and videos** can be picked up with the «hand» too, like in History.
@@ -30,6 +32,7 @@
 
 <a name="lang-ua"></a>
 ### Що нового
+- **Виправлено: картки іноді лишалися зсунутими вбік посеред колонки.** Знайшли справжню причину: в рідкісний момент «рідне» місце картки запам’ятовувалося з вигином дуги. Тепер такого не буває — це перевіряє окремий тест.
 - **Ctrl+Alt+клік по фото чи відео** — будь-де (Історія, Закріпи, смужка, папки) — відкриває його в окремому вікні. Для відео тепер теж є своє вікно: зі звуком, пауза кліком або пробілом, перемотка стрілками та смугою внизу.
 - **«Не закривати SmartClip самому»** (Налаштування → Система): перейшов в інше вікно або клікнув повз — SmartClip лишається відкритим і закривається лише по Esc або гарячою клавішею.
 - **Закріплені фото і відео** теж можна брати «рукою», як в Історії.
@@ -45,6 +48,7 @@
 
 <a name="lang-de"></a>
 ### Neu
+- **Behoben: Karten blieben manchmal mitten in der Spalte seitlich verschoben.** Die echte Ursache gefunden: in einem seltenen Moment wurde die Grundposition einer Karte mit der Bogen-Krümmung gespeichert. Das passiert nicht mehr — ein eigener Test prüft es.
 - **Strg+Alt+Klick auf ein Foto oder Video** — überall (Verlauf, Angeheftet, Leiste, Ordner) — öffnet es in einem eigenen Fenster. Auch Videos haben jetzt ein eigenes Fenster: mit Ton, Pause per Klick oder Leertaste, Spulen mit Pfeiltasten und der Leiste unten.
 - **«SmartClip nicht von selbst schließen»** (Einstellungen → System): in ein anderes Fenster gewechselt oder daneben geklickt — SmartClip bleibt offen und schließt nur mit Esc oder dem Tastenkürzel.
 - **Angeheftete Fotos und Videos** lassen sich jetzt auch mit der «Hand» aufnehmen, wie im Verlauf.

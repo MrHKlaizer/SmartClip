@@ -16,7 +16,7 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Network Multimedia)
 set(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(S "${ROOT}/src")
 add_executable(smartclip_tests
-    main.cpp Check.h checks.cpp monkey.cpp scenarios.cpp
+    main.cpp Check.h TestUtil.h checks.cpp monkey.cpp cards_monkey.cpp scenarios.cpp
     ${ROOT}/assets/resources.qrc
     ${S}/ui/MainWindow.cpp ${S}/ui/MainWindow.h
     ${S}/ui/SettingsDialog.cpp ${S}/ui/SettingsDialog.h

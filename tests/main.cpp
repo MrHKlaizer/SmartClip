@@ -37,6 +37,7 @@
 
 int scenarioMain(int argc, char **argv);              // scenarios.cpp
 int monkeyMain(int argc, char **argv, Check::Env &);  // monkey.cpp
+int cardsMonkeyMain(int argc, char **argv, Check::Env &);  // cards_monkey.cpp
 
 // Старые сценарии, которые не показывают окон на экране (anim, click и т.п. — показывают)
 static const QStringList kScenarios = {
@@ -114,6 +115,7 @@ static int runAll(const QString &self, bool quick, const QList<Screen> &screens)
             if ((sc.geo.width() < sc.geo.height()) != (main.geo.width() < main.geo.height())) { other = sc; break; }
         for (const QString &name : checks) jobs << Job{"check  " + name, {"run", name}, 120000, geoArg(main.geo)};
         jobs << Job{"monkey 1 · 120 шагов · " + other.title, {"monkey", "1", "120"}, 120000, geoArg(other.geo)};
+        jobs << Job{"cards 1 · 60 шагов · " + main.title, {"cards", "1", "60"}, 120000, geoArg(main.geo)};
         std::printf("Проверки — на: %s\n", qUtf8Printable(main.title));
     } else {
         int seed = 1;
@@ -122,6 +124,7 @@ static int runAll(const QString &self, bool quick, const QList<Screen> &screens)
                 jobs << Job{"check  " + name + " · " + sc.title, {"run", name}, 120000, geoArg(sc.geo)};
             const QString sd = QString::number(seed++);
             jobs << Job{"monkey " + sd + " · " + sc.title, {"monkey", sd}, 240000, geoArg(sc.geo)};
+            jobs << Job{"cards " + sd + " · " + sc.title, {"cards", sd}, 240000, geoArg(sc.geo)};
         }
         for (const QString &name : kScenarios) jobs << Job{"scen   " + name, {"run", name}, 120000, QString()};
     }
@@ -190,6 +193,8 @@ int main(int argc, char **argv)
     }
     if (cmd == "monkey")
         return runInEnv(argc, argv, [&](Check::Env &env) { return monkeyMain(argc, argv, env); });
+    if (cmd == "cards")
+        return runInEnv(argc, argv, [&](Check::Env &env) { return cardsMonkeyMain(argc, argv, env); });
     if (!cmd.isEmpty() && cmd != "quick") {
         std::fprintf(stderr, "Не знаю команду «%s». Есть: (пусто) — всё, quick — быстро, run <имя>, monkey <зерно>, list\n", argv[1]);
         return 2;

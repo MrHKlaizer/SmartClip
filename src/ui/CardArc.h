@@ -72,10 +72,22 @@ public:
         // довозит их (раньше соседние карточки при перетаскивании перескакивали)
         layout->beforeLayout = [this]() {
             m_prevPos.clear();
-            if (!m_reflow) return;
-            if (QWidget *content = m_area->widget())
-                for (QObject *o : content->children())
-                    if (auto *w = qobject_cast<QWidget *>(o)) m_prevPos.insert(w, w->pos());
+            if (m_reflow)
+                if (QWidget *content = m_area->widget())
+                    for (QObject *o : content->children())
+                        if (auto *w = qobject_cast<QWidget *>(o)) m_prevPos.insert(w, w->pos());
+            // Перед раскладкой — все карточки на «родные» места (без дуги и
+            // выезда). Qt иногда раскладывает вхолостую (размер тот же) и
+            // карточки не трогает — тогда rememberBase запоминал сдвинутое дугой
+            // место как «родное», и карточки навсегда оставались съехавшими
+            // посреди колонки (тот самый редкий баг). Сразу после раскладки
+            // apply() возвращает эффекты — до отрисовки, так что не мигает.
+            for (int i = 0; i < m_layout->count(); ++i) {
+                QWidget *w = m_layout->itemAt(i)->widget();
+                if (!w) continue;
+                const QVariant base = w->property("arcBase");
+                if (base.isValid() && w->pos() != base.toPoint()) w->move(base.toPoint());
+            }
         };
         layout->afterLayout = [this]() {
             rememberBase();
