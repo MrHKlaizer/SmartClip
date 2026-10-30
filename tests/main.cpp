@@ -186,6 +186,12 @@ static int runAll(const QString &self, bool quick, const QList<Screen> &screens)
     for (const Screen &sc : screens) std::printf("%s;  ", qUtf8Printable(sc.title));
     std::printf("\n\n");
 
+    // Монитор в трее — отдельным процессом, ничего не наследуя (иначе окно,
+    // из которого запустили тесты, ждало бы, пока монитор закроют). Второй
+    // монитор сам не откроется
+    const QString mon = QFileInfo(self).absolutePath() + "/smartclip_testmon.exe";
+    if (QFileInfo::exists(mon)) QProcess::startDetached(mon, {});
+
     StatusFile st;
     st.dir = QFileInfo(self).absolutePath();
     st.mode = quick ? "быстрый" : "полный";

@@ -35,8 +35,8 @@ if errorlevel 1 (
     type "%TBUILD%\build.log"
     goto :fail
 )
-:: Monitor in the tray (test progress, like Task Manager) - starts once
-if exist "%TBUILD%\smartclip_testmon.exe" start "" "%TBUILD%\smartclip_testmon.exe"
+:: The tray monitor (smartclip_testmon) is started by smartclip_tests itself,
+:: fully detached (a "start" from here would keep this window's output open)
 "%TBUILD%\smartclip_tests.exe" %*
 if errorlevel 1 goto :fail
 endlocal
