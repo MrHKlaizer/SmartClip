@@ -21,6 +21,7 @@
 #include "core/AppSettings.h"
 #include "ui/MainWindow.h"
 #include "ui/VideoWindow.h"
+#include "ui/PhotoWindow.h"
 #include "ui/ImageViewer.h"
 #undef protected
 #undef private

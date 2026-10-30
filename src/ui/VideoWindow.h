@@ -4,7 +4,7 @@
 // ║                                                                              ║
 // ║  Как окно фото (PhotoWindow.h): своя кнопка на панели задач, можно таскать,  ║
 // ║  свернуть и закрыть, остаётся, когда SmartClip закрыт; булавка — «поверх     ║
-// ║  всех окон». Видео не искажается (по бокам — полосы).                        ║
+// ║  всех окон». Окно — ровно в пропорциях видео, без полос.                     ║
 // ║                                                                              ║
 // ║  Играет со звуком, своим плеером (видео в карточках — отдельно).            ║
 // ║  Клик или пробел — пауза, ← → — на 5 секунд, полоса снизу — перемотка        ║
@@ -38,7 +38,7 @@ public:
         setAttribute(Qt::WA_DeleteOnClose);
         setWindowTitle(QFileInfo(path).fileName() + QStringLiteral(" — SmartClip"));
         setWindowIcon(qApp->windowIcon());
-        setMinimumSize(240, 160);
+        setMinimumSize(80, 60);  // Меньше — держит keepAspectSizing (по пропорциям)
         setMouseTracking(true);
 
         m_audio.setMuted(muted);
@@ -69,6 +69,11 @@ public:
         DwmSetWindowAttribute(reinterpret_cast<HWND>(winId()), 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/,
                               &dark, sizeof(dark));
     }
+
+
+    // Открыли из SmartClip, а он остаётся открытым — окно поверх него (колонки
+    // SmartClip всегда поверх всего). SmartClip закрылся — обычное окно
+    void setAboveSmartClip(bool on) { m_above = on; applyTopmost(); }
 
 protected:
     void paintEvent(QPaintEvent *) override
@@ -119,6 +124,14 @@ protected:
     }
 
     void resizeEvent(QResizeEvent *) override { m_pin->move(width() - m_pin->width() - 10, 10); }
+
+    // Размер — строго по пропорциям видео (пока кадра нет — 16:9)
+    bool nativeEvent(const QByteArray &type, void *message, qintptr *result) override
+    {
+        const double a = m_frame.isNull() ? 16.0 / 9 : double(m_frame.width()) / m_frame.height();
+        if (keepAspectSizing(static_cast<MSG *>(message), a, 200, result)) return true;
+        return QWidget::nativeEvent(type, message, result);
+    }
 
     void mousePressEvent(QMouseEvent *e) override
     {
@@ -172,8 +185,9 @@ private:
         QScreen *scr = QGuiApplication::screenAt(QCursor::pos());
         if (!scr) scr = QGuiApplication::primaryScreen();
         const QRect av = scr->availableGeometry();
-        QSize sz = video.scaled(video.boundedTo(QSize(av.width() * 6 / 10, av.height() * 6 / 10)), Qt::KeepAspectRatio)
-                       .expandedTo(QSize(320, 180));
+        QSize sz = video;
+        if (qMin(sz.width(), sz.height()) < 240) sz.scale(sz * (240.0 / qMax(1, qMin(sz.width(), sz.height()))), Qt::KeepAspectRatio);
+        sz.scale(sz.boundedTo(QSize(av.width() * 6 / 10, av.height() * 6 / 10)), Qt::KeepAspectRatio);
         const QPoint c = isVisible() ? geometry().center() : av.center();
         resize(sz);
         move(c - QPoint(sz.width() / 2, sz.height() / 2));
@@ -185,7 +199,12 @@ private:
         m_pin->setToolTip(on ? QApplication::translate("PhotoWindow", "Не поверх других окон")
                              : QApplication::translate("PhotoWindow", "Поверх всех окон"));
         m_pin->update();
-        SetWindowPos(reinterpret_cast<HWND>(winId()), on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+        applyTopmost();
+    }
+    // Поверх — если закрепили булавкой или пока открыт SmartClip
+    void applyTopmost()
+    {
+        SetWindowPos(reinterpret_cast<HWND>(winId()), (m_onTop || m_above) ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
@@ -199,4 +218,5 @@ private:
     QTimer       m_hideBar;
     WindowPinButton *m_pin = nullptr;
     bool         m_onTop = false;
+    bool         m_above = false;  // Поверх открытого SmartClip
 };

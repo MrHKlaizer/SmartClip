@@ -3525,7 +3525,15 @@ void MainWindow::openInWindow(const QString &filepath)
     auto &pb = Media::Playback::get();
     pb.stop();  // Чтобы не играло два раза (в карточке и в окне)
     auto *w = new VideoWindow(filepath);
-    hideAnimated();
+    showOwnWindow(w, [w](bool on) { w->setAboveSmartClip(on); });
+}
+
+// Окно с фото/видео: SmartClip остаётся открытым, окно — поверх него (пока
+// SmartClip открыт; закрылся — окно становится обычным, если не закреплено)
+void MainWindow::showOwnWindow(QWidget *w, const std::function<void(bool)> &above)
+{
+    above(true);
+    m_ownWindows.append({QPointer<QWidget>(w), above});
     w->show();
     w->raise();
     w->activateWindow();
@@ -3534,10 +3542,7 @@ void MainWindow::openInWindow(const QString &filepath)
 void MainWindow::openPhotoWindow(const QString &filepath)
 {
     auto *w = new PhotoWindow(filepath);
-    hideAnimated();
-    w->show();
-    w->raise();
-    w->activateWindow();
+    showOwnWindow(w, [w](bool on) { w->setAboveSmartClip(on); });
 }
 
 void MainWindow::pinText(const QString &content)
@@ -5733,6 +5738,9 @@ void MainWindow::hideEvent(QHideEvent *event)
     Media::Playback::get().stop();  // Закрыли SmartClip — звук и видео останавливаются
     if (m_videoViewer) m_videoViewer->hideNow();
     if (m_imageViewer) m_imageViewer->hide();  // Отдельное окно — прячем вместе с SmartClip
+    // Окна с фото/видео остаются, но больше не «поверх всего»
+    for (const auto &ow : std::as_const(m_ownWindows)) if (ow.first) ow.second(false);
+    m_ownWindows.clear();
     if (m_folderPanel) m_folderPanel->closeNow();  // Папка с полки — в следующий раз закрыта
     // Окно спрятано без анимации ухода (вставка по клику на карточку) —
     // убираем пустую сцену. Прозрачное окно поверх экрана в полноэкранной

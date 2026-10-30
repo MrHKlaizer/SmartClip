@@ -723,3 +723,54 @@ TEST(stay_open)
         std::fprintf(stderr, "активное окно на другом мониторе — проверку «без галочки» пропускаем\n");
     }
 }
+
+// Окно фото: SmartClip остаётся открытым, окно — поверх него; без полос
+TEST(photo_window)
+{
+    App a(env);
+    a.start();
+    const QString img = env.dir() + "/широкое.png";
+    QImage pic(400, 100, QImage::Format_RGB32);  // 4:1
+    pic.fill(Qt::darkYellow);
+    pic.save(img);
+    auto *pw = new PhotoWindow(img);
+    pw->setAttribute(Qt::WA_DontShowOnScreen);
+    a.w->showOwnWindow(pw, [pw](bool on) { pw->setAboveSmartClip(on); });
+    Check::Env::wait(300);
+    const HWND h = reinterpret_cast<HWND>(pw->winId());
+    CHECK(a.w->isOpen(), "SmartClip не закрылся, когда открыли окно");
+    CHECK(GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOPMOST, "окно поверх SmartClip");
+    const double a0 = double(pw->width()) / pw->height();
+    CHECK(qAbs(a0 - 4.0) < 0.05, "начальный размер — в пропорциях фото: %1", a0);
+    // Тянем за разные края и углы — всегда 4:1
+    RECT wr;
+    GetWindowRect(h, &wr);
+    for (int edge : {WMSZ_RIGHT, WMSZ_BOTTOM, WMSZ_TOPLEFT, WMSZ_BOTTOMRIGHT, WMSZ_LEFT, WMSZ_TOP}) {
+        RECT r = wr;
+        if (edge == WMSZ_RIGHT || edge == WMSZ_BOTTOMRIGHT) r.right += 137;
+        if (edge == WMSZ_BOTTOM || edge == WMSZ_BOTTOMRIGHT) r.bottom += 61;
+        if (edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT) r.left -= 90;
+        if (edge == WMSZ_TOP || edge == WMSZ_TOPLEFT) r.top -= 45;
+        MSG m{};
+        m.hwnd = h;
+        m.message = WM_SIZING;
+        m.wParam = WPARAM(edge);
+        m.lParam = LPARAM(&r);
+        qintptr res = 0;
+        CHECK(keepAspectSizing(&m, 4.0, 160, &res), "WM_SIZING обработан");
+        RECT cr;
+        GetClientRect(h, &cr);
+        const int fw = (wr.right - wr.left) - cr.right, fh = (wr.bottom - wr.top) - cr.bottom;
+        const double ar = double((r.right - r.left) - fw) / ((r.bottom - r.top) - fh);
+        CHECK(qAbs(ar - 4.0) < 0.05, "край %1: окно не в пропорциях фото (%2) — будут полосы", edge, ar);
+        // Противоположный угол стоит на месте
+        if (edge == WMSZ_TOPLEFT) CHECK(r.right == wr.right && r.bottom == wr.bottom, "тянули левый верх — правый низ на месте");
+        if (edge == WMSZ_BOTTOMRIGHT) CHECK(r.left == wr.left && r.top == wr.top, "тянули правый низ — левый верх на месте");
+    }
+    // SmartClip закрылся — окно остаётся, но уже не «поверх всего»
+    a.w->hideAnimated();
+    Check::Env::wait(800);
+    CHECK(!pw->isHidden(), "окно фото осталось");
+    CHECK(!(GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOPMOST), "после закрытия SmartClip — обычное окно");
+    pw->close();
+}
