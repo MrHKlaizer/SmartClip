@@ -885,6 +885,42 @@ Turn on: Settings → Accessibility → Visual effects → Animation effects.</t
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Список плагинов</source>
+        <translation>Plugin list</translation>
+    </message>
+    <message>
+        <source>Плагины</source>
+        <translation>Plugins</translation>
+    </message>
+    <message>
+        <source>Плагины добавляют SmartClip новые возможности. Ставятся отдельно — сам SmartClip остаётся лёгким, а лишнего у тебя не будет.</source>
+        <translation>Plugins add new features to SmartClip. They are installed separately — SmartClip itself stays light, and you get nothing you don't need.</translation>
+    </message>
+    <message>
+        <source>Поисковик фото</source>
+        <translation>Photo Finder</translation>
+    </message>
+    <message>
+        <source>Находит фото и мемы по тексту запроса — даже если помнишь только примерно, о чём мем.</source>
+        <translation>Finds photos and memes by a text query — even if you only roughly remember what the meme is about.</translation>
+    </message>
+    <message>
+        <source>Скоро — в 2.4</source>
+        <translation>Coming in 2.4</translation>
+    </message>
+    <message>
+        <source>Гиффер</source>
+        <translation>Giffer</translation>
+    </message>
+    <message>
+        <source>Поиск и вставка гифок прямо из SmartClip.</source>
+        <translation>Search and paste GIFs right from SmartClip.</translation>
+    </message>
+    <message>
+        <source>Скоро — в 2.5</source>
+        <translation>Coming in 2.5</translation>
+    </message>
+    <message>
         <source>Не закрывать SmartClip самому</source>
         <translation>Don't close SmartClip by itself</translation>
     </message>

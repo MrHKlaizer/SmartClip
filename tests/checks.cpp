@@ -6,6 +6,9 @@
 // ║  на экране не показываются (WA_DontShowOnScreen).                           ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 #include <QDir>
+#include <QTimer>
+#include <QDialog>
+#include <QFrame>
 #include <QFile>
 #include <QFileInfo>
 #include <QMouseEvent>
@@ -773,4 +776,56 @@ TEST(photo_window)
     CHECK(!pw->isHidden(), "окно фото осталось");
     CHECK(!(GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOPMOST), "после закрытия SmartClip — обычное окно");
     pw->close();
+}
+
+// ═══ Верхняя панель и вкладка «Плагины» в настройках ═════════════════════════
+
+TEST(plugins_button)
+{
+    App a(env);
+    a.start();
+    MainWindow *w = a.w;
+    // Кнопки верхней панели: видны, внутри окна, не налезают друг на друга и на поиск
+    QList<QPair<QString, QWidget *>> top = {{"История", w->m_historyBtn}, {"Закрепы", w->m_pinsBtn},
+                                            {"поиск", w->m_searchEdit->parentWidget()}, {"Профили", w->m_profilesBtn},
+                                            {"сортировка", w->m_sortBtn}, {"очистить", w->m_clearBtn},
+                                            {"настройки", w->m_settingsBtn}};
+    for (auto &b : top) CHECK(b.second && b.second->isVisible(), "не видно: %1", b.first);
+    for (int i = 0; i < top.size(); ++i) {
+        if (!top[i].second || !top[i].second->isVisible()) continue;
+        const QRect ri(top[i].second->mapTo(w, QPoint(0, 0)), top[i].second->size());
+        CHECK(w->rect().contains(ri), "«%1» за краем окна (%2)", top[i].first, rectText(ri));
+        for (int j = i + 1; j < top.size(); ++j) {
+            if (!top[j].second || !top[j].second->isVisible()) continue;
+            const QRect rj(top[j].second->mapTo(w, QPoint(0, 0)), top[j].second->size());
+            CHECK(!ri.intersects(rj), "налезают «%1» и «%2»: %3 и %4", top[i].first, top[j].first, rectText(ri), rectText(rj));
+        }
+    }
+    // Настройки → «Плагины»: вкладка есть, влезает в список слева, в ней два плагина
+    bool saw = false, fits = false;
+    int cards = -1, tabIndex = -1;
+    QTimer::singleShot(600, [&]() {
+        auto *d = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!d) return;
+        saw = true;
+        NavTabs *tabs = nullptr;  // Без Q_OBJECT — ищем среди всех виджетов
+        for (QWidget *c : d->findChildren<QWidget *>()) if ((tabs = dynamic_cast<NavTabs *>(c))) break;
+        if (tabs) {
+            tabIndex = int(tabs->m_labels.indexOf(QApplication::translate("SettingsDialog", "Плагины")));
+            fits = tabs->m_nav->itemTop(tabs->m_nav->count()) <= tabs->m_nav->height();
+            if (tabIndex >= 0) {
+                tabs->setCurrentIndex(tabIndex);
+                Check::Env::wait(300);
+                cards = int(tabs->m_stack->currentWidget()->findChildren<QFrame *>("plugCard").size());
+                if (!qEnvironmentVariable("SHOT_DIR").isEmpty())
+                    d->grab().save(qEnvironmentVariable("SHOT_DIR") + "/settings_plugins.png");
+            }
+        }
+        d->reject();
+    });
+    w->showSettings();
+    CHECK(saw, "настройки не открылись");
+    CHECK(tabIndex >= 0, "нет вкладки «Плагины»");
+    CHECK(fits, "вкладки слева не влезают — «Плагины» за краем");
+    CHECK(cards == 2, "плагинов во вкладке: %1", cards);
 }

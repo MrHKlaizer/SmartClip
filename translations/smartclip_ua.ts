@@ -885,6 +885,42 @@
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Список плагинов</source>
+        <translation>Список плагінів</translation>
+    </message>
+    <message>
+        <source>Плагины</source>
+        <translation>Плагіни</translation>
+    </message>
+    <message>
+        <source>Плагины добавляют SmartClip новые возможности. Ставятся отдельно — сам SmartClip остаётся лёгким, а лишнего у тебя не будет.</source>
+        <translation>Плагіни додають SmartClip нові можливості. Ставляться окремо — сам SmartClip лишається легким, а зайвого в тебе не буде.</translation>
+    </message>
+    <message>
+        <source>Поисковик фото</source>
+        <translation>Пошуковик фото</translation>
+    </message>
+    <message>
+        <source>Находит фото и мемы по тексту запроса — даже если помнишь только примерно, о чём мем.</source>
+        <translation>Знаходить фото й меми за текстом запиту — навіть якщо пам’ятаєш лише приблизно, про що мем.</translation>
+    </message>
+    <message>
+        <source>Скоро — в 2.4</source>
+        <translation>Скоро — у 2.4</translation>
+    </message>
+    <message>
+        <source>Гиффер</source>
+        <translation>Гіфер</translation>
+    </message>
+    <message>
+        <source>Поиск и вставка гифок прямо из SmartClip.</source>
+        <translation>Пошук і вставка гіфок прямо зі SmartClip.</translation>
+    </message>
+    <message>
+        <source>Скоро — в 2.5</source>
+        <translation>Скоро — у 2.5</translation>
+    </message>
+    <message>
         <source>Не закрывать SmartClip самому</source>
         <translation>Не закривати SmartClip самому</translation>
     </message>

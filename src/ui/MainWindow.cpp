@@ -1266,6 +1266,7 @@ void MainWindow::setupLayout()
     applyBtnShadow(m_settingsBtn);
     connect(m_settingsBtn, &QPushButton::clicked, this, &MainWindow::showSettings);
 
+
     // Кнопка режима мультивыбора — видна только в Закрепах
     m_editBtn = new SmartButton(QString(), m_topPanel);
     m_editBtn->setIconGlyph(QChar(0xE70F));  // Карандаш

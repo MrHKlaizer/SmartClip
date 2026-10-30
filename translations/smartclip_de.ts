@@ -885,6 +885,42 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Список плагинов</source>
+        <translation>Plugin-Liste</translation>
+    </message>
+    <message>
+        <source>Плагины</source>
+        <translation>Plugins</translation>
+    </message>
+    <message>
+        <source>Плагины добавляют SmartClip новые возможности. Ставятся отдельно — сам SmartClip остаётся лёгким, а лишнего у тебя не будет.</source>
+        <translation>Plugins erweitern SmartClip um neue Funktionen. Sie werden separat installiert — SmartClip selbst bleibt schlank, und du hast nichts Überflüssiges.</translation>
+    </message>
+    <message>
+        <source>Поисковик фото</source>
+        <translation>Fotofinder</translation>
+    </message>
+    <message>
+        <source>Находит фото и мемы по тексту запроса — даже если помнишь только примерно, о чём мем.</source>
+        <translation>Findet Fotos und Memes per Textsuche — auch wenn du nur ungefähr weißt, worum es im Meme geht.</translation>
+    </message>
+    <message>
+        <source>Скоро — в 2.4</source>
+        <translation>Bald — in 2.4</translation>
+    </message>
+    <message>
+        <source>Гиффер</source>
+        <translation>Giffer</translation>
+    </message>
+    <message>
+        <source>Поиск и вставка гифок прямо из SmartClip.</source>
+        <translation>GIFs direkt aus SmartClip suchen und einfügen.</translation>
+    </message>
+    <message>
+        <source>Скоро — в 2.5</source>
+        <translation>Bald — in 2.5</translation>
+    </message>
+    <message>
         <source>Не закрывать SmartClip самому</source>
         <translation>SmartClip nicht von selbst schließen</translation>
     </message>

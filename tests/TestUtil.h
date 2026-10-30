@@ -20,6 +20,7 @@
 #include "core/Database.h"
 #include "core/AppSettings.h"
 #include "ui/MainWindow.h"
+#include "ui/NavTabs.h"
 #include "ui/VideoWindow.h"
 #include "ui/PhotoWindow.h"
 #include "ui/ImageViewer.h"

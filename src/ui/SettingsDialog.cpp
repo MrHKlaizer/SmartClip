@@ -1695,6 +1695,56 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     tabs->addTab(betaTab, tr("Инфо"), QChar(0xE946));  // О программе, обратная связь, обновления
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  Вкладка: Плагины — то, что ставится к SmartClip отдельно (чтобы сам он
+    //  оставался лёгким). Пока — что готовится; потом здесь будут
+    //  «Установить» / «Удалить»
+    // ═══════════════════════════════════════════════════════════════════════════
+    auto *plugTab    = new QWidget();
+    auto *plugLayout = new QVBoxLayout(plugTab);
+    plugLayout->setContentsMargins(14, 14, 14, 14);
+    plugLayout->setSpacing(12);
+    auto *plugGroup  = new QGroupBox(tr("Список плагинов"), plugTab);
+    auto *plugGrpLay = new QVBoxLayout(plugGroup);
+    plugGrpLay->setSpacing(10);
+    auto *plugIntro = new QLabel(tr("Плагины добавляют SmartClip новые возможности. Ставятся отдельно — "
+                                    "сам SmartClip остаётся лёгким, а лишнего у тебя не будет."), plugGroup);
+    plugIntro->setWordWrap(true);
+    plugIntro->setStyleSheet("color: rgba(255,255,255,140); font-size: 12px;");
+    plugGrpLay->addWidget(plugIntro);
+    struct Plug { QString icon, name, about, when; };
+    const QList<Plug> plugs = {
+        {QStringLiteral("🔍"), tr("Поисковик фото"),
+         tr("Находит фото и мемы по тексту запроса — даже если помнишь только примерно, о чём мем."),
+         tr("Скоро — в 2.4")},
+        {QStringLiteral("🎞"), tr("Гиффер"), tr("Поиск и вставка гифок прямо из SmartClip."), tr("Скоро — в 2.5")},
+    };
+    for (const Plug &p : plugs) {
+        auto *card = new QFrame(plugGroup);
+        card->setObjectName("plugCard");
+        card->setStyleSheet("#plugCard { background: rgba(255,255,255,8); border: 1px solid rgba(255,255,255,30);"
+                            " border-radius: 8px; }");
+        auto *row = new QHBoxLayout(card);
+        row->setContentsMargins(12, 10, 12, 10);
+        row->setSpacing(12);
+        auto *icon = new QLabel(p.icon, card);
+        icon->setStyleSheet("font-size: 22px; background: transparent; border: none;");
+        auto *text = new QLabel(QString("<b>%1</b><br><span style='color:#a0a0b8'>%2</span>")
+                                    .arg(p.name.toHtmlEscaped(), p.about.toHtmlEscaped()), card);
+        text->setWordWrap(true);
+        text->setStyleSheet("color: #e6e6ee; font-size: 13px; background: transparent; border: none;");
+        auto *when = new QLabel(p.when, card);
+        when->setStyleSheet("color: rgba(160,200,255,230); font-size: 12px; background: rgba(60,90,160,60);"
+                            " border: 1px solid rgba(120,160,255,90); border-radius: 9px; padding: 2px 9px;");
+        row->addWidget(icon, 0, Qt::AlignTop);
+        row->addWidget(text, 1);
+        row->addWidget(when, 0, Qt::AlignVCenter);
+        plugGrpLay->addWidget(card);
+    }
+    plugLayout->addWidget(plugGroup);
+    plugLayout->addStretch();
+    tabs->addTab(plugTab, tr("Плагины"), QChar(0xEA86));  // Пазл
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  Логика экспорта (JSON-файл с закрепами, профилями, настройками)
     // ═══════════════════════════════════════════════════════════════════════════
     connect(exportBtn, &QPushButton::clicked, [=]() {
