@@ -192,6 +192,7 @@ public:
     bool updatePinContent(int id, const QString &content); // Изменить текст
     bool updateHistoryContent(int id, const QString &content); // Изменить текст записи истории
     bool updatePinName(int id, const QString &name);       // Переименовать
+    void renameFilePath(const QString &from, const QString &to);  // Файл переименовали на диске
     bool updatePinTags(int id, const QString &tags);       // Изменить теги (через пробел, без #)
 
     // Обновить порядок закрепов после drag-and-drop.

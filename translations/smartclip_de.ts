@@ -4,6 +4,130 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>По дате</source>
+        <translation>Nach Datum</translation>
+    </message>
+    <message>
+        <source>По имени</source>
+        <translation>Nach Name</translation>
+    </message>
+    <message>
+        <source>По размеру</source>
+        <translation>Nach Größe</translation>
+    </message>
+    <message>
+        <source>По типу</source>
+        <translation>Nach Typ</translation>
+    </message>
+    <message>
+        <source>⇅  По возрастанию</source>
+        <translation>⇅  Aufsteigend</translation>
+    </message>
+    <message>
+        <source>⇅  По убыванию</source>
+        <translation>⇅  Absteigend</translation>
+    </message>
+    <message>
+        <source>❌  Удалить</source>
+        <translation>❌  Löschen</translation>
+    </message>
+    <message>
+        <source>📂  Открыть здесь</source>
+        <translation>📂  Hier öffnen</translation>
+    </message>
+    <message>
+        <source>🗔  Открыть в проводнике</source>
+        <translation>🗔  Im Explorer öffnen</translation>
+    </message>
+    <message>
+        <source>Открыть с помощью…</source>
+        <translation>Öffnen mit…</translation>
+    </message>
+    <message>
+        <source>Удалить «%1» в корзину?</source>
+        <translation>«%1» in den Papierkorb verschieben?</translation>
+    </message>
+    <message>
+        <source>Не получилось удалить: файл открыт в другой программе.</source>
+        <translation>Löschen fehlgeschlagen: Die Datei ist in einem anderen Programm geöffnet.</translation>
+    </message>
+    <message>
+        <source>⋯  Ещё…</source>
+        <translation>⋯  Mehr…</translation>
+    </message>
+    <message>
+        <source>Переименовать</source>
+        <translation>Umbenennen</translation>
+    </message>
+    <message>
+        <source>Новое имя:</source>
+        <translation>Neuer Name:</translation>
+    </message>
+    <message>
+        <source>В имени нельзя использовать символы \ / : * ? " &lt; &gt; |</source>
+        <translation>Ein Name darf die Zeichen \ / : * ? " &lt; &gt; | nicht enthalten</translation>
+    </message>
+    <message>
+        <source>Не получилось переименовать: файл открыт в другой программе или такое имя уже есть.</source>
+        <translation>Umbenennen fehlgeschlagen: Die Datei ist in einem anderen Programm geöffnet oder der Name existiert bereits.</translation>
+    </message>
+    <message>
+        <source>Перенос файлов</source>
+        <translation>Dateien verschieben</translation>
+    </message>
+    <message>
+        <source>Копирование файлов</source>
+        <translation>Dateien kopieren</translation>
+    </message>
+    <message>
+        <source>Не все файлы получилось скопировать: нет доступа к папке или файл занят.</source>
+        <translation>Nicht alle Dateien konnten kopiert werden: kein Zugriff auf den Ordner oder eine Datei ist in Benutzung.</translation>
+    </message>
+    <message>
+        <source>Папка не найдена</source>
+        <translation>Ordner nicht gefunden</translation>
+    </message>
+    <message>
+        <source>Папки «%1» больше нет. Убрать её с полки?</source>
+        <translation>Den Ordner «%1» gibt es nicht mehr. Aus dem Regal entfernen?</translation>
+    </message>
+    <message>
+        <source>➕  На полку</source>
+        <translation>➕  Ins Regal</translation>
+    </message>
+    <message>
+        <source>Папка для полки</source>
+        <translation>Ordner für das Regal</translation>
+    </message>
+    <message>
+        <source>➕  Добавить папку</source>
+        <translation>➕  Ordner hinzufügen</translation>
+    </message>
+    <message>
+        <source>📂  Открыть в проводнике</source>
+        <translation>📂  Im Explorer öffnen</translation>
+    </message>
+    <message>
+        <source>Переименовать папку</source>
+        <translation>Ordner umbenennen</translation>
+    </message>
+    <message>
+        <source>➡  На правую полку</source>
+        <translation>➡  Ins rechte Regal</translation>
+    </message>
+    <message>
+        <source>⬅  На левую полку</source>
+        <translation>⬅  Ins linke Regal</translation>
+    </message>
+    <message>
+        <source>✕  Убрать с полки</source>
+        <translation>✕  Aus dem Regal entfernen</translation>
+    </message>
+    <message>
+        <source>🔄  Сменить папку</source>
+        <translation>🔄  Ordner ändern</translation>
+    </message>
+    <message>
         <source>История</source>
         <translation>Verlauf</translation>
     </message>
@@ -24,12 +148,8 @@
         <translation>Einstellungen</translation>
     </message>
     <message>
-        <source>Поиск по тексту...</source>
-        <translation>Text suchen...</translation>
-    </message>
-    <message>
-        <source>Поиск по названию...</source>
-        <translation>Nach Name suchen...</translation>
+        <source>Поиск</source>
+        <translation>Suche</translation>
     </message>
     <message>
         <source>Изображение</source>
@@ -764,6 +884,50 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
 </context>
 <context>
     <name>SettingsDialog</name>
+    <message>
+        <source>Не закрывать SmartClip самому</source>
+        <translation>SmartClip nicht von selbst schließen</translation>
+    </message>
+    <message>
+        <source>Переключился в другое окно или кликнул мимо — SmartClip остаётся открытым. Закрывается только по Esc или той же горячей клавишей.</source>
+        <translation>In ein anderes Fenster gewechselt oder daneben geklickt — SmartClip bleibt offen. Es schließt nur mit Esc oder demselben Tastenkürzel.</translation>
+    </message>
+    <message>
+        <source>Список файлов</source>
+        <translation>Dateiliste</translation>
+    </message>
+    <message>
+        <source>Показывать деревом, как в Directory Opus</source>
+        <translation>Als Baum anzeigen, wie in Directory Opus</translation>
+    </message>
+    <message>
+        <source>В папке с полки подпапки раскрываются стрелкой прямо в списке — не нужно заходить внутрь.</source>
+        <translation>Im Regal-Ordner klappen Unterordner per Pfeil direkt in der Liste auf — ohne hineinzugehen.</translation>
+    </message>
+    <message>
+        <source>Таблицы (Excel, CSV…)</source>
+        <translation>Tabellen (Excel, CSV…)</translation>
+    </message>
+    <message>
+        <source>Презентации (PowerPoint…)</source>
+        <translation>Präsentationen (PowerPoint…)</translation>
+    </message>
+    <message>
+        <source>Код и данные (PY, JS, JSON…)</source>
+        <translation>Code und Daten (PY, JS, JSON…)</translation>
+    </message>
+    <message>
+        <source>Графика и 3D (PSD, AI, Blender…)</source>
+        <translation>Grafik und 3D (PSD, AI, Blender…)</translation>
+    </message>
+    <message>
+        <source>Шрифты (TTF, OTF…)</source>
+        <translation>Schriftarten (TTF, OTF…)</translation>
+    </message>
+    <message>
+        <source>Торренты</source>
+        <translation>Torrents</translation>
+    </message>
     <message>
         <source>Настройки SmartClip</source>
         <translation>SmartClip Einstellungen</translation>
@@ -1583,8 +1747,8 @@ Im Standardplayer öffnen?</translation>
         <translation>Ordner hinzufügen, dessen Dateien angezeigt werden</translation>
     </message>
     <message>
-        <source>Документы (PDF, Word, Excel…)</source>
-        <translation>Dokumente (PDF, Word, Excel…)</translation>
+        <source>Документы (PDF, Word, TXT…)</source>
+        <translation>Dokumente (PDF, Word, TXT…)</translation>
     </message>
     <message>
         <source>За последние:</source>
@@ -1615,8 +1779,8 @@ Im Standardplayer öffnen?</translation>
         <translation>Neue Dateien unten im Fenster anzeigen</translation>
     </message>
     <message>
-        <source>Полоска над поиском: наведи мышь — раскроется. Клик вставляет файл, его можно и перетащить мышкой в Telegram, Discord и т.д.</source>
-        <translation>Leiste über der Suche: zum Aufklappen mit der Maus darüberfahren. Ein Klick fügt die Datei ein, sie lässt sich auch mit der Maus in Telegram, Discord usw. ziehen.</translation>
+        <source>Полоска внизу окна: наведи мышь — раскроется. Клик вставляет файл, его можно и перетащить мышкой в Telegram, Discord и т.д. Папки — вкладками в самой полоске: «+» добавляет, ПКМ по вкладке — сменить или убрать.</source>
+        <translation>Leiste unten im Fenster: Maus darüber — sie klappt auf. Klick fügt eine Datei ein, man kann sie auch mit der Maus in Telegram, Discord usw. ziehen. Ordner sind Tabs in der Leiste selbst: «+» fügt hinzu, Rechtsklick auf einen Tab — ändern oder entfernen.</translation>
     </message>
     <message>
         <source>Полоска файлов</source>
@@ -1642,12 +1806,16 @@ Im Standardplayer öffnen?</translation>
 <context>
     <name>FilesStrip</name>
     <message>
+        <source>Поиск файлов</source>
+        <translation>Dateien suchen</translation>
+    </message>
+    <message>
         <source>Ничего не найдено</source>
         <translation>Nichts gefunden</translation>
     </message>
     <message>
-        <source>Свежие файлы · %1</source>
-        <translation>Neue Dateien · %1</translation>
+        <source>Файлы · %1</source>
+        <translation>Dateien · %1</translation>
     </message>
 </context>
 <context>
@@ -1880,6 +2048,32 @@ Anheften: Verlauf → Rechtsklick auf eine Datei unten → „Anheften“.</tran
     <message>
         <source>Перетащи — порядок вставки  ·  «−» — убрать  ·  зажми мышь вне окна — снова в руку  ·  Esc — отмена</source>
         <translation>Ziehen — Einfügereihenfolge  ·  «−» — entfernen  ·  Maus außerhalb halten — wieder in die Hand  ·  Esc — abbrechen</translation>
+    </message>
+</context>
+<context>
+    <name>FolderShelf</name>
+    <message>
+        <source>Добавь папку — она будет здесь под рукой</source>
+        <translation>Füge einen Ordner hinzu — er ist dann hier griffbereit</translation>
+    </message>
+</context>
+<context>
+    <name>FolderPanel</name>
+    <message>
+        <source>Поиск в папке</source>
+        <translation>In Ordner suchen</translation>
+    </message>
+    <message>
+        <source>Папка пустая</source>
+        <translation>Der Ordner ist leer</translation>
+    </message>
+    <message>
+        <source>Загрузка…</source>
+        <translation>Wird geladen…</translation>
+    </message>
+    <message>
+        <source>Ничего не найдено</source>
+        <translation>Nichts gefunden</translation>
     </message>
 </context>
 </TS>

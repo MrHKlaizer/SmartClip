@@ -30,6 +30,7 @@
 #include <QCoreApplication>
 // QDir — работа с путями и папками (для пути по умолчанию к папке видео)
 #include <QDir>
+#include <QFileInfo>
 
 // ─── Класс AppSettings ────────────────────────────────────────────────────────
 // Синглтон — паттерн проектирования при котором класс создаётся только один раз.
@@ -58,6 +59,13 @@ public:
     // m_s.sync() — записать на диск немедленно (иначе Qt делает это сам при закрытии)
 
     // Автозапуск при входе в Windows. По умолчанию: выключен.
+    // Не закрываться самому (переключился в другое окно, кликнул мимо) —
+    // только Esc или горячей клавишей
+    bool stayOpen() const
+        { return m_s.value("window/stayOpen", false).toBool(); }
+    void setStayOpen(bool b)
+        { m_s.setValue("window/stayOpen", b); m_s.sync(); }
+
     bool autostart() const
         { return m_s.value("system/autostart", false).toBool(); }
     void setAutostart(bool b)
@@ -288,13 +296,88 @@ public:
         { return m_s.value("files/view", "tiles").toString(); }
     void setFilesView(const QString &v)
         { m_s.setValue("files/view", v); m_s.sync(); }
+    // Сортировка файлов (полоска и папки с полок): "date", "name", "size", "type"
+    QString filesSort() const
+        { return m_s.value("files/sort", "date").toString(); }
+    bool filesSortDesc() const
+        { return m_s.value("files/sortDesc", true).toBool(); }
+    void setFilesSort(const QString &key, bool desc)
+        { m_s.setValue("files/sort", key); m_s.setValue("files/sortDesc", desc); m_s.sync(); }
+    // Вид и сортировка — свои у каждой папки (key — путь папки или вкладка
+    // полоски). Папке не задавали — как у ближайшей родительской, иначе
+    // по умолчанию (плитки, сначала новые)
+    QString folderView(const QString &key) const
+    {
+        const QVariant v = folderValue("files/folderView/", key);
+        return v.isValid() ? v.toString() : filesView();
+    }
+    void setFolderView(const QString &key, const QString &v)
+        { m_s.setValue("files/folderView/" + folderHex(key), v); m_s.sync(); }
+    void folderSort(const QString &key, QString &sortKey, bool &desc) const
+    {
+        const QVariant v = folderValue("files/folderSort/", key);
+        const QStringList kv = v.toString().split(':');
+        if (!v.isValid() || kv.size() != 2) { sortKey = filesSort(); desc = filesSortDesc(); return; }
+        sortKey = kv[0];
+        desc = kv[1] == QLatin1String("1");
+    }
+    void setFolderSort(const QString &key, const QString &sortKey, bool desc)
+    {
+        m_s.setValue("files/folderSort/" + folderHex(key), sortKey + (desc ? ":1" : ":0"));
+        m_s.sync();
+    }
+    static QString folderHex(const QString &key)
+        { return QString::fromLatin1(QDir::cleanPath(key).toLower().toUtf8().toHex()); }
+    QVariant folderValue(const QString &prefix, const QString &key) const
+    {
+        QString k = QDir::cleanPath(key);
+        for (int guard = 0; guard < 64 && !k.isEmpty(); ++guard) {
+            const QVariant v = m_s.value(prefix + folderHex(k));
+            if (v.isValid()) return v;
+            const QString up = QFileInfo(k).path();  // Выше по дереву папок
+            if (up == k || up == QLatin1String(".")) break;
+            k = up;
+        }
+        return QVariant();
+    }
+    // Список — деревом: подпапки раскрываются стрелкой на месте (как в Directory Opus)
+    bool filesTree() const
+        { return m_s.value("files/tree", false).toBool(); }
+    void setFilesTree(bool on)
+        { m_s.setValue("files/tree", on); m_s.sync(); }
 
-    // Какие типы показывать (image, video, audio, docs, archives, programs, other)
+    // Все типы файлов для фильтра «Какие файлы показывать» (см. Files::category)
+    static QStringList allFileTypes()
+    {
+        return {"image", "video", "audio", "docs", "tables", "slides", "archives", "programs",
+                "code", "design", "fonts", "torrents", "other"};
+    }
+    // Какие типы показывать. Типы, которых ещё не было, когда список сохраняли
+    // (добавились в новой версии), — включены
     QStringList filesTypes() const
-        { return m_s.value("files/types", QStringList{"image", "video", "audio", "docs",
-                                                      "archives", "programs", "other"}).toStringList(); }
+    {
+        QStringList t = m_s.value("files/types", allFileTypes()).toStringList();
+        const QStringList known = m_s.value("files/typesKnown", QStringList{"image", "video", "audio", "docs",
+                                                                            "archives", "programs", "other"}).toStringList();
+        for (const QString &c : allFileTypes())
+            if (!known.contains(c) && !t.contains(c)) t << c;
+        return t;
+    }
     void setFilesTypes(const QStringList &l)
-        { m_s.setValue("files/types", l); m_s.sync(); }
+        { m_s.setValue("files/types", l); m_s.setValue("files/typesKnown", allFileTypes()); m_s.sync(); }
+
+    // Полки с папками внизу окна: side 0 — левая, 1 — правая.
+    // names — свои названия (пустое — имя папки), по одному на путь
+    QStringList shelfPaths(int side) const
+        { return m_s.value(side ? "files/shelfRight" : "files/shelfLeft").toStringList(); }
+    QStringList shelfNames(int side) const
+        { return m_s.value(side ? "files/shelfRightNames" : "files/shelfLeftNames").toStringList(); }
+    void setShelf(int side, const QStringList &paths, const QStringList &names)
+    {
+        m_s.setValue(side ? "files/shelfRight" : "files/shelfLeft", paths);
+        m_s.setValue(side ? "files/shelfRightNames" : "files/shelfLeftNames", names);
+        m_s.sync();
+    }
 
     // ─── Резервные копии (раздел [backup]) ───────────────────────────────────
 

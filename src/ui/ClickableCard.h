@@ -77,6 +77,7 @@ public:
         if (!on) setCursor(Qt::PointingHandCursor);
         update();
     }
+    bool editMode() const { return m_editMode; }  // Режим редактирования Закрепов (выбор, перестановка)
 
     // Установить/снять состояние «выбрано» (золотая рамка + оверлей).
     void setSelected(bool sel) { m_selected = sel; update(); }
@@ -99,6 +100,9 @@ public:
         }
     }
     bool isPicked() const { return m_picked; }
+
+    // Клавиши, зажатые при последнем клике (Ctrl+клик — просмотр)
+    Qt::KeyboardModifiers clickModifiers() const { return m_clickMods; }
 
 // ─── Сигналы ─────────────────────────────────────────────────────────────────
 signals:
@@ -187,6 +191,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override
     {
         if (event->button() == Qt::LeftButton) {
+            m_clickMods = event->modifiers();
             if (!m_editMode) {
                 // Обычный режим: просто emit clicked()
                 emit clicked();
@@ -271,6 +276,7 @@ private:
     bool   m_editMode = false;   // Включён режим мультивыбора
     bool   m_selected = false;   // Карточка выбрана (галочка/оверлей)
     bool   m_picked = false;     // Фото «в руке» (бледнеет)
+    Qt::KeyboardModifiers m_clickMods;
 
     // Место карточки «в руке» бледнеет, как у файлов в полоске (см. Carry.h)
     class PickedShade : public QWidget

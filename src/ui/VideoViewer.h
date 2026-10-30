@@ -82,6 +82,31 @@ public:
         refreshControls();
     }
 
+    // Открыть видеофайл без карточки (Ctrl+клик в полоске файлов или в папке
+    // с полки). Закрыли — видео останавливается: возвращаться ему некуда
+    void openFile(const QString &file)
+    {
+        m_card = nullptr;
+        m_cardSurface = nullptr;
+        if (parentWidget()) setGeometry(parentWidget()->geometry());
+        auto &pb = Media::Playback::get();
+        pb.start(file, this, m_surface->sink(), true);  // Как из карточки — без звука, включить кнопкой
+        pb.player()->play();
+        m_closing = false;
+        m_from = 0; m_to = 1; m_t = 0;
+        m_duration = Anim::enabled(Anim::Kind::Viewer) ? Anim::ms(Anim::Kind::Viewer, 420) : 1;
+        m_curve = QEasingCurve(QEasingCurve::OutCubic);
+        show();
+        HWND h = reinterpret_cast<HWND>(winId());
+        SetWindowLongPtrW(h, GWL_EXSTYLE, GetWindowLongPtrW(h, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
+        SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        m_clock.start();
+        m_tick.setInterval(Anim::frameMs(this));
+        m_tick.start();
+        tick();
+        refreshControls();
+    }
+
     // Закрыть: видео улетает обратно в карточку и продолжает играть там
     void closeAnimated()
     {
@@ -156,6 +181,7 @@ private:
                 // Видео — обратно в карточку (играет там дальше)
                 auto &pb = Media::Playback::get();
                 if (pb.isOwner(m_card) && m_cardSurface) pb.setSink(m_cardSurface->sink());
+                else if (pb.isOwner(this)) pb.stop();  // Открывали файл без карточки
             }
         }
     }

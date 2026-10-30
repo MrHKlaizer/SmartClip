@@ -18,6 +18,7 @@
 #include <QEasingCurve>
 #include <QDir>
 #include <QDirIterator>
+#include <QCollator>
 #include <QFileInfo>
 #include <QDateTime>
 #include <QStandardPaths>
@@ -28,6 +29,8 @@
 #include <QMimeData>
 #include <QUrl>
 #include <QApplication>
+#include <QLineEdit>
+#include <QFileSystemWatcher>
 #include <QPointer>
 #include <QHash>
 #include <QSet>
@@ -52,21 +55,42 @@ inline QString category(const QString &path)
         auto add = [&m](const char *cat, std::initializer_list<const char *> exts) {
             for (const char *e : exts) m.insert(QLatin1String(e), QLatin1String(cat));
         };
-        add("image",    {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic", "svg", "ico"});
-        add("video",    {"mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v", "flv"});
-        add("audio",    {"mp3", "wav", "ogg", "flac", "m4a", "aac", "opus", "wma"});
-        add("docs",     {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf",
-                         "odt", "ods", "odp", "csv", "md", "epub", "json", "xml"});
-        add("archives", {"zip", "rar", "7z", "tar", "gz", "bz2", "xz", "iso"});
-        add("programs", {"exe", "msi", "bat", "cmd", "apk", "appx", "msix", "msixbundle"});
+        add("image",    {"png", "jpg", "jpeg", "jfif", "gif", "webp", "avif", "bmp", "tif", "tiff", "heic",
+                         "heif", "svg", "ico", "raw", "dng", "cr2", "cr3", "nef", "arw", "orf", "rw2"});
+        add("video",    {"mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v", "flv", "mpg", "mpeg",
+                         "3gp", "mts", "m2ts", "vob", "ogv"});
+        add("audio",    {"mp3", "wav", "ogg", "flac", "m4a", "aac", "opus", "wma", "aiff", "aif",
+                         "alac", "ape", "amr", "mid", "midi", "m4r"});
+        add("docs",     {"pdf", "doc", "docx", "docm", "odt", "rtf", "txt", "md", "epub", "fb2",
+                         "mobi", "djvu", "pages", "tex", "log"});
+        add("tables",   {"xls", "xlsx", "xlsm", "ods", "csv", "tsv", "numbers"});
+        add("slides",   {"ppt", "pptx", "pps", "ppsx", "odp", "key"});
+        add("archives", {"zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "zst", "lz", "lzma",
+                         "cab", "iso", "img", "dmg"});
+        add("programs", {"exe", "msi", "msp", "bat", "cmd", "com", "apk", "xapk", "apks", "aab", "appx",
+                         "appxbundle", "msix", "msixbundle", "jar", "reg"});
+        add("code",     {"py", "js", "mjs", "ts", "tsx", "jsx", "c", "cpp", "cc", "h", "hpp", "cs", "java",
+                         "kt", "go", "rs", "swift", "php", "rb", "lua", "sh", "ps1", "html", "htm", "css",
+                         "scss", "json", "xml", "yaml", "yml", "toml", "sql", "ipynb", "vue"});
+        add("design",   {"psd", "ai", "eps", "cdr", "fig", "sketch", "xd", "indd", "kra", "xcf", "afdesign",
+                         "afphoto", "blend", "fbx", "obj", "stl", "3mf", "glb", "gltf", "dwg", "dxf", "step", "stp"});
+        add("fonts",    {"ttf", "otf", "woff", "woff2", "ttc", "fon"});
+        add("torrents", {"torrent"});
         return m;
     }();
     return map.value(QFileInfo(path).suffix().toLower(), QStringLiteral("other"));
 }
 
+// Фото и видео — их можно посмотреть в SmartClip (Ctrl+клик)
+inline bool viewable(const QString &path)
+{
+    const QString c = category(path);
+    return c == QLatin1String("image") || c == QLatin1String("video");
+}
+
 inline QStringList allCategories()
 {
-    return {"image", "video", "audio", "docs", "archives", "programs", "other"};
+    return AppSettings::allFileTypes();
 }
 
 // Стандартные папки — «Загрузки»
@@ -119,11 +143,31 @@ inline Entry fromPin(int pinId, const QString &title, const QString &path, const
     return e;
 }
 
-// Свежие файлы: за days дней, не больше max, новые первыми (в фоновом потоке)
-inline QList<Entry> scan(const QStringList &folders, int days, int max, const QStringList &cats)
+// Порядок — общий для полоски и папок с полок (кнопка сортировки в шапке).
+// key: "date", "name", "size", "type"; равные — по имени. Нужны поля name, size, mtime
+template <class T>
+inline void sortList(QList<T> &l, const QString &key, bool desc)
+{
+    QCollator col;
+    col.setNumericMode(true);  // «файл 2» раньше «файл 10»
+    col.setCaseSensitivity(Qt::CaseInsensitive);
+    auto ext = [](const QString &n) { const int d = n.lastIndexOf('.'); return d > 0 ? n.mid(d + 1) : QString(); };
+    std::stable_sort(l.begin(), l.end(), [&](const T &a, const T &b) {
+        int c = 0;
+        if (key == QLatin1String("name"))      c = col.compare(a.name, b.name);
+        else if (key == QLatin1String("size")) c = a.size < b.size ? -1 : (a.size > b.size ? 1 : 0);
+        else if (key == QLatin1String("type")) c = col.compare(ext(a.name), ext(b.name));
+        else                                   c = a.mtime < b.mtime ? -1 : (a.mtime > b.mtime ? 1 : 0);
+        if (c == 0) return col.compare(a.name, b.name) < 0;
+        return desc ? c > 0 : c < 0;
+    });
+}
+
+// Все файлы папок (в фоновом потоке). Больше 5000 — только самые свежие:
+// иначе огромная папка будет открываться секундами
+inline QList<Entry> scan(const QStringList &folders, const QStringList &cats)
 {
     QList<Entry> out;
-    const QDateTime since = QDateTime::currentDateTime().addDays(-days);
     for (const QString &folder : folders) {
         QDirIterator it(folder, QDir::Files | QDir::NoDotAndDotDot);
         while (it.hasNext()) {
@@ -132,7 +176,7 @@ inline QList<Entry> scan(const QStringList &folders, int days, int max, const QS
             // Скопированный файл сохраняет старую дату изменения — берём и дату
             // появления в папке, что новее
             const QDateTime t = qMax(fi.lastModified(), fi.birthTime().isValid() ? fi.birthTime() : QDateTime());
-            if (skipFile(fi) || t < since) continue;
+            if (skipFile(fi)) continue;
             if (!cats.contains(category(fi.filePath()))) continue;
             Entry e;
             e.path = fi.filePath();
@@ -144,7 +188,7 @@ inline QList<Entry> scan(const QStringList &folders, int days, int max, const QS
         }
     }
     std::sort(out.begin(), out.end(), [](const Entry &a, const Entry &b) { return a.mtime > b.mtime; });
-    if (out.size() > max) out.resize(max);
+    if (out.size() > 5000) out.resize(5000);
     return out;
 }
 
@@ -153,10 +197,11 @@ inline QString sizeText(qint64 b)
     return QLocale().formattedDataSize(b, 1, QLocale::DataSizeTraditionalFormat);
 }
 
-// «14:05» — сегодня, «20.10» — раньше
+// «14:05» — сегодня, «20.10» — раньше в этом году, «20.10.25» — в прошлые годы
 inline QString timeText(const QDateTime &t)
 {
-    return t.date() == QDate::currentDate() ? t.toString("HH:mm") : t.toString("dd.MM");
+    if (t.date() == QDate::currentDate()) return t.toString("HH:mm");
+    return t.date().year() == QDate::currentDate().year() ? t.toString("dd.MM") : t.toString("dd.MM.yy");
 }
 
 } // namespace Files
@@ -190,11 +235,34 @@ public:
             if (m_press >= 0 && m_press < m_items.size() && (QApplication::mouseButtons() & Qt::LeftButton))
                 pickUp(m_press);
         });
+        // Поиск по файлам в шапке: лупа вместо значка папки, по клику — поле
+        m_searchEdit = new QLineEdit(this);
+        m_searchEdit->setFrame(false);
+        m_searchEdit->setStyleSheet(QStringLiteral(
+            "background: transparent; border: none; color: #f0f0f0; font-size: %1px; "
+            "selection-background-color: rgba(100,150,255,150);").arg(s(11)));
+        m_searchEdit->setPlaceholderText(QApplication::translate("FilesStrip", "Поиск файлов"));
+        m_searchEdit->hide();
+        m_searchEdit->installEventFilter(this);
+        connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString &t) {
+            m_localQuery = t.trimmed();
+            m_scroll = 0;
+            applyFilter();
+        });
+        // В папках что-то появилось/пропало — перечитываем (как в открытой папке с полки)
+        m_reloadDelay.setSingleShot(true);
+        m_reloadDelay.setInterval(500);
+        connect(&m_reloadDelay, &QTimer::timeout, this, [this]() { if (!m_pinsMode) reload(); });
+        connect(&m_watch, &QFileSystemWatcher::directoryChanged, this, [this]() { m_reloadDelay.start(); });
         hide();
     }
 
     std::function<void(const Files::Entry &)> onPick;                  // Клик — вставить файл
     std::function<void(const Files::Entry &, const QPoint &)> onMenu;  // Правый клик
+    std::function<void(const QString &path)> onView;                   // Ctrl+клик по фото/видео — просмотр
+    // Кнопка сортировки: показать меню (текущий порядок), apply — выбрали новый
+    std::function<void(const QPoint &globalPos, const QString &key, bool desc,
+                       const std::function<void(const QString &, bool)> &apply)> onSortMenu;
 
     // Вкладки над файлами. В Истории — папки, из которых показывать файлы
     // («Все» и по одной на папку), в Закрепах — дополнительные «полки» внутри
@@ -203,6 +271,58 @@ public:
     std::function<void()> onAddTab;                                         // «+»
     std::function<void(const QString &key, const QPoint &globalPos)> onTabMenu;  // Правый клик по вкладке
     std::function<void(const QList<Files::Entry> &, const QString &key)> onMoveToTab;  // Бросили файлы на вкладку
+    std::function<void()> onSearchFocus;  // Открыли поиск — окну нужен фокус клавиатуры
+    int pinsInset = 0;  // В Закрепах по бокам — место под кнопки импорта
+
+    // Куда бросить файлы из руки (в Истории): вкладка-папка под курсором или
+    // открытая вкладка, если отпустили над файлами. «Все» — не папка
+    QString dropFolderAt(const QPoint &global) const
+    {
+        if (m_pinsMode || !isVisible() || m_t < 0.9) return QString();
+        const QPoint p = mapFromGlobal(global);
+        if (!hitVisible(p) || !rect().contains(p)) return QString();
+        const int tab = tabAt(p);
+        if (tab >= 0) return currentTabs()[tab].key;
+        if (bodyRect().contains(local(p))) return currentTab();
+        return QString();
+    }
+    void setDropHint(const QPoint &global)
+    {
+        int t = -1;
+        if (!m_pinsMode && isVisible()) {
+            t = tabAt(mapFromGlobal(global));
+            if (t >= 0 && currentTabs()[t].key.isEmpty()) t = -1;
+        }
+        if (t != m_dropTab) { m_dropTab = t; update(); }
+    }
+    void clearDropHint() { if (m_dropTab != -1) { m_dropTab = -1; update(); } }
+
+    // Поверх полоски раскрыта папка с полки — полоска не раскрывается
+    void setBlocked(bool on)
+    {
+        if (m_blocked == on) return;
+        m_blocked = on;
+        // Сворачиваемся плавно (раньше — рывком: на второй половине было видно,
+        // как раскрытая полоска пропадает)
+        if (on) { closeSearch(); expand(false); }
+    }
+
+    // Папку вкладки заменили — открытой остаётся та же вкладка
+    void renameTab(const QString &from, const QString &to)
+    {
+        if (m_tabHistory == from) m_tabHistory = to;
+    }
+
+    // Esc: открыт поиск по файлам — закрываем его (true — было что закрыть)
+    bool closeSearch()
+    {
+        if (!m_searchOpen) return false;
+        m_searchOpen = false;
+        m_searchEdit->clear();
+        placeSearch();
+        update();
+        return true;
+    }
 
     // Где стоять: прямоугольник прозрачной середины окна (координаты родителя)
     void place(const QRect &center)
@@ -237,20 +357,26 @@ public:
     void reload()
     {
         const AppSettings &s = AppSettings::get();
-        m_enabled = s.filesStrip();
-        m_view = s.filesView();
+        m_enabled = true;  // Полоска есть всегда (выключателя в настройках больше нет)
+        m_view = s.folderView(viewKey());
         if (m_pinsMode) { relayout(); return; }  // Закреплённые приходят из loadPins
         if (!m_enabled) { m_all.clear(); applyFilter(); return; }
         const QStringList folders = Files::configuredFolders();
         m_folders = folders;
+        // Следим за этими папками (новый файл скачался — сразу в полоске)
+        QStringList watch;
+        for (const QString &f : folders) if (QFileInfo(f).isDir()) watch << QDir::cleanPath(f);
+        if (QStringList(m_watch.directories()) != watch) {
+            if (!m_watch.directories().isEmpty()) m_watch.removePaths(m_watch.directories());
+            if (!watch.isEmpty()) m_watch.addPaths(watch);
+        }
         if (!m_tabHistory.isEmpty() && !folders.contains(m_tabHistory)) m_tabHistory.clear();
-        const int days = s.filesDays(), max = s.filesMax();
         const QStringList cats = s.filesTypes();
         const int gen = ++m_gen;
         QPointer<FilesStrip> self = this;
-        Thumbs::runAsync(this, [folders, days, max, cats]() {
+        Thumbs::runAsync(this, [folders, cats]() {
             QVariantList l;
-            for (const Files::Entry &e : Files::scan(folders, days, max, cats))
+            for (const Files::Entry &e : Files::scan(folders, cats))
                 l << QVariant(QVariantList{e.path, e.name, e.size, e.mtime, e.folder});
             return QVariant(l);
         }, [self, gen](const QVariant &v) {
@@ -269,6 +395,9 @@ public:
             self->applyFilter();
         });
     }
+
+    // Сменили сортировку (кнопка в шапке)
+    void resort() { applyFilter(); }
 
     // Поиск внизу фильтрует и файлы — по имени
     void setFilter(const QString &q)
@@ -321,6 +450,7 @@ public:
         m_scroll = 0;
         m_hover = -1;
         m_outside = 0;
+        closeSearch();
         relayout();
     }
 
@@ -367,10 +497,14 @@ protected:
         if (h != m_hover) { m_hover = h; update(); }
         const int ht = tabAt(e->position().toPoint());
         if (ht != m_hoverTab) { m_hoverTab = ht; update(); }
-        setCursor(h >= 0 || ht != -1 || viewBtnAt(e->position().toPoint()) >= 0 ? Qt::PointingHandCursor
-                                                                                 : Qt::ArrowCursor);
+        const bool hs = searchBtnAt(e->position().toPoint());
+        if (hs != m_hoverSearch) { m_hoverSearch = hs; update(); }
+        const bool hso = sortBtnAt(e->position().toPoint());
+        if (hso != m_hoverSort) { m_hoverSort = hso; update(); }
+        setCursor(h >= 0 || ht != -1 || hs || hso || viewBtnAt(e->position().toPoint()) >= 0 ? Qt::PointingHandCursor
+                                                                                              : Qt::ArrowCursor);
         // Тянем файл мышкой — перетаскивание в другую программу
-        if ((e->buttons() & Qt::LeftButton) && m_press >= 0 && m_press < m_items.size()
+        if ((e->buttons() & Qt::LeftButton) && m_press >= 0 && m_press < m_items.size() && !m_pressView
             && (e->position().toPoint() - m_pressPos).manhattanLength() > QApplication::startDragDistance())
             pickUp(m_press);
     }
@@ -382,6 +516,10 @@ protected:
         if (m_t < 0.9) return;  // Ещё раскрывается
         const QPoint p = e->position().toPoint();
         if (!hitVisible(p)) return;
+        if (searchBtnAt(p)) {
+            if (e->button() == Qt::LeftButton) openSearch();
+            return;
+        }
         const int tab = tabAt(p);
         if (tab == TabPlus) {
             if (e->button() == Qt::LeftButton && onAddTab) {
@@ -410,17 +548,41 @@ protected:
             }
             return;
         }
+        if (sortBtnAt(p)) {
+            if (e->button() == Qt::LeftButton && onSortMenu) {
+                m_menuOpen = true;  // Пока открыто меню — полоска не сворачивается
+                QPointer<FilesStrip> self = this;
+                QString key;
+                bool desc = true;
+                AppSettings::get().folderSort(viewKey(), key, desc);
+                onSortMenu(mapToGlobal(sortBtnRect().bottomLeft() + QPoint(0, top() + s(4))), key, desc,
+                           [self](const QString &k, bool d) {
+                    if (!self) return;
+                    AppSettings::get().setFolderSort(self->viewKey(), k, d);  // Только этой вкладке
+                    self->applyFilter();
+                });
+                if (!self) return;
+                m_menuOpen = false;
+                m_outside = 0;
+            }
+            return;
+        }
         const int btn = viewBtnAt(p);
         if (btn >= 0 && e->button() == Qt::LeftButton) {
             m_view = btn == 0 ? QStringLiteral("tiles") : QStringLiteral("list");
-            AppSettings::get().setFilesView(m_view);
+            AppSettings::get().setFolderView(viewKey(), m_view);  // Только этой вкладке
             m_scroll = 0;
             relayout();
             return;
         }
         const int i = itemAt(p);
         if (i < 0) return;
-        if (e->button() == Qt::LeftButton) { m_press = i; m_pressPos = p; m_holdTimer.start(); }
+        if (e->button() == Qt::LeftButton) {
+            m_press = i;
+            m_pressPos = p;
+            m_pressView = (e->modifiers() & Qt::ControlModifier) && Files::viewable(m_items[i].path);
+            if (!m_pressView) m_holdTimer.start();  // Ctrl+клик — просмотр, а не «в руку»
+        }
         else if (e->button() == Qt::RightButton && onMenu) {
             // Пока открыто меню — полоска не сворачивается
             m_menuOpen = true;
@@ -441,6 +603,7 @@ protected:
             && itemAt(e->position().toPoint()) == m_press) {
             const Files::Entry entry = m_items[m_press];
             m_press = -1;
+            if (m_pressView) { if (onView && !entry.missing) onView(entry.path); return; }
             if (onPick && !entry.missing) onPick(entry);
             return;
         }
@@ -458,8 +621,20 @@ protected:
         }
         m_scroll = qBound(0, m_scroll - e->angleDelta().y() / 2, maxScroll());
         m_hover = itemAt(e->position().toPoint());
+        requestThumbs();
         update();
         e->accept();
+    }
+
+    bool eventFilter(QObject *o, QEvent *e) override
+    {
+        // Ушли из поля, ничего не написав, — поле снова сворачивается в лупу
+        if (o == m_searchEdit && e->type() == QEvent::FocusOut && m_searchEdit->text().isEmpty()
+            && m_searchOpen && m_searchEdit->isVisible())
+            QTimer::singleShot(0, this, [this]() {
+                if (!m_searchEdit->hasFocus() && m_searchEdit->text().isEmpty()) closeSearch();
+            });
+        return QWidget::eventFilter(o, e);
     }
 
     void paintEvent(QPaintEvent *) override
@@ -484,13 +659,28 @@ protected:
         const QRect head(s(12), 0, width() - s(24), s(HeadH));
         p.setFont(icon);
         p.setPen(m_pinsMode ? QColor(255, 210, 90) : QColor(160, 200, 255));
+        const qreal searchK = qBound(0.0, (m_t - 0.4) / 0.5, 1.0);
+        p.setOpacity(1.0 - searchK);
         p.drawText(head, Qt::AlignLeft | Qt::AlignVCenter, QString(QChar(m_pinsMode ? 0xE718 : 0xE8B7)));
+        if (searchK > 0) {
+            const QRect sr = searchRect();
+            p.setOpacity(searchK);
+            p.setPen(QPen(QColor(255, 255, 255, m_searchOpen ? 80 : 40), 1));
+            p.setBrush(QColor(255, 255, 255, m_searchOpen ? 16 : (m_hoverSearch ? 26 : 12)));
+            p.drawRoundedRect(QRectF(sr).adjusted(0.5, 0.5, -0.5, -0.5), s(7), s(7));
+            QFont ic = icon;
+            ic.setPixelSize(s(11));
+            p.setFont(ic);
+            p.setPen(QColor(255, 255, 255, m_searchOpen ? 210 : 170));
+            p.drawText(QRect(sr.left(), sr.top(), s(24), sr.height()), Qt::AlignCenter, QString(QChar(0xE721)));  // Лупа
+        }
+        p.setOpacity(1.0);
         p.setFont(f);
         p.setPen(QColor(255, 255, 255, 190));
         p.setOpacity(qBound(0.0, 1.0 - m_t / 0.45, 1.0));  // Раскрылась — вместо названия вкладки
         p.drawText(head.adjusted(s(24), 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
                    (m_pinsMode ? QApplication::translate("FilesStrip", "Закреплённые файлы · %1")
-                               : QApplication::translate("FilesStrip", "Свежие файлы · %1")).arg(m_items.size()));
+                               : QApplication::translate("FilesStrip", "Файлы · %1")).arg(m_items.size()));
         p.setOpacity(1.0);
 
         if (m_t < 0.4) {
@@ -525,6 +715,16 @@ protected:
             }
             p.setPen(QColor(255, 255, 255, on ? 230 : 120));
             p.drawText(br, Qt::AlignCenter, QString(QChar(b == 0 ? 0xE80A : 0xE8FD)));  // Плитки / список
+        }
+        if (!m_pinsMode) {  // Сортировка (в Закрепах — свой порядок, по закреплению)
+            const QRect sr = sortBtnRect();
+            if (m_hoverSort) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(255, 255, 255, 22));
+                p.drawRoundedRect(sr, s(5), s(5));
+            }
+            p.setPen(QColor(255, 255, 255, m_hoverSort ? 230 : 150));
+            p.drawText(sr, Qt::AlignCenter, QString(QChar(0xE8CB)));
         }
         drawTabs(p, f, icon);
 
@@ -596,7 +796,8 @@ private:
 
     void expand(bool on)
     {
-        if (m_items.isEmpty() && on && m_query.isEmpty() && !m_pinsMode) return;
+        if (m_items.isEmpty() && on && m_query.isEmpty() && m_localQuery.isEmpty() && !m_pinsMode) return;
+        if (on && m_blocked) return;
         const qreal target = on ? 1.0 : 0.0;
         if (target == m_target && (m_tick.isActive() || m_t == target)) return;
         m_target = target;
@@ -613,17 +814,21 @@ private:
         } else m_hover = -1;
         if (!Anim::enabled(Anim::Kind::Menu)) { m_t = target; finish(); return; }
         m_clock.restart();
+        m_ticked = false;
         m_tick.setInterval(Anim::frameMs(this));  // По частоте монитора
         m_tick.start();
     }
 
     void tick()
     {
+        // Время — с первого кадра (а не с запуска: тогда ещё перестраивается раскладка)
+        if (!m_ticked) { m_ticked = true; m_clock.restart(); }
         const qreal k = qMin(1.0, m_clock.elapsed() / qreal(m_duration));
         // Раскрытие — плавный старт и долгое мягкое торможение;
         // сворачивание — плавно разгоняется и плавно садится на место
         const QEasingCurve curve(m_target > m_from ? QEasingCurve::OutCubic : QEasingCurve::InOutSine);
         m_t = m_from + (m_target - m_from) * curve.valueForProgress(k);
+        placeSearch();
         update();
         if (k >= 1.0) { m_t = m_target; finish(); }
     }
@@ -633,8 +838,10 @@ private:
         m_tick.stop();
         if (m_t <= 0.0) {
             m_scroll = 0;
+            closeSearch();
             releaseBody();  // Свернулась — дальше снова по размеру вкладки
         }
+        placeSearch();
         update();
     }
 
@@ -654,6 +861,7 @@ private:
     {
         const qreal k = qMin(1.0, m_growClock.elapsed() / qreal(m_growDuration));
         m_shownBody = m_growFrom + (m_bodyTarget - m_growFrom) * QEasingCurve(QEasingCurve::OutCubic).valueForProgress(k);
+        placeSearch();
         update();
         if (k >= 1.0) m_growTick.stop();
     }
@@ -717,11 +925,54 @@ private:
     }
     QString &currentTabRef() { return m_pinsMode ? m_tabPins : m_tabHistory; }
     QString currentTab() const { return m_pinsMode ? m_tabPins : m_tabHistory; }
+    // Под каким ключом запомнить вид и порядок открытой вкладки (папка — её путь:
+    // так же откроется и с полки)
+    QString viewKey() const
+    {
+        if (m_pinsMode) return QStringLiteral("*pins*/") + m_tabPins;
+        return m_tabHistory.isEmpty() ? QStringLiteral("*all*") : QDir::cleanPath(m_tabHistory);
+    }
 
-    // Где вкладки: от значка до кнопок вида (координаты видимой части)
+    // ── Поиск по файлам (в шапке, слева) ────────────────────────────────────
+    // Закрыт — квадратная кнопка с лупой; открыт — поле, которое растёт
+    // вправо, когда текст перестаёт влезать (вкладки отъезжают)
+    QRect searchRect() const
+    {
+        const int h = s(24), top = (s(HeadH) - h) / 2, left = s(7);
+        if (!m_searchOpen) return QRect(left, top, h, h);
+        QFont f = font();
+        f.setPixelSize(s(11));
+        const int need = QFontMetrics(f).horizontalAdvance(m_searchEdit->text()) + s(24) + s(14);
+        const int maxW = qMax(s(120), (headRight() - left) / 2);
+        return QRect(left, top, qBound(s(120), need, maxW), h);
+    }
+    bool searchBtnAt(const QPoint &widgetPos) const
+    {
+        return m_t >= 0.9 && !m_searchOpen && searchRect().contains(local(widgetPos));
+    }
+    void openSearch()
+    {
+        m_searchOpen = true;
+        m_hoverSearch = false;
+        placeSearch();
+        update();
+        QPointer<FilesStrip> self = this;
+        if (onSearchFocus) onSearchFocus();  // Окно забирает фокус (оно без активации)
+        if (self) m_searchEdit->setFocus(Qt::MouseFocusReason);
+    }
+    // Поле ввода — только когда полоска раскрыта до конца
+    void placeSearch()
+    {
+        if (!m_searchEdit) return;
+        const bool show = m_searchOpen && m_t >= 0.999;
+        if (show) m_searchEdit->setGeometry(searchRect().adjusted(s(22), 0, -s(6), 0).translated(0, top()));
+        if (show != m_searchEdit->isVisible()) m_searchEdit->setVisible(show);
+    }
+
+    // Где вкладки: от поиска до кнопок вида (координаты видимой части)
     QRect tabsRow() const
     {
-        const int left = s(34), right = viewBtnRect(0).left() - s(8);
+        const int left = searchRect().right() + 1 + s(5), right = headRight() - s(8);
         return QRect(left, (s(HeadH) - s(24)) / 2, qMax(0, right - left), s(24));
     }
 
@@ -776,9 +1027,11 @@ private:
         for (int i = 0; i < rects.size(); ++i) {
             const bool on = tabs[i].key == cur;
             const bool hot = m_hoverTab == i;
-            p.setPen(QPen(QColor(255, 255, 255, on ? 90 : 40), 1));
-            p.setBrush(on ? (m_pinsMode ? QColor(80, 60, 14, 235) : QColor(36, 60, 104, 235))
-                          : QColor(255, 255, 255, hot ? 26 : 12));
+            const bool drop = m_dropTab == i;  // Сюда бросят файлы из руки
+            p.setPen(drop ? QPen(QColor(120, 170, 255, 210), 1.5) : QPen(QColor(255, 255, 255, on ? 90 : 40), 1));
+            p.setBrush(drop ? QColor(80, 130, 255, 90)
+                            : on ? (m_pinsMode ? QColor(80, 60, 14, 235) : QColor(36, 60, 104, 235))
+                                 : QColor(255, 255, 255, hot ? 26 : 12));
             p.drawRoundedRect(QRectF(rects[i]).adjusted(0.5, 0.5, -0.5, -0.5), s(7), s(7));
             p.setFont(f);
             p.setPen(QColor(255, 255, 255, on ? 240 : 170));
@@ -811,9 +1064,10 @@ private:
     {
         if (m_target <= 0) { m_hoverPoll.stop(); return; }
         if (carrying() || m_menuOpen || QApplication::activePopupWidget()) { m_outside = 0; return; }
+        if (m_searchOpen && m_searchEdit->hasFocus() && !m_searchEdit->text().isEmpty()) { m_outside = 0; return; }
         const QRect visible(mapToGlobal(QPoint(0, top())), QSize(width(), curH()));
-        // Запас: по бокам немного, снизу — до поля поиска и чуть в него
-        const QRect zone = visible.adjusted(-s(14), -s(10), s(14), s(28));
+        // Запас: по бокам и снизу немного (снизу — полки с папками)
+        const QRect zone = visible.adjusted(-s(14), -s(10), s(14), s(6));
         if (zone.contains(QCursor::pos())) { m_outside = 0; return; }
         m_outside += m_hoverPoll.interval();
         if (m_outside >= 60) expand(false);
@@ -829,14 +1083,23 @@ private:
                                : QDir::cleanPath(e.folder).compare(QDir::cleanPath(tab), Qt::CaseInsensitive) != 0)
                     continue;
             }
-            if (m_query.isEmpty() || e.name.contains(m_query, Qt::CaseInsensitive)
-                || e.title.contains(m_query, Qt::CaseInsensitive)) m_items.append(e);
+            auto match = [&e](const QString &q) {
+                return q.isEmpty() || e.name.contains(q, Qt::CaseInsensitive) || e.title.contains(q, Qt::CaseInsensitive);
+            };
+            if (match(m_query) && match(m_localQuery)) m_items.append(e);
+        }
+        m_view = AppSettings::get().folderView(viewKey());  // У каждой вкладки — свой вид и порядок
+        if (!m_pinsMode) {
+            QString key;
+            bool desc = true;
+            AppSettings::get().folderSort(viewKey(), key, desc);
+            Files::sortList(m_items, key, desc);
         }
         m_tabScroll = qBound(0, m_tabScroll, maxTabScroll());
         m_scroll = qBound(0, m_scroll, maxScroll());
         m_hover = -1;
-        requestThumbs();
         relayout();
+        requestThumbs();
     }
 
     static QString thumbKey(const Files::Entry &e)
@@ -844,12 +1107,15 @@ private:
         return e.path + '|' + QString::number(e.mtime.toMSecsSinceEpoch());
     }
 
-    // Превью — по одному разу на файл (ключ — путь и время изменения)
+    // Превью — по одному разу на файл (ключ — путь и время изменения). Только
+    // тем, что видно (и первым — для значков свёрнутой полоски): файлов бывают тысячи
     void requestThumbs()
     {
         const QSize px = QSize(s(56), s(56)) * devicePixelRatioF();
-        for (const Files::Entry &e : m_items) {
-            if (e.missing) continue;
+        const QRect around = bodyRect().adjusted(0, -s(200), 0, s(200));
+        for (int i = 0; i < m_items.size(); ++i) {
+            const Files::Entry &e = m_items[i];
+            if (e.missing || (i >= 40 && !itemRect(i).intersects(around))) continue;
             const QString key = thumbKey(e);
             if (m_thumbs.contains(key) || m_waiting.contains(key)) continue;
             m_waiting.insert(key);
@@ -937,6 +1203,18 @@ private:
         const int sz = s(26);
         return QRect(width() - s(10) - (2 - b) * (sz + s(4)), (s(HeadH) - sz) / 2, sz, sz);
     }
+    // Сортировка — левее кнопок вида (в Закрепах её нет)
+    QRect sortBtnRect() const
+    {
+        const int sz = s(26);
+        return QRect(viewBtnRect(0).left() - s(6) - sz, (s(HeadH) - sz) / 2, sz, sz);
+    }
+    bool sortBtnAt(const QPoint &widgetPos) const
+    {
+        return m_t >= 0.9 && !m_pinsMode && sortBtnRect().contains(local(widgetPos));
+    }
+    // Где кончается место под поиск и вкладки
+    int headRight() const { return m_pinsMode ? viewBtnRect(0).left() : sortBtnRect().left(); }
     int viewBtnAt(const QPoint &widgetPos) const
     {
         const QPoint p = local(widgetPos);
@@ -951,11 +1229,14 @@ private:
         // в Истории — если включена и есть свежие файлы
         const bool show = (m_pinsMode || (m_enabled && !m_all.isEmpty())) && m_center.width() > s(260);
         if (!show) { hide(); return; }
-        const int w = qMin(m_center.width() - s(40), s(720));
+        // Во всю ширину середины — от колонки текстов до колонки фото
+        // (в Закрепах по бокам ещё кнопки импорта)
+        const int w = m_center.width() - 2 * s(8) - (m_pinsMode ? 2 * pinsInset : 0);
         const int h = s(HeadH) + geometryBody();  // Размер не меняется во время анимации
         if (m_holdBody && naturalBody() > m_bodyTarget) growBody(naturalBody());
         setGeometry(m_center.center().x() - w / 2, m_center.bottom() - s(6) - h, w, h);
         if (!isVisible()) { QWidget::show(); raise(); }
+        placeSearch();
         update();
     }
 
@@ -998,7 +1279,18 @@ private:
     QHash<QString, QPixmap> m_thumbs;
     QSet<QString> m_waiting;
     QString m_view = QStringLiteral("tiles");
-    QString m_query;
+    QString m_query;               // Поиск наверху окна
+    QString m_localQuery;          // Поиск в шапке полоски
+    QLineEdit *m_searchEdit = nullptr;
+    bool m_searchOpen = false;
+    bool m_hoverSearch = false;
+    bool m_hoverSort = false;
+    bool m_ticked = false;         // Анимация раскрытия: первый кадр уже был
+    bool m_blocked = false;        // Поверх раскрыта папка с полки
+    int m_dropTab = -1;            // Вкладка-папка подсвечена для «руки»
+    bool m_pressView = false;      // Нажали с Ctrl по фото/видео — отпустим, будет просмотр
+    QFileSystemWatcher m_watch;    // Следим за папками вкладок
+    QTimer m_reloadDelay;
     QRect m_center;
     bool m_enabled = true;
     bool m_pinsMode = false;

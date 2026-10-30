@@ -908,6 +908,7 @@ public:
     std::function<bool(const QPoint &, const QList<CarryItem> &)> dropInside;
     std::function<void()> onStart, onChanged, onEnd, onDragStarted;
     std::function<void(bool)> onDragFinished;
+    std::function<void(const QPoint &)> onHover;  // Рука над SmartClip — где (подсветить, куда бросишь)
 
     Carry(QWidget *source, int scalePct) : QObject(source), m_source(source), m_scale(scalePct)
     {
@@ -1068,6 +1069,7 @@ private:
             }
         } else m_rightDown = false;
 
+        if (onHover) onHover(g);
         if (inZone && !inZone(g)) startDrag();
         else squeeze(false);  // Вернул руку из окошка к SmartClip — он разворачивается
     }

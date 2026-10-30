@@ -4,6 +4,130 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>По дате</source>
+        <translation>By date</translation>
+    </message>
+    <message>
+        <source>По имени</source>
+        <translation>By name</translation>
+    </message>
+    <message>
+        <source>По размеру</source>
+        <translation>By size</translation>
+    </message>
+    <message>
+        <source>По типу</source>
+        <translation>By type</translation>
+    </message>
+    <message>
+        <source>⇅  По возрастанию</source>
+        <translation>⇅  Ascending</translation>
+    </message>
+    <message>
+        <source>⇅  По убыванию</source>
+        <translation>⇅  Descending</translation>
+    </message>
+    <message>
+        <source>❌  Удалить</source>
+        <translation>❌  Delete</translation>
+    </message>
+    <message>
+        <source>📂  Открыть здесь</source>
+        <translation>📂  Open here</translation>
+    </message>
+    <message>
+        <source>🗔  Открыть в проводнике</source>
+        <translation>🗔  Open in Explorer</translation>
+    </message>
+    <message>
+        <source>Открыть с помощью…</source>
+        <translation>Open with…</translation>
+    </message>
+    <message>
+        <source>Удалить «%1» в корзину?</source>
+        <translation>Move «%1» to the Recycle Bin?</translation>
+    </message>
+    <message>
+        <source>Не получилось удалить: файл открыт в другой программе.</source>
+        <translation>Couldn’t delete: the file is open in another program.</translation>
+    </message>
+    <message>
+        <source>⋯  Ещё…</source>
+        <translation>⋯  More…</translation>
+    </message>
+    <message>
+        <source>Переименовать</source>
+        <translation>Rename</translation>
+    </message>
+    <message>
+        <source>Новое имя:</source>
+        <translation>New name:</translation>
+    </message>
+    <message>
+        <source>В имени нельзя использовать символы \ / : * ? " &lt; &gt; |</source>
+        <translation>A name can’t contain the characters \ / : * ? " &lt; &gt; |</translation>
+    </message>
+    <message>
+        <source>Не получилось переименовать: файл открыт в другой программе или такое имя уже есть.</source>
+        <translation>Couldn’t rename: the file is open in another program or that name already exists.</translation>
+    </message>
+    <message>
+        <source>Перенос файлов</source>
+        <translation>Moving files</translation>
+    </message>
+    <message>
+        <source>Копирование файлов</source>
+        <translation>Copying files</translation>
+    </message>
+    <message>
+        <source>Не все файлы получилось скопировать: нет доступа к папке или файл занят.</source>
+        <translation>Not all files could be copied: no access to the folder or a file is in use.</translation>
+    </message>
+    <message>
+        <source>Папка не найдена</source>
+        <translation>Folder not found</translation>
+    </message>
+    <message>
+        <source>Папки «%1» больше нет. Убрать её с полки?</source>
+        <translation>The folder «%1» no longer exists. Remove it from the shelf?</translation>
+    </message>
+    <message>
+        <source>➕  На полку</source>
+        <translation>➕  To the shelf</translation>
+    </message>
+    <message>
+        <source>Папка для полки</source>
+        <translation>Folder for the shelf</translation>
+    </message>
+    <message>
+        <source>➕  Добавить папку</source>
+        <translation>➕  Add folder</translation>
+    </message>
+    <message>
+        <source>📂  Открыть в проводнике</source>
+        <translation>📂  Open in Explorer</translation>
+    </message>
+    <message>
+        <source>Переименовать папку</source>
+        <translation>Rename folder</translation>
+    </message>
+    <message>
+        <source>➡  На правую полку</source>
+        <translation>➡  To the right shelf</translation>
+    </message>
+    <message>
+        <source>⬅  На левую полку</source>
+        <translation>⬅  To the left shelf</translation>
+    </message>
+    <message>
+        <source>✕  Убрать с полки</source>
+        <translation>✕  Remove from shelf</translation>
+    </message>
+    <message>
+        <source>🔄  Сменить папку</source>
+        <translation>🔄  Change folder</translation>
+    </message>
+    <message>
         <source>История</source>
         <translation>History</translation>
     </message>
@@ -24,12 +148,8 @@
         <translation>Settings</translation>
     </message>
     <message>
-        <source>Поиск по тексту...</source>
-        <translation>Search text...</translation>
-    </message>
-    <message>
-        <source>Поиск по названию...</source>
-        <translation>Search by name...</translation>
+        <source>Поиск</source>
+        <translation>Search</translation>
     </message>
     <message>
         <source>Изображение</source>
@@ -764,6 +884,50 @@ Turn on: Settings → Accessibility → Visual effects → Animation effects.</t
 </context>
 <context>
     <name>SettingsDialog</name>
+    <message>
+        <source>Не закрывать SmartClip самому</source>
+        <translation>Don't close SmartClip by itself</translation>
+    </message>
+    <message>
+        <source>Переключился в другое окно или кликнул мимо — SmartClip остаётся открытым. Закрывается только по Esc или той же горячей клавишей.</source>
+        <translation>Switched to another window or clicked outside — SmartClip stays open. It closes only with Esc or the same hotkey.</translation>
+    </message>
+    <message>
+        <source>Список файлов</source>
+        <translation>File list</translation>
+    </message>
+    <message>
+        <source>Показывать деревом, как в Directory Opus</source>
+        <translation>Show as a tree, like in Directory Opus</translation>
+    </message>
+    <message>
+        <source>В папке с полки подпапки раскрываются стрелкой прямо в списке — не нужно заходить внутрь.</source>
+        <translation>In a shelf folder, subfolders expand with an arrow right in the list — no need to go inside.</translation>
+    </message>
+    <message>
+        <source>Таблицы (Excel, CSV…)</source>
+        <translation>Spreadsheets (Excel, CSV…)</translation>
+    </message>
+    <message>
+        <source>Презентации (PowerPoint…)</source>
+        <translation>Presentations (PowerPoint…)</translation>
+    </message>
+    <message>
+        <source>Код и данные (PY, JS, JSON…)</source>
+        <translation>Code and data (PY, JS, JSON…)</translation>
+    </message>
+    <message>
+        <source>Графика и 3D (PSD, AI, Blender…)</source>
+        <translation>Graphics and 3D (PSD, AI, Blender…)</translation>
+    </message>
+    <message>
+        <source>Шрифты (TTF, OTF…)</source>
+        <translation>Fonts (TTF, OTF…)</translation>
+    </message>
+    <message>
+        <source>Торренты</source>
+        <translation>Torrents</translation>
+    </message>
     <message>
         <source>Настройки SmartClip</source>
         <translation>SmartClip Settings</translation>
@@ -1583,8 +1747,8 @@ Open it in the default player?</translation>
         <translation>Add a folder whose files to show</translation>
     </message>
     <message>
-        <source>Документы (PDF, Word, Excel…)</source>
-        <translation>Documents (PDF, Word, Excel…)</translation>
+        <source>Документы (PDF, Word, TXT…)</source>
+        <translation>Documents (PDF, Word, TXT…)</translation>
     </message>
     <message>
         <source>За последние:</source>
@@ -1615,8 +1779,8 @@ Open it in the default player?</translation>
         <translation>Show recent files at the bottom of the window</translation>
     </message>
     <message>
-        <source>Полоска над поиском: наведи мышь — раскроется. Клик вставляет файл, его можно и перетащить мышкой в Telegram, Discord и т.д.</source>
-        <translation>A strip above the search: hover to expand it. Click to paste a file, or drag it with the mouse into Telegram, Discord, etc.</translation>
+        <source>Полоска внизу окна: наведи мышь — раскроется. Клик вставляет файл, его можно и перетащить мышкой в Telegram, Discord и т.д. Папки — вкладками в самой полоске: «+» добавляет, ПКМ по вкладке — сменить или убрать.</source>
+        <translation>Strip at the bottom of the window: hover to expand it. Click to paste a file, or drag it with the mouse into Telegram, Discord, etc. Folders are tabs in the strip itself: «+» adds one, right-click a tab to change or remove it.</translation>
     </message>
     <message>
         <source>Полоска файлов</source>
@@ -1642,12 +1806,16 @@ Open it in the default player?</translation>
 <context>
     <name>FilesStrip</name>
     <message>
+        <source>Поиск файлов</source>
+        <translation>Search files</translation>
+    </message>
+    <message>
         <source>Ничего не найдено</source>
         <translation>Nothing found</translation>
     </message>
     <message>
-        <source>Свежие файлы · %1</source>
-        <translation>Recent files · %1</translation>
+        <source>Файлы · %1</source>
+        <translation>Files · %1</translation>
     </message>
 </context>
 <context>
@@ -1880,6 +2048,32 @@ To pin: History → right-click a file at the bottom → "Pin".</translation>
     <message>
         <source>Перетащи — порядок вставки  ·  «−» — убрать  ·  зажми мышь вне окна — снова в руку  ·  Esc — отмена</source>
         <translation>Drag — paste order  ·  «−» — remove  ·  hold the mouse outside — back in hand  ·  Esc — cancel</translation>
+    </message>
+</context>
+<context>
+    <name>FolderShelf</name>
+    <message>
+        <source>Добавь папку — она будет здесь под рукой</source>
+        <translation>Add a folder — it will be right here</translation>
+    </message>
+</context>
+<context>
+    <name>FolderPanel</name>
+    <message>
+        <source>Поиск в папке</source>
+        <translation>Search in folder</translation>
+    </message>
+    <message>
+        <source>Папка пустая</source>
+        <translation>The folder is empty</translation>
+    </message>
+    <message>
+        <source>Загрузка…</source>
+        <translation>Loading…</translation>
+    </message>
+    <message>
+        <source>Ничего не найдено</source>
+        <translation>Nothing found</translation>
     </message>
 </context>
 </TS>
