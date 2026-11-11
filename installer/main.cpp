@@ -309,6 +309,42 @@ static std::wstring regReadStr(HKEY root, const wchar_t* subkey, const wchar_t* 
     return result;
 }
 
+// ── Ярлык в меню «Пуск» ─────────────────────────────────────────────────────
+// Без него поиск Windows не находит SmartClip, и закрытый SmartClip трудно
+// открыть снова. Ставим для всех пользователей (программа — в Program Files)
+static std::wstring startMenuShortcut() {
+    PWSTR dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_CommonPrograms, 0, nullptr, &dir)) && dir)
+        path = std::wstring(dir) + L"\\" + APP_NAME + L".lnk";
+    CoTaskMemFree(dir);
+    return path;
+}
+static void createStartMenuShortcut(const std::wstring& exe, const std::wstring& workDir) {
+    const std::wstring lnk = startMenuShortcut();
+    if (lnk.empty()) return;
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IShellLinkW* link = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW,
+                                   reinterpret_cast<void**>(&link))) && link) {
+        link->SetPath(exe.c_str());
+        link->SetWorkingDirectory(workDir.c_str());
+        link->SetIconLocation(exe.c_str(), 0);
+        link->SetDescription(L"SmartClip — clipboard manager");
+        IPersistFile* file = nullptr;
+        if (SUCCEEDED(link->QueryInterface(IID_IPersistFile, reinterpret_cast<void**>(&file))) && file) {
+            file->Save(lnk.c_str(), TRUE);
+            file->Release();
+        }
+        link->Release();
+    }
+    if (SUCCEEDED(init)) CoUninitialize();
+}
+static void removeStartMenuShortcut() {
+    const std::wstring lnk = startMenuShortcut();
+    if (!lnk.empty()) DeleteFileW(lnk.c_str());
+}
+
 static void regDeleteVal(HKEY root, const wchar_t* subkey, const wchar_t* name) {
     HKEY hk;
     if (RegOpenKeyExW(root, subkey, 0, KEY_WRITE, &hk) == ERROR_SUCCESS) {
@@ -842,6 +878,9 @@ static void doInstall(bool updateMode) {
         regWriteStr(HKEY_CURRENT_USER, REG_RUN_KEY, APP_NAME,
                     (L"\"" + appExe + L"\"").c_str());
 
+    // ── Ярлык в меню «Пуск» (поиск Windows находит SmartClip) ──
+    createStartMenuShortcut(appExe, dstDir);
+
     // ── Реестр: «Programs and Features» ───────────────────────
     regWriteStr(HKEY_LOCAL_MACHINE, REG_UNINSTALL_KEY,
                 L"DisplayName",     APP_NAME);
@@ -910,6 +949,7 @@ static void doUninstall() {
 
     // ── Удаляем записи реестра ────────────────────────────────
     regDeleteVal(HKEY_CURRENT_USER, REG_RUN_KEY, APP_NAME);
+    removeStartMenuShortcut();
     enableWinV();
     deleteAdminTask();
     SHDeleteKeyW(HKEY_LOCAL_MACHINE, REG_UNINSTALL_KEY);

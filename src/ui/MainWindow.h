@@ -95,6 +95,7 @@ public slots:
     // Эти методы вызывают глобальные хуки клавиатуры/мыши (MainWindow.cpp).
     void onHookKey(unsigned vk, unsigned scan, bool extended); // Клавиша, пока мы без фокуса
     void onGlobalClick();                                      // Клик где угодно на экране
+    void onOutsideClick();                                     // Клик мимо съеден — закрыться
     void onForegroundChanged(quintptr hwnd);                   // Сменилось активное окно
 
     // Показать диалог скачивания обновления БЕЗ проверки major/minor.
@@ -168,7 +169,8 @@ private:
 
     void showSortMenu();                    // Показать выпадающее меню сортировки
     void applySortOrder(SortOrder order);   // Применить выбранный порядок
-    QString sortLabel() const;              // Текст кнопки сортировки ("▼ Дата" и т.д.)
+    QString sortLabel(bool brief = false) const;              // Текст кнопки сортировки ("▼ Дата" и т.д.)
+    void layoutRightButtons();  // Правые кнопки — по ширине карточек картинок
 
     // ─── Очистка истории ──────────────────────────────────────────────────────
     void showClearMenu();                          // Меню выбора что очистить
@@ -219,6 +221,9 @@ private:
 
     // ─── Настройки ───────────────────────────────────────────────────────────
     void showSettings();  // Открыть SettingsDialog
+    void openSettings(bool plugins);  // То же; plugins — сразу вкладка «Плагины»
+    void placePluginsBar();           // Панель «Плагины» — по центру сверху
+    void refreshPlugins();            // Плагины поставили/убрали — пересобрать панель
 
     // ─── Контекстные меню (правая кнопка мыши на карточке) ───────────────────
     void showTextContextMenu(int id, const QString &content,
@@ -395,6 +400,8 @@ private:
     SmartButton *m_sortBtn     = nullptr; // Кнопка сортировки
     SmartButton *m_clearBtn    = nullptr; // Кнопка очистки истории
     SmartButton *m_settingsBtn = nullptr; // Кнопка настроек (шестерёнка)
+    QWidget     *m_searchBar   = nullptr; // Поиск рядом с История/Закрепы
+    QWidget     *m_pluginsBar  = nullptr; // Панель «Плагины» посередине (PluginsBar)
 
     // ─── Базовые размеры при масштабе 100% ───────────────────────────────────
     // constexpr — значения известны на этапе компиляции, не занимают место в памяти объекта.

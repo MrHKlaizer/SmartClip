@@ -4,6 +4,54 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Добавить плагины</source>
+        <translation>Plugins hinzufügen</translation>
+    </message>
+    <message>
+        <source>Плагины</source>
+        <translation>Plugins</translation>
+    </message>
+    <message>
+        <source>Очистить всё</source>
+        <translation>Alles löschen</translation>
+    </message>
+    <message>
+        <source>Новые</source>
+        <translation>Neueste</translation>
+    </message>
+    <message>
+        <source>Старые</source>
+        <translation>Älteste</translation>
+    </message>
+    <message>
+        <source>А→Я</source>
+        <translation>A→Z</translation>
+    </message>
+    <message>
+        <source>Я→А</source>
+        <translation>Z→A</translation>
+    </message>
+    <message>
+        <source>Переход на Master Clipboard</source>
+        <translation>Wechsel zu Master Clipboard</translation>
+    </message>
+    <message>
+        <source>Master Clipboard %1</source>
+        <translation>Master Clipboard %1</translation>
+    </message>
+    <message>
+        <source>Новая программа — замена SmartClip</source>
+        <translation>Neues Programm — ersetzt SmartClip</translation>
+    </message>
+    <message>
+        <source>SmartClip теперь называется Master Clipboard — это следующая версия той же программы. История, закрепы и настройки перенесутся, а SmartClip удалится сам.</source>
+        <translation>SmartClip heißt jetzt Master Clipboard — die nächste Version desselben Programms. Verlauf, Angeheftetes und Einstellungen werden übernommen, SmartClip entfernt sich selbst.</translation>
+    </message>
+    <message>
+        <source>Перейти на Master Clipboard</source>
+        <translation>Zu Master Clipboard wechseln</translation>
+    </message>
+    <message>
         <source>По дате</source>
         <translation>Nach Datum</translation>
     </message>
@@ -885,6 +933,30 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Переключатель раскладки, который учится на твоих ошибках: замечает текст не в той раскладке, опечатки и лишние пробелы, спрашивает, что ты имел в виду, — и дальше исправляет сам.</source>
+        <translation>Ein Tastaturlayout-Umschalter, der aus deinen Fehlern lernt: Er bemerkt Text im falschen Layout, Tippfehler und falsch gesetzte Leerzeichen, fragt, was du gemeint hast — und korrigiert es danach selbst.</translation>
+    </message>
+    <message>
+        <source>Мини Клип</source>
+        <translation>Mini Clip</translation>
+    </message>
+    <message>
+        <source>Маленькое плавающее окошко только с текстами, как буфер Windows: открывается у курсора, пока пишешь сообщение, — выбрал и вставил, не отрываясь от набора.</source>
+        <translation>Ein kleines schwebendes Fenster nur mit Texten, wie die Windows-Zwischenablage: Es öffnet sich am Cursor, während du eine Nachricht schreibst — auswählen und einfügen, ohne das Tippen zu unterbrechen.</translation>
+    </message>
+    <message>
+        <source>Менеджер паролей</source>
+        <translation>Passwort-Manager</translation>
+    </message>
+    <message>
+        <source>Хранит пароли в зашифрованном виде и вставляет их в один клик.</source>
+        <translation>Speichert Passwörter verschlüsselt und fügt sie mit einem Klick ein.</translation>
+    </message>
+    <message>
+        <source>Скоро</source>
+        <translation>Demnächst</translation>
+    </message>
+    <message>
         <source>Список плагинов</source>
         <translation>Plugin-Liste</translation>
     </message>
@@ -905,20 +977,12 @@ Einschalten: Einstellungen → Barrierefreiheit → Visuelle Effekte → Animati
         <translation>Findet Fotos und Memes per Textsuche — auch wenn du nur ungefähr weißt, worum es im Meme geht.</translation>
     </message>
     <message>
-        <source>Скоро — в 2.4</source>
-        <translation>Bald — in 2.4</translation>
-    </message>
-    <message>
         <source>Гиффер</source>
         <translation>Giffer</translation>
     </message>
     <message>
         <source>Поиск и вставка гифок прямо из SmartClip.</source>
         <translation>GIFs direkt aus SmartClip suchen und einfügen.</translation>
-    </message>
-    <message>
-        <source>Скоро — в 2.5</source>
-        <translation>Bald — in 2.5</translation>
     </message>
     <message>
         <source>Не закрывать SmartClip самому</source>
@@ -1375,8 +1439,8 @@ Bei Überschreitung werden die ältesten Einträge dieser Art gelöscht.</transl
         <translation>In Administrator-Fenstern arbeiten</translation>
     </message>
     <message>
-        <source>SmartClip будет запускаться с правами администратора, чтобы горячая клавиша и вставка работали в программах, открытых от имени администратора (например, в терминале). Windows один раз спросит разрешение.</source>
-        <translation>SmartClip startet mit Administratorrechten, damit Tastenkürzel und Einfügen in Programmen funktionieren, die als Administrator laufen (z. B. ein Terminal). Windows fragt einmalig nach der Erlaubnis.</translation>
+        <source>Горячая клавиша и вставка будут работать и в программах, открытых от имени администратора (например, в терминале). Для этого запустится маленький помощник с правами администратора — сам SmartClip остаётся обычной программой. Windows один раз спросит разрешение.</source>
+        <translation>Tastenkürzel und Einfügen funktionieren auch in Programmen, die als Administrator geöffnet sind (z. B. im Terminal). Dafür startet ein kleiner Helfer mit Administratorrechten — SmartClip selbst bleibt ein normales Programm. Windows fragt einmal nach der Erlaubnis.</translation>
     </message>
     <message>
         <source>Нужна учётная запись администратора Windows.</source>

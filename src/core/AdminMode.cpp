@@ -10,13 +10,6 @@ namespace {
 
 const wchar_t *TASK_NAME = L"SmartClip Admin";
 
-std::wstring exePath()
-{
-    wchar_t buf[MAX_PATH * 2];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
-    return std::wstring(buf, n);
-}
-
 std::wstring systemExe(const wchar_t *name)
 {
     wchar_t dir[MAX_PATH];
@@ -59,6 +52,17 @@ std::wstring xmlEscape(const std::wstring &s)
     return r;
 }
 
+} // namespace
+
+namespace AdminMode {
+
+std::wstring exePath()
+{
+    wchar_t buf[MAX_PATH * 2];
+    const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
+    return std::wstring(buf, n);
+}
+
 // SID текущего пользователя — задача должна запускаться именно от него
 std::wstring currentUserSid()
 {
@@ -78,10 +82,6 @@ std::wstring currentUserSid()
     CloseHandle(token);
     return result;
 }
-
-} // namespace
-
-namespace AdminMode {
 
 bool isElevated()
 {
@@ -108,6 +108,19 @@ bool canElevate()
     return type == TokenElevationTypeLimited;
 }
 
+bool canDropToUser()
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION_TYPE type = TokenElevationTypeDefault;
+    DWORD size = 0;
+    GetTokenInformation(token, TokenElevationType, &type, sizeof(type), &size);
+    CloseHandle(token);
+    // Full — повышенный токен при включённом UAC: у пользователя есть и обычный.
+    // Default с правами админа — UAC выключен: опуститься некуда (иначе зациклимся)
+    return type == TokenElevationTypeFull;
+}
+
 bool createTask()
 {
     const std::wstring exe = exePath();
@@ -120,8 +133,8 @@ bool createTask()
     const std::wstring xml =
         L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n"
         L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\r\n"
-        L"  <RegistrationInfo><Description>SmartClip: запуск с правами администратора "
-        L"(чтобы работать в окнах администратора)</Description></RegistrationInfo>\r\n"
+        L"  <RegistrationInfo><Description>SmartClip: помощник с правами администратора "
+        L"(вставка и горячая клавиша в окнах администратора)</Description></RegistrationInfo>\r\n"
         L"  <Principals><Principal id=\"Author\">"
         + (sid.empty() ? std::wstring() : L"<UserId>" + sid + L"</UserId>") +
         L"<LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel>"
@@ -138,7 +151,7 @@ bool createTask()
         L"  </Settings>\r\n"
         L"  <Actions Context=\"Author\"><Exec>"
         L"<Command>" + xmlEscape(exe) + L"</Command>"
-        L"<Arguments>--elevated</Arguments>"
+        L"<Arguments>--admin-helper</Arguments>"
         L"<WorkingDirectory>" + xmlEscape(dir) + L"</WorkingDirectory>"
         L"</Exec></Actions>\r\n"
         L"</Task>\r\n";

@@ -46,6 +46,10 @@ public:
     // (2.0 → 2.1, 2.0 → 3.0). О таком сообщаем сразу (уведомление в трее и
     // окно). Мелкие правки (2.0 → 2.0.1) — только плашка в настройках.
     static bool isMajorUpdate(const QString &newVersion);
+    // Это не обновление SmartClip, а программа-преемник — Master Clipboard
+    // (в релизе лежит её установщик). SmartClip 2.4 — последняя версия:
+    // дальше она предлагает перейти на Master Clipboard
+    static bool isSuccessor(const QString &downloadUrl);
 
     // Описание релиза на языке интерфейса. В описании на GitHub языки
     // разделены метками <!-- lang: ru -->, <!-- lang: en -->, <!-- lang: ua -->,

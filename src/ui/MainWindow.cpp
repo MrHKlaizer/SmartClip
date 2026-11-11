@@ -57,6 +57,7 @@
 #include "core/Database.h"      // SQLite CRUD
 #include "core/AppSettings.h"   // Синглтон настроек
 #include "core/Thumbs.h"        // Превью картинок в фоне
+#include "core/Plugins.h"       // Установленные плагины (плашка сверху)
 
 #include <QScreen>              // Размер экрана
 #include <QKeyEvent>            // Клавиша Escape для скрытия окна
@@ -74,6 +75,10 @@
 #include <QApplication>         // clipboard(), primaryScreen()
 #include <QClipboard>           // setText/setPixmap
 #include <QTimer>               // singleShot — отложенный вызов
+#include <memory>
+#include <QFile>
+#include <QDateTime>
+#include <QElapsedTimer>
 #include <QMenu>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -106,6 +111,7 @@
 #include <algorithm>    // std::sort, std::reverse, std::min, std::max
 #include <functional>   // std::function — для рекурсивных лямбд
 #include <windows.h>    // Win32 API: HWND, INPUT, SendInput, SetForegroundWindow
+#include "core/AdminHelper.h"  // Окна администратора: вставка и хуки через помощника
 #include <atomic>
 #include <windowsx.h>
 #include <ShObjIdl.h>   // IShellItemImageFactory — миниатюры видео через Shell
@@ -895,6 +901,129 @@ static void applyBtnShadow(QWidget *w)
     w->setGraphicsEffect(fx);
 }
 
+// ─── PluginsBar — панель «Плагины» посередине сверху ─────────────────────────
+// Сверху подпись «Плагины», под ней — значки установленных плагинов (клик —
+// открыть плагин) и «+» (Настройки → Плагины). Плагинов больше — панель шире.
+// Плагины — отдельные программы от SmartClip (см. core/Plugins.h).
+class PluginTile : public QPushButton
+{
+public:
+    // icon — эмодзи плагина; glyph — значок из шрифта Windows (для «+»)
+    PluginTile(const QString &icon, QChar glyph, const QString &tip, QWidget *parent)
+        : QPushButton(parent), m_icon(icon), m_glyph(glyph)
+    {
+        setCursor(Qt::PointingHandCursor);
+        setToolTip(tip);
+        setFixedSize(46, 40);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), 8, 8);
+        const bool hot = underMouse() || isDown();
+        p.fillPath(path, QColor(255, 255, 255, isDown() ? 30 : hot ? 20 : 8));
+        p.setPen(QPen(QColor(255, 255, 255, hot ? 70 : 32), 1.2));
+        p.drawPath(path);
+        if (!m_glyph.isNull()) {
+            QFont f(SmartButton::iconFontFamily());
+            f.setPixelSize(14);
+            p.setFont(f);
+            p.setPen(QColor(255, 255, 255, hot ? 220 : 150));
+            p.drawText(rect(), Qt::AlignCenter, QString(m_glyph));
+        } else {
+            QFont f = font();
+            f.setPixelSize(20);
+            p.setFont(f);
+            p.setPen(Qt::white);
+            p.drawText(rect(), Qt::AlignCenter, m_icon);
+        }
+    }
+    void enterEvent(QEnterEvent *e) override { update(); QPushButton::enterEvent(e); }
+    void leaveEvent(QEvent *e) override { update(); QPushButton::leaveEvent(e); }
+
+private:
+    QString m_icon;
+    QChar m_glyph;
+};
+
+class PluginsBar : public QWidget
+{
+public:
+    PluginsBar(const QString &title, const QString &addTip, QWidget *parent)
+        : QWidget(parent), m_addTip(addTip)
+    {
+        auto *col = new QVBoxLayout(this);
+        col->setContentsMargins(8, 5, 8, 8);
+        col->setSpacing(4);
+        m_title = new QLabel(title, this);
+        m_title->setAlignment(Qt::AlignCenter);
+        m_title->setStyleSheet("color: rgba(255,255,255,150); font-size: 12px; background: transparent;");
+        col->addWidget(m_title);
+        m_row = new QHBoxLayout();
+        m_row->setContentsMargins(0, 0, 0, 0);
+        m_row->setSpacing(6);
+        col->addLayout(m_row);
+    }
+
+    std::function<void()> onAdd;  // «+» — Настройки → Плагины
+
+    // Заново собрать ряд значков. Ширина и высота — по содержимому.
+    void rebuild()
+    {
+        // Старые значки — потом (rebuild зовут и из клика по «+»), а пока просто прячем
+        while (QLayoutItem *it = m_row->takeAt(0)) {
+            if (QWidget *old = it->widget()) {
+                old->hide();
+                old->deleteLater();
+            }
+            delete it;
+        }
+        m_row->addStretch();
+        const auto list = Plugins::installed();
+        for (const auto &pl : list) {
+            auto *tile = new PluginTile(pl.icon, QChar(), pl.name, this);
+            auto open = pl.open;
+            connect(tile, &QPushButton::clicked, this, [open]() { if (open) open(); });
+            m_row->addWidget(tile);
+        }
+        auto *add = new PluginTile(QString(), QChar(0xE710), m_addTip, this);  // Плюс
+        connect(add, &QPushButton::clicked, this, [this]() { if (onAdd) onAdd(); });
+        m_row->addWidget(add);
+        m_row->addStretch();
+        m_count = list.size();
+        // Ширину считаем сами: значки + промежутки + поля (подпись — не уже)
+        const QMargins m = layout()->contentsMargins();
+        const int tilesW = (list.size() + 1) * 46 + list.size() * m_row->spacing();
+        const int titleW = m_title->sizeHint().width();
+        const int h = m.top() + m_title->sizeHint().height() + layout()->spacing() + 40 + m.bottom();
+        setFixedSize(qMax(132, qMax(tilesW, titleW) + m.left() + m.right()), h);
+    }
+
+    int pluginCount() const { return m_count; }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), 10, 10);
+        p.fillPath(path, QColor(20, 20, 32, 245));
+        p.setPen(QPen(QColor(255, 255, 255, 55), 2.0));
+        p.drawPath(path);
+    }
+
+private:
+    QLabel *m_title = nullptr;
+    QHBoxLayout *m_row = nullptr;
+    QString m_addTip;
+    int m_count = 0;
+};
+
 // ─── Нечёткий поиск (Fuzzy Search) ──────────────────────────────────────────
 //
 // Как работает поиск в SmartClip:
@@ -1205,8 +1334,8 @@ void MainWindow::setupLayout()
     m_topPanel->setObjectName("topPanel");
     m_topPanel->setFixedHeight(sc(BASE_TOP));
     QHBoxLayout *topLayout = new QHBoxLayout(m_topPanel);
-    // Слева — ровно по краю карточек колонки текстов
-    topLayout->setContentsMargins(16, 8, 12, 18);
+    // Слева — ровно по краю карточек колонки текстов, справа — колонки картинок
+    topLayout->setContentsMargins(16, 8, 20, 18);
     topLayout->setSpacing(8);
 
     // Группа «переключатели вида» — слева, одинаковая ширина по самому длинному
@@ -1233,10 +1362,14 @@ void MainWindow::setupLayout()
     connect(m_historyBtn, &QPushButton::clicked, this, [this]() { switchView(ViewMode::History); });
     connect(m_pinsBtn,    &QPushButton::clicked, this, [this]() { switchView(ViewMode::Pins);    });
 
-    // Группа «правые действия»
-    m_profilesBtn = new SmartButton(tr("📋  Профили"), m_topPanel);
-    m_profilesBtn->setFixedHeight(BTN_H);
-    m_profilesBtn->setFont(btnFont);
+    // Группа «правые действия» — ровно по ширине карточек картинок (как слева):
+    // профили, очистка и настройки — квадратные значки, сортировка — текстом
+    // на остаток ширины (см. layoutRightButtons)
+    m_profilesBtn = new SmartButton(QString(), m_topPanel);
+    m_profilesBtn->setIconGlyph(QChar(0xE77F));  // Буфер обмена
+    m_profilesBtn->setFixedSize(BTN_H, BTN_H);
+    m_profilesBtn->setToolTip(tr("Профили"));
+    m_profilesBtn->setCursor(Qt::PointingHandCursor);
     m_profilesBtn->setBtnStyle(QColor(20,20,32,245), QColor(255,255,255,160), 6);
     applyBtnShadow(m_profilesBtn);
     connect(m_profilesBtn, &QPushButton::clicked, this, &MainWindow::showProfilesMenu);
@@ -1244,14 +1377,15 @@ void MainWindow::setupLayout()
     m_sortBtn = new SmartButton(sortLabel(), m_topPanel);
     m_sortBtn->setFixedHeight(BTN_H);
     m_sortBtn->setFont(btnFont);
-    m_sortBtn->setMinimumWidth(145);
     m_sortBtn->setBtnStyle(QColor(20,20,32,245), QColor(255,255,255,160), 6);
     applyBtnShadow(m_sortBtn);
     connect(m_sortBtn, &QPushButton::clicked, this, &MainWindow::showSortMenu);
 
-    m_clearBtn = new SmartButton(tr("✕  Очистить всё"), m_topPanel);
-    m_clearBtn->setFixedHeight(BTN_H);
-    m_clearBtn->setFont(btnFont);
+    m_clearBtn = new SmartButton(QString(), m_topPanel);
+    m_clearBtn->setIconGlyph(QChar(0xE711));  // Крестик
+    m_clearBtn->setFixedSize(BTN_H, BTN_H);
+    m_clearBtn->setToolTip(tr("Очистить всё"));
+    m_clearBtn->setCursor(Qt::PointingHandCursor);
     m_clearBtn->setBtnStyle(QColor(55,12,12,245), QColor(255,130,130,220), 6);
     applyBtnShadow(m_clearBtn);
     connect(m_clearBtn, &QPushButton::clicked, this, &MainWindow::showClearMenu);
@@ -1296,6 +1430,7 @@ void MainWindow::setupLayout()
     topLayout->addWidget(m_sortBtn);
     topLayout->addWidget(m_clearBtn);
     topLayout->addWidget(m_settingsBtn);
+    layoutRightButtons();
 
     // ── Полоса папок (показывается только в режиме закрепов) ──────────────────
     m_foldersBar = new QWidget(this);
@@ -1428,6 +1563,18 @@ void MainWindow::setupLayout()
         searchBar->setBaseWidth(cardW - 2 * w3 - 2 * topLayout->spacing());  // Остаток от деления — поиску
     }
     topLayout->insertWidget(2, searchBar);
+    m_searchBar = searchBar;
+
+    // Панель «Плагины» — посередине над прозрачным центром, вне раскладки:
+    // стоит ровно по центру окна, а не между кнопками (см. placePluginsBar)
+    auto *plugins = new PluginsBar(tr("Плагины"), tr("Добавить плагины"), this);
+    plugins->onAdd = [this]() { openSettings(true); };
+    plugins->rebuild();
+    applyBtnShadow(plugins);
+    m_pluginsBar = plugins;
+    searchBar->installEventFilter(this);   // Длинный запрос расширил поиск — плашка уступает
+    m_profilesBtn->installEventFilter(this);  // Появился карандаш — правые кнопки сдвинулись
+    m_foldersBar->installEventFilter(this);   // В Закрепах панель — под полосой папок
 
     // Поиск по истории идёт по ВСЕЙ базе (раньше — только по 40 карточкам на экране,
     // и всё скопированное раньше просто не находилось). Чтобы не тормозить на
@@ -2141,7 +2288,35 @@ QList<Anim::Piece> MainWindow::buildOpenPieces()
         pc.fromScaleX = pc.fromScaleY = scale;
         pcs << pc;
     };
-    add(top,    QPointF(0, -top.height() - 20),    0.00, 0.98);
+    // Панель «Плагины» — сверху вместе с верхней панелью. Где они перекрываются
+    // (в Истории), верхнюю режем на куски слева и справа от панели, а панель
+    // берём вместе с полоской над ней — иначе одно место рисовалось бы дважды.
+    // Кусок панели — вместе с тенью (размытие 40, сдвиг вниз 8): по краю панели
+    // тень обрезалась и дорисовывалась только в конце анимации
+    const QRect plug = (m_pluginsBar && m_pluginsBar->isVisible()) ? m_pluginsBar->geometry() : QRect();
+    const int sh = 40;
+    if (!plug.isEmpty() && plug.intersects(top)) {
+        const QRect col(plug.left() - sh, top.top(), plug.width() + 2 * sh, plug.bottom() + 1 + sh - top.top());
+        const QPointF from(0, -col.bottom() - 20);
+        const QPointF anchor = QRectF(top).center();
+        auto addTop = [&](QRect r) {
+            if (r.isEmpty()) return;
+            add(r, from, 0.00, 0.98);
+            pcs.last().anchor = anchor;
+        };
+        addTop(QRect(0, top.top(), col.left(), top.height()));
+        addTop(QRect(col.right() + 1, top.top(), W - col.right() - 1, top.height()));
+        addTop(col);
+    } else {
+        add(top, QPointF(0, -top.height() - 20), 0.00, 0.98);
+        if (!plug.isEmpty()) {
+            // Сверху — не выше полосы папок (её кусок едет отдельно)
+            const int up = fold.isEmpty() ? top.bottom() + 1 : fold.bottom() + 1;
+            QRect r = plug.adjusted(-sh, -sh, sh, sh);
+            r.setTop(qMax(r.top(), up));
+            add(r, QPointF(0, -r.bottom() - 20), 0.04, 0.98);
+        }
+    }
     add(fold,   QPointF(0, -fold.bottom() - 20),   0.02, 0.98);
     // Полоска файлов (и кнопки импорта рядом) — уезжает вниз
     if (m_filesStrip && m_filesStrip->isVisible()) {
@@ -2388,6 +2563,8 @@ static void sendKey(WORD vk, bool up)
 static void sendPaste()
 {
     const bool shiftIns = pastesWithShiftInsert(GetForegroundWindow());
+    // В окно администратора обычная программа нажать не может — нажимает помощник
+    if (AdminHelper::isElevatedWindow(GetForegroundWindow()) && AdminHelper::paste(shiftIns)) return;
     const WORD mod = shiftIns ? VK_SHIFT : VK_CONTROL;
     const WORD key = shiftIns ? VK_INSERT : 'V';
     // Модификатор вставки нажимаем ПЕРВЫМ, а уже потом отпускаем Alt/Win:
@@ -2434,6 +2611,12 @@ static bool forceForeground(HWND target)
 namespace {
 std::atomic<MainWindow *> s_hookOwner{nullptr};
 std::atomic<HMONITOR>     s_ownMonitor{nullptr};  // Монитор, где открыт SmartClip
+std::atomic<bool>         s_stayOpen{false};      // Настройка «не закрываться самому» (для потока хуков)
+// Клик мимо SmartClip «съеден» — съедаем и отпускание той же кнопки (биты Л/П/С):
+// программа под нами не должна получить отпускание без нажатия
+std::atomic<int>          s_eatenUps{0};
+// Окно ушло, пока кнопка ещё зажата: поток хуков завершится сам после отпускания
+std::atomic<bool>         s_quitAfterUp{false};
 HANDLE        s_hookThread   = nullptr;
 DWORD         s_hookThreadId = 0;
 HWINEVENTHOOK s_fgHook       = nullptr;
@@ -2456,20 +2639,15 @@ LRESULT CALLBACK keyboardHook(int code, WPARAM wp, LPARAM lp)
         const auto *kb = reinterpret_cast<KBDLLHOOKSTRUCT *>(lp);
         const UINT vk = kb->vkCode;
         auto held = [](int k) { return (GetAsyncKeyState(k) & 0x8000) != 0; };
-        const bool modifier = vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT
-                           || vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL
-                           || vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU
-                           || vk == VK_LWIN || vk == VK_RWIN || vk == VK_CAPITAL
-                           // Служебные клавиши — не печать: F1–F24, PrtSc, громкость,
-                           // медиа, кнопки браузера/почты, NumLock/ScrollLock, Pause
-                           || (vk >= VK_F1 && vk <= VK_F24) || vk == VK_SNAPSHOT
-                           || (vk >= VK_BROWSER_BACK && vk <= VK_LAUNCH_APP2)
-                           || vk == VK_NUMLOCK || vk == VK_SCROLL || vk == VK_PAUSE || vk == VK_SLEEP;
+        const bool modifier = AdminHelper::nonTypingKey(vk);
         // Сочетания с Ctrl/Alt/Win (горячие клавиши, Alt+Tab) не трогаем
         MainWindow *owner = s_hookOwner;
         // Пользователь работает в окне на ДРУГОМ мониторе (например, играет, а
         // SmartClip открыт рядом с фото) — клавиши его, не перехватываем
         HWND fg = GetForegroundWindow();
+        // Активно окно администратора — клавиши ловит помощник
+        if (AdminHelper::connected() && AdminHelper::isElevatedWindow(fg))
+            return CallNextHookEx(nullptr, code, wp, lp);
         const bool otherMonitor = fg && s_ownMonitor
             && MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != s_ownMonitor.load();
         if (owner && !otherMonitor && !(kb->flags & LLKHF_INJECTED) && !modifier && !weAreForeground()
@@ -2486,15 +2664,55 @@ LRESULT CALLBACK keyboardHook(int code, WPARAM wp, LPARAM lp)
     return CallNextHookEx(nullptr, code, wp, lp);
 }
 
-// Любой клик: решаем на следующем шаге цикла событий, был ли он мимо SmartClip
+// Панель задач: там значок SmartClip в трее (клик по нему — открыть/закрыть)
+bool isTaskbar(HWND h)
+{
+    wchar_t cls[64] = {};
+    GetClassNameW(GetAncestor(h, GA_ROOT), cls, 64);
+    for (const wchar_t *c : {L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd",
+                             L"NotifyIconOverflowWindow", L"TopLevelWindowForOverflowXamlIsland"})
+        if (wcscmp(cls, c) == 0) return true;
+    return false;
+}
+
+// Любой клик: мимо SmartClip — съедаем и закрываемся, остальное решаем на
+// следующем шаге цикла событий
 LRESULT CALLBACK mouseHook(int code, WPARAM wp, LPARAM lp)
 {
-    MainWindow *owner = s_hookOwner;
-    if (code == HC_ACTION && owner
-        && (wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN || wp == WM_MBUTTONDOWN)) {
-        QMetaObject::invokeMethod(owner, []() {
-            if (MainWindow *o = s_hookOwner) o->onGlobalClick();
-        }, Qt::QueuedConnection);
+    if (code == HC_ACTION) {
+        const int bit = (wp == WM_LBUTTONDOWN || wp == WM_LBUTTONUP) ? 1
+                      : (wp == WM_RBUTTONDOWN || wp == WM_RBUTTONUP) ? 2
+                      : (wp == WM_MBUTTONDOWN || wp == WM_MBUTTONUP) ? 4 : 0;
+        const bool down = wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN || wp == WM_MBUTTONDOWN;
+        if (bit && !down && (s_eatenUps & bit)) {
+            if ((s_eatenUps.fetch_and(~bit) & ~bit) == 0 && s_quitAfterUp.exchange(false))
+                PostQuitMessage(0);
+            return 1;
+        }
+        MainWindow *owner = s_hookOwner;
+        if (bit && down && owner) {
+            const POINT pt = reinterpret_cast<const MSLLHOOKSTRUCT *>(lp)->pt;
+            const HWND root = GetAncestor(WindowFromPoint(pt), GA_ROOT);
+            // Клик по окну администратора — его ловит помощник (клик мимо
+            // SmartClip он съест и пришлёт нам)
+            if (AdminHelper::connected() && AdminHelper::isElevatedWindow(root))
+                return CallNextHookEx(nullptr, code, wp, lp);
+            bool otherHeld = false;
+            for (int vk : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON})
+                if (vk != (bit == 1 ? VK_LBUTTON : bit == 2 ? VK_RBUTTON : VK_MBUTTON)
+                    && (GetAsyncKeyState(vk) & 0x8000)) otherHeld = true;
+            if (AdminHelper::swallowsOutsideClick(s_stayOpen, isOwnWindow(root), isTaskbar(root),
+                    MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) == s_ownMonitor.load(), otherHeld)) {
+                s_eatenUps |= bit;
+                QMetaObject::invokeMethod(owner, []() {
+                    if (MainWindow *o = s_hookOwner) o->onOutsideClick();
+                }, Qt::QueuedConnection);
+                return 1;  // Клик не дойдёт до программы под нами
+            }
+            QMetaObject::invokeMethod(owner, []() {
+                if (MainWindow *o = s_hookOwner) o->onGlobalClick();
+            }, Qt::QueuedConnection);
+        }
     }
     return CallNextHookEx(nullptr, code, wp, lp);
 }
@@ -2540,13 +2758,7 @@ DWORD WINAPI hookThreadProc(LPVOID readyEvent)
 // SmartClip — некуда: тогда только кладём в буфер обмена.
 bool isPasteTarget(HWND h)
 {
-    if (!h || !IsWindow(h) || isOwnWindow(h)) return false;
-    wchar_t cls[64] = {};
-    GetClassNameW(GetAncestor(h, GA_ROOT), cls, 64);
-    for (const wchar_t *c : {L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd",
-                             L"NotifyIconOverflowWindow", L"TopLevelWindowForOverflowXamlIsland"})
-        if (wcscmp(cls, c) == 0) return false;
-    return true;
+    return h && IsWindow(h) && !isOwnWindow(h) && !isTaskbar(h);
 }
 } // namespace
 
@@ -2557,6 +2769,16 @@ void MainWindow::installInputHooks()
     if (testAttribute(Qt::WA_DontShowOnScreen)) return;
     s_hookOwner = this;
     s_ownMonitor = MonitorFromWindow(reinterpret_cast<HWND>(winId()), MONITOR_DEFAULTTONEAREST);
+    s_stayOpen = AppSettings::get().stayOpen();
+    AdminHelper::setOpen(true, s_stayOpen, reinterpret_cast<HWND>(winId()));
+    // Прежний поток ещё ждёт отпускания кнопки: отменяем его выход и берём его.
+    // Не успели — он уже завершается, дожидаемся и ставим хуки заново.
+    if (s_hookThread && !s_quitAfterUp.exchange(false)) {
+        WaitForSingleObject(s_hookThread, 1000);
+        CloseHandle(s_hookThread);
+        s_hookThread = nullptr;
+        s_hookThreadId = 0;
+    }
     if (!s_hookThread) {
         HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         s_hookThread = CreateThread(nullptr, 0, hookThreadProc, ready, 0, &s_hookThreadId);
@@ -2575,8 +2797,14 @@ void MainWindow::installInputHooks()
 void MainWindow::removeInputHooks()
 {
     s_hookOwner = nullptr;
+    AdminHelper::setOpen(false, s_stayOpen, reinterpret_cast<HWND>(winId()));
     if (s_hookThread) {
-        PostThreadMessageW(s_hookThreadId, WM_QUIT, 0, 0);
+        // Съеденная кнопка ещё зажата — поток хуков съест её отпускание и
+        // завершится сам (иначе отпускание дошло бы до программы под нами)
+        s_quitAfterUp = true;
+        if (s_eatenUps.load() != 0) return;
+        if (s_quitAfterUp.exchange(false))
+            PostThreadMessageW(s_hookThreadId, WM_QUIT, 0, 0);
         WaitForSingleObject(s_hookThread, 1000);
         CloseHandle(s_hookThread);
         s_hookThread = nullptr;
@@ -2646,6 +2874,23 @@ void MainWindow::onGlobalClick()
     if (MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
         != MonitorFromWindow(reinterpret_cast<HWND>(winId()), MONITOR_DEFAULTTONEAREST)) return;
     if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
+    hideAnimated();
+}
+
+// Клик мимо SmartClip съеден хуком мыши — закрываем всё: меню, окна поверх, сам SmartClip
+void MainWindow::onOutsideClick()
+{
+    if (!isOpen()) return;
+    QList<QPointer<QDialog>> dialogs;
+    for (QWidget *w : QApplication::topLevelWidgets())
+        if (auto *d = qobject_cast<QDialog*>(w))
+            if (d->isVisible() && d->isModal()) {
+                if (d->property("keepOnDeactivate").toBool()) return;  // Например, идёт обновление
+                dialogs.prepend(d);
+            }
+    if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
+    for (const QPointer<QDialog> &d : dialogs)
+        if (d) d->reject();
     hideAnimated();
 }
 
@@ -3669,7 +3914,7 @@ void MainWindow::showClearMenu()
         menu.addAction(tr("(Удаление закрепов — через ПКМ по карточке)"))->setEnabled(false);
     }
 
-    menu.exec(m_clearBtn->mapToGlobal(QPoint(0, m_clearBtn->height() + 6)));
+    menu.exec(m_clearBtn->mapToGlobal(QPoint(m_clearBtn->width() - menu.sizeHint().width(), m_clearBtn->height() + 6)));
 }
 
 void MainWindow::clearHistory(const QString &type)
@@ -3716,15 +3961,33 @@ void MainWindow::clearHistoryByApp()
     loadHistory();
 }
 
-QString MainWindow::sortLabel() const
+QString MainWindow::sortLabel(bool brief) const
 {
     switch (m_sortOrder) {
-        case SortOrder::DateDesc: return tr("Новые сначала");
-        case SortOrder::DateAsc:  return tr("Старые сначала");
-        case SortOrder::NameAsc:  return tr("По имени А→Я");
-        case SortOrder::NameDesc: return tr("По имени Я→А");
+        case SortOrder::DateDesc: return brief ? tr("Новые")  : tr("Новые сначала");
+        case SortOrder::DateAsc:  return brief ? tr("Старые") : tr("Старые сначала");
+        case SortOrder::NameAsc:  return brief ? tr("А→Я")    : tr("По имени А→Я");
+        case SortOrder::NameDesc: return brief ? tr("Я→А")    : tr("По имени Я→А");
     }
     return "↕";
+}
+
+// Правые кнопки — ровно по ширине карточек картинок, как История/Закрепы/Поиск
+// слева. Сортировка берёт что осталось от квадратных значков; не влезает
+// полная надпись — короткая («Новые» вместо «Новые сначала»).
+void MainWindow::layoutRightButtons()
+{
+    if (!m_sortBtn) return;
+    const int gap = m_topPanel->layout()->spacing();
+    int squares = 0;
+    for (QWidget *b : {static_cast<QWidget *>(m_editBtn), static_cast<QWidget *>(m_profilesBtn),
+                       static_cast<QWidget *>(m_clearBtn), static_cast<QWidget *>(m_settingsBtn)})
+        if (b && !b->isHidden()) squares += b->width() + gap;
+    const int w = qMax(40, sc(BASE_RIGHT) - 36 - squares);
+    m_sortBtn->setFixedWidth(w);
+    const QString full = sortLabel(false);
+    m_sortBtn->setText(m_sortBtn->fontMetrics().horizontalAdvance(full) + 24 <= w ? full : sortLabel(true));
+    m_sortBtn->setToolTip(full);
 }
 
 void MainWindow::showSortMenu()
@@ -3747,7 +4010,7 @@ void MainWindow::showSortMenu()
     }
 
     // Показываем меню под кнопкой сортировки
-    menu.exec(m_sortBtn->mapToGlobal(QPoint(0, m_sortBtn->height() + 6)));
+    menu.exec(m_sortBtn->mapToGlobal(QPoint(m_sortBtn->width() - menu.sizeHint().width(), m_sortBtn->height() + 6)));
 }
 
 void MainWindow::applySortOrder(SortOrder order)
@@ -3755,8 +4018,7 @@ void MainWindow::applySortOrder(SortOrder order)
     m_sortOrder = order;
 
     // Обновляем текст кнопки сортировки
-    if (m_sortBtn)
-        m_sortBtn->setText(sortLabel());
+    layoutRightButtons();
 
     // Перезагружаем текущий вид с новой сортировкой
     if (m_viewMode == ViewMode::History)
@@ -4162,8 +4424,38 @@ void MainWindow::placeFoldersBar()
     m_foldersBar->setGeometry(0, top, qMax(sc(200), m_rightScroll->geometry().left() - sc(8)), sc(BASE_FOLD));
 }
 
+// ─── Замер медленных переходов ───────────────────────────────────────────────
+// Переход История ↔ Закрепы дольше 0,3 с (вместе с первой отрисовкой после
+// него) записывается в slow.log рядом с базой: какой шаг сколько занял.
+// На данных из тестов переход быстрый — так видно, что тормозит у пользователя.
+namespace {
+struct SlowSteps {
+    QElapsedTimer t;
+    QStringList steps;
+    qint64 last = 0;
+    void mark(const char *name)
+    {
+        const qint64 now = t.elapsed();
+        steps << QString("%1 %2").arg(QLatin1String(name)).arg(now - last);
+        last = now;
+    }
+};
+void writeSlowLog(const QString &what, qint64 total, const QStringList &steps)
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QFile f(dir + "/slow.log");
+    if (f.size() > 256 * 1024) f.remove();  // Не растёт бесконечно
+    if (!f.open(QIODevice::Append | QIODevice::Text)) return;
+    f.write(QString("%1  %2  %3 мс: %4\n")
+                .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"), what)
+                .arg(total).arg(steps.join(", ")).toUtf8());
+}
+}  // namespace
+
 void MainWindow::switchView(ViewMode mode)
 {
+    auto slow = std::make_shared<SlowSteps>();
+    slow->t.start();
     // Уходим из Истории в Закрепы — запоминаем, где остановились в Истории
     // (сколько карточек подгружено и где прокрутка), чтобы вернуть туда же
     if (m_viewMode == ViewMode::History && mode == ViewMode::Pins) {
@@ -4189,6 +4481,8 @@ void MainWindow::switchView(ViewMode mode)
 
     // Кнопка мультивыбора видна только в Закрепах
     if (m_editBtn) m_editBtn->setVisible(mode == ViewMode::Pins);
+    layoutRightButtons();
+    placePluginsBar();  // Панель «Плагины» — только в Истории  // Карандаш занял место — сортировке остаётся меньше
 
     // При уходе из Закрепов сбрасываем режим выбора
     if (mode != ViewMode::Pins && m_editMode) {
@@ -4198,15 +4492,20 @@ void MainWindow::switchView(ViewMode mode)
     }
 
     // Полоска внизу: в Истории — свежие файлы, в Закрепах — закреплённые
+    slow->mark("кнопки");
     if (m_filesStrip) m_filesStrip->setPinsMode(mode == ViewMode::Pins);
     if (m_folderPanel) m_folderPanel->closeNow();
     placeImportButtons();
 
+    slow->mark("полоска файлов");
     if (mode == ViewMode::History) {
         m_foldersBar->hide();
         static_cast<ColumnScroll *>(m_leftScroll)->setViewportMargins(0, 0, 0, 0);
+        slow->mark("папки");
         loadHistory();
+        slow->mark("история");
         restoreHistoryPos();
+        slow->mark("прокрутка");
     } else {
         // Папку НЕ сбрасываем: вернулся в Закрепы — ты там же, где был
         static_cast<ColumnScroll *>(m_leftScroll)->setViewportMargins(0, sc(BASE_FOLD), 0, 0);
@@ -4219,7 +4518,16 @@ void MainWindow::switchView(ViewMode mode)
         // и Закрепы открывались сразу в самом низу)
         m_leftScroller->jumpTo(0);
         m_rightScroller->jumpTo(0);
+        slow->mark("закрепы");
     }
+    // Что было дальше: всё, что ждало в очереди, и первая отрисовка
+    const QString what = mode == ViewMode::History ? "в Историю" : "в Закрепы";
+    QTimer::singleShot(0, this, [this, slow, what]() {
+        slow->mark("очередь");
+        repaint();
+        slow->mark("отрисовка");
+        if (slow->t.elapsed() > 300) writeSlowLog(what, slow->t.elapsed(), slow->steps);
+    });
 }
 
 // Вернуться в Истории туда, где остановились перед переходом в Закрепы:
@@ -5233,7 +5541,7 @@ void MainWindow::showProfilesMenu()
         showProfileManager();
     });
 
-    menu.exec(m_profilesBtn->mapToGlobal(QPoint(0, m_profilesBtn->height() + 6)));
+    menu.exec(m_profilesBtn->mapToGlobal(QPoint(m_profilesBtn->width() - menu.sizeHint().width(), m_profilesBtn->height() + 6)));
 }
 
 void MainWindow::showProfileManager()
@@ -5568,7 +5876,50 @@ void MainWindow::editHistoryText(int id, QLabel *card)
 //   updateRequested   — пользователь нажал «Установить» в баннере обновления
 void MainWindow::showSettings()
 {
+    openSettings(false);
+}
+
+// ─── placePluginsBar ─────────────────────────────────────────────────────────
+// Панель «Плагины» — только в Истории: сверху, вровень с кнопками, посередине
+// между ними. В Закрепах её нет (там она не нужна, а центр занимает полоса папок).
+// Не хватает места (узкое окно, длинный запрос в поиске) — прячется.
+void MainWindow::placePluginsBar()
+{
+    auto *bar = static_cast<PluginsBar *>(m_pluginsBar);
+    if (!bar || !m_searchBar || !m_profilesBtn || !m_leftScroll || !m_rightScroll) return;
+    auto geo = [this](QWidget *w) { return QRect(w->mapTo(this, QPoint(0, 0)), w->size()); };
+    QWidget *next = !m_editBtn->isHidden() ? static_cast<QWidget *>(m_editBtn) : m_profilesBtn;
+    // Ровно посередине между кнопками слева (История…Поиск — по ширине карточек
+    // текстов) и справа. Не по центру экрана: отступы кнопок от краёв разные
+    // (как у колонок), и «по центру экрана» на глаз выглядело сдвинутым.
+    // Обе группы — ровно по ширине карточек своих колонок (см. layoutRightButtons)
+    const int leftEnd = geo(m_historyBtn).left() + sc(BASE_LEFT) - 36;
+    const int rightStart = geo(m_settingsBtn).right() + 1 - (sc(BASE_RIGHT) - 36);
+    const int x = (leftEnd + rightStart - bar->width()) / 2;
+    const int y = m_topPanel->y() + m_historyBtn->y();
+    const QRect r(x, y, bar->width(), bar->height());
+    const QRect grow = r.adjusted(-12, 0, 12, 0);  // Зазор до соседей
+    const bool fits = m_viewMode == ViewMode::History && !grow.intersects(geo(m_searchBar)) && !grow.intersects(geo(next))
+                      && grow.left() > m_leftScroll->geometry().right()
+                      && grow.right() < m_rightScroll->geometry().left();
+    bar->move(x, y);
+    bar->setVisible(fits);
+    if (fits) bar->raise();
+}
+
+void MainWindow::refreshPlugins()
+{
+    if (auto *bar = static_cast<PluginsBar *>(m_pluginsBar)) {
+        bar->rebuild();
+        placePluginsBar();
+    }
+}
+
+// plugins = true — сразу на вкладке «Плагины» (клик по плашке сверху)
+void MainWindow::openSettings(bool plugins)
+{
     SettingsDialog dlg(m_db, this);
+    if (plugins) dlg.showPluginsTab();
 
     connect(&dlg, &SettingsDialog::mainHotkeyChanged,
             this, &MainWindow::mainHotkeyChanged);
@@ -5591,6 +5942,8 @@ void MainWindow::showSettings()
         dlg.setPendingUpdate(m_pendingUpdateVersion, m_pendingUpdateUrl, m_pendingReleaseNotes);
 
     dlg.exec();
+    s_stayOpen = AppSettings::get().stayOpen();  // Хуку мыши — «не закрываться самому»
+    AdminHelper::setOpen(isOpen(), s_stayOpen, reinterpret_cast<HWND>(winId()));
 
     // Оформление могло поменяться: дуга/выезд карточек, шкала дат и тёмный фон — сразу
     if (m_leftArc)  m_leftArc->refresh();
@@ -5599,6 +5952,7 @@ void MainWindow::showSettings()
     if (m_rightRuler) m_rightRuler->refresh();
     if (m_filesStrip) m_filesStrip->reload();  // Папки, типы, вид полоски файлов
     if (m_folderPanel) m_folderPanel->settingsChanged();  // Список деревом
+    refreshPlugins();  // Плагины могли поставить или убрать
     update();
 }
 
@@ -5714,6 +6068,12 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
     if ((obj == m_rightScroll || obj == m_topPanel) &&
         (event->type() == QEvent::Move || event->type() == QEvent::Resize))
         placeFoldersBar();
+    if ((obj == m_topPanel || obj == m_searchBar || obj == m_profilesBtn || obj == m_historyBtn ||
+         obj == m_foldersBar) &&
+        (event->type() == QEvent::Move || event->type() == QEvent::Resize ||
+         event->type() == QEvent::Show || event->type() == QEvent::Hide))
+        // На следующем шаге — когда раскладка кнопок уже устоялась
+        QMetaObject::invokeMethod(this, &MainWindow::placePluginsBar, Qt::QueuedConnection);
     if (obj == m_filesStrip && (event->type() == QEvent::Move || event->type() == QEvent::Resize ||
                                 event->type() == QEvent::Show || event->type() == QEvent::Hide))
         placeImportButtons();
@@ -5827,7 +6187,8 @@ void MainWindow::onUpdateAvailable(const QString &version, const QString &downlo
     // пользователь сам откроет SmartClip (см. showWindow).
     // Мелкое обновление (2.0.1) само не предлагаем: точка на шестерёнке и
     // плашка вверху настроек — посмотреть, когда удобно.
-    m_updatePromptShown = !UpdateChecker::isMajorUpdate(version);
+    // Переход на Master Clipboard предлагаем всегда, как большое обновление
+    m_updatePromptShown = !(UpdateChecker::isMajorUpdate(version) || UpdateChecker::isSuccessor(downloadUrl));
     if (m_settingsBtn) {
         m_settingsBtn->setBadge(true);
         m_settingsBtn->setToolTip(tr("Настройки — доступно обновление %1").arg(version));
@@ -5857,8 +6218,10 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
 
     // ── Окно «Доступно обновление» ────────────────────────────────────────────
     const bool major = UpdateChecker::isMajorUpdate(version);
+    // SmartClip 2.4 — последняя версия; дальше — Master Clipboard (преемник)
+    const bool successor = UpdateChecker::isSuccessor(downloadUrl);
     AppDialog dlg(this);
-    dlg.setWindowTitle(tr("Обновление SmartClip"));
+    dlg.setWindowTitle(successor ? tr("Переход на Master Clipboard") : tr("Обновление SmartClip"));
     // Случайный клик мимо не должен обрывать скачивание обновления
     dlg.setProperty("keepOnDeactivate", true);
     dlg.setMinimumWidth(520);
@@ -5874,17 +6237,19 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
     head->setSpacing(14);
     // Значок программы (в .ico есть размеры до 256 px — чёткий на любом масштабе)
     auto *icon = new QLabel(bodyW);
-    icon->setPixmap(QIcon(":/icons/smartclip.ico").pixmap(QSize(56, 56), devicePixelRatioF()));
+    icon->setPixmap(QIcon(successor ? ":/icons/masterclipboard.ico" : ":/icons/smartclip.ico")
+                        .pixmap(QSize(56, 56), devicePixelRatioF()));
     icon->setFixedSize(56, 56);
     icon->setAlignment(Qt::AlignCenter);
     auto *headText = new QVBoxLayout();
     headText->setSpacing(4);
-    auto *title = new QLabel(tr("SmartClip %1").arg(version), bodyW);
+    auto *title = new QLabel((successor ? tr("Master Clipboard %1") : tr("SmartClip %1")).arg(version), bodyW);
     title->setStyleSheet("color:#fff; font-size:18px; font-weight:600;");
     auto *chips = new QHBoxLayout();
     chips->setSpacing(8);
-    auto *kind = new QLabel(major ? tr("Большое обновление") : tr("Небольшое обновление"), bodyW);
-    kind->setStyleSheet(major
+    auto *kind = new QLabel(successor ? tr("Новая программа — замена SmartClip")
+                            : major ? tr("Большое обновление") : tr("Небольшое обновление"), bodyW);
+    kind->setStyleSheet(major || successor
         ? "color:#0e1a2c; background:rgba(120,190,255,235); border-radius:9px; padding:2px 9px; font-size:11px; font-weight:600;"
         : "color:#cfe3ff; background:rgba(120,190,255,40); border-radius:9px; padding:2px 9px; font-size:11px;");
     auto *current = new QLabel(tr("у вас сейчас %1").arg(QLatin1String(APP_VERSION)), bodyW);
@@ -5897,6 +6262,15 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
     head->addWidget(icon);
     head->addLayout(headText, 1);
     layout->addLayout(head);
+    if (successor) {
+        // Что произойдёт: та же программа под новым именем, всё переносится
+        auto *about = new QLabel(tr("SmartClip теперь называется Master Clipboard — это следующая версия той же "
+                                    "программы. История, закрепы и настройки перенесутся, а SmartClip удалится сам."), bodyW);
+        about->setWordWrap(true);
+        about->setStyleSheet("color:rgba(235,238,250,220); font-size:12px; background:rgba(196,72,102,40);"
+                             " border:1px solid rgba(196,72,102,120); border-radius:10px; padding:10px;");
+        layout->addWidget(about);
+    }
 
     // «Что нового» — на языке интерфейса (в описании релиза языки разделены метками)
     const QString notes = UpdateChecker::localizedNotes(releaseNotes, AppSettings::get().language());
@@ -5953,7 +6327,7 @@ void MainWindow::showUpdateDialog(const QString &version, const QString &downloa
     statusLbl->hide();
 
     auto *btnRow    = new QHBoxLayout();
-    auto *updateBtn = new SmartButton(tr("Скачать и установить"), bodyW);
+    auto *updateBtn = new SmartButton(successor ? tr("Перейти на Master Clipboard") : tr("Скачать и установить"), bodyW);
     auto *laterBtn  = new SmartButton(tr("Позже"), bodyW);
     updateBtn->setBtnStyle(QColor(28, 52, 86, 245), QColor(200, 228, 255));
     updateBtn->setFixedHeight(36);

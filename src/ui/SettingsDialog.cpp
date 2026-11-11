@@ -27,6 +27,7 @@
 #include "SmartButton.h"            // Системный шрифт значков
 #include "core/AppSettings.h"       // Синглтон настроек
 #include "core/Database.h"          // Чтение/запись в SQLite
+#include "core/AdminHelper.h"       // Помощник для окон администратора
 #include "core/BugReporter.h"       // Отправка обратной связи в Telegram
 #include "core/Version.h"           // APP_VERSION — строка вида "1.0.2"
 #include "core/UpdateChecker.h"     // Проверка обновлений через GitHub API
@@ -798,6 +799,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     // Боковое меню разделов с анимацией (см. NavTabs.h) вместо вкладок сверху
     auto *tabs = new NavTabs(body, QColor(18, 18, 30));
+    m_tabs = tabs;
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Вкладка 1: Система
@@ -848,15 +850,17 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
 
     // Окна администратора: Windows не пускает обычные программы в окна,
     // открытые «от имени администратора» (терминал и т.п.) — там Win+V
-    // открывал бы системный буфер. С галочкой SmartClip стартует с правами админа.
+    // открывал бы системный буфер. С галочкой там работает помощник с правами
+    // админа (AdminHelper.h), а сам SmartClip остаётся обычной программой.
     auto *adminCheck = new SdCheckBox(tr("Работать в окнах администратора"), startGroup);
     adminCheck->setChecked(AppSettings::get().runAsAdmin());
     const bool canElevate = AdminMode::canElevate();
     adminCheck->setEnabled(canElevate || adminCheck->isChecked());
     auto *adminHint = new QLabel(canElevate
-        ? tr("SmartClip будет запускаться с правами администратора, чтобы горячая клавиша "
-             "и вставка работали в программах, открытых от имени администратора "
-             "(например, в терминале). Windows один раз спросит разрешение.")
+        ? tr("Горячая клавиша и вставка будут работать и в программах, открытых от имени "
+             "администратора (например, в терминале). Для этого запустится маленький помощник "
+             "с правами администратора — сам SmartClip остаётся обычной программой. "
+             "Windows один раз спросит разрешение.")
         : tr("Нужна учётная запись администратора Windows."), startGroup);
     adminHint->setWordWrap(true);
     adminHint->setStyleSheet("color: rgba(255,255,255,100); font-size: 11px;");
@@ -1715,8 +1719,16 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     const QList<Plug> plugs = {
         {QStringLiteral("🔍"), tr("Поисковик фото"),
          tr("Находит фото и мемы по тексту запроса — даже если помнишь только примерно, о чём мем."),
-         tr("Скоро — в 2.4")},
-        {QStringLiteral("🎞"), tr("Гиффер"), tr("Поиск и вставка гифок прямо из SmartClip."), tr("Скоро — в 2.5")},
+         tr("Скоро")},
+        {QStringLiteral("🎞"), tr("Гиффер"), tr("Поиск и вставка гифок прямо из SmartClip."), tr("Скоро")},
+        {QStringLiteral("🔐"), tr("Менеджер паролей"),
+         tr("Хранит пароли в зашифрованном виде и вставляет их в один клик."), tr("Скоро")},
+        {QStringLiteral("📋"), tr("Мини Клип"),
+         tr("Маленькое плавающее окошко только с текстами, как буфер Windows: открывается у курсора, "
+            "пока пишешь сообщение, — выбрал и вставил, не отрываясь от набора."), tr("Скоро")},
+        {QStringLiteral("⌨️"), QStringLiteral("DeRu Switcher"),
+         tr("Переключатель раскладки, который учится на твоих ошибках: замечает текст не в той раскладке, "
+            "опечатки и лишние пробелы, спрашивает, что ты имел в виду, — и дальше исправляет сам."), tr("Скоро")},
     };
     for (const Plug &p : plugs) {
         auto *card = new QFrame(plugGroup);
@@ -1742,6 +1754,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
     }
     plugLayout->addWidget(plugGroup);
     plugLayout->addStretch();
+    m_pluginsTab = tabs->count();
     tabs->addTab(plugTab, tr("Плагины"), QChar(0xEA86));  // Пазл
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1836,14 +1849,15 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         applyAutostart(autostartOn);
 
         // Окна администратора. Включение — создаём задачу Планировщика
-        // (Windows покажет окно UAC). Отказали — галочку не сохраняем.
-        bool adminRestart = false;
+        // (Windows покажет окно UAC) и запускаем помощника; отказали — галочку
+        // не сохраняем. Выключение — помощник удаляет задачу и выходит.
+        // Перезапуск SmartClip не нужен.
         const bool adminWanted = adminCheck->isChecked();
         if (adminWanted != AppSettings::get().runAsAdmin()) {
             if (adminWanted) {
                 if (AdminMode::requestCreateTask()) {
                     AppSettings::get().setRunAsAdmin(true);
-                    adminRestart = !AdminMode::isElevated();
+                    AdminHelper::ensureRunning();
                 } else {
                     adminCheck->setChecked(false);
                     sdInfo(this, tr("Окна администратора"),
@@ -1851,8 +1865,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
                 }
             } else {
                 AppSettings::get().setRunAsAdmin(false);
-                AdminMode::deleteTask();  // Получится, только если мы уже с правами админа
-                adminRestart = AdminMode::isElevated();
+                AdminHelper::stop(true);
             }
         }
 
@@ -1922,7 +1935,7 @@ SettingsDialog::SettingsDialog(Database *db, QWidget *parent)
         accept();  // Закрываем диалог с результатом «принято»
 
         // Если сменился язык, масштаб или права — предлагаем перезапуск
-        if (langChanged || scaleChanged || adminRestart) {
+        if (langChanged || scaleChanged) {
             if (sdQuestion(parentWidget(),
                            tr("Перезапуск"),
                            tr("Для применения изменений необходимо перезапустить приложение.\n"
@@ -2023,4 +2036,9 @@ void SettingsDialog::mouseReleaseEvent(QMouseEvent *e)
 {
     m_drag = {};  // Сбрасываем — перетаскивание завершено
     QDialog::mouseReleaseEvent(e);
+}
+
+void SettingsDialog::showPluginsTab()
+{
+    if (m_tabs) m_tabs->setCurrentIndex(m_pluginsTab);
 }
