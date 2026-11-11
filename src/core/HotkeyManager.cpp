@@ -11,6 +11,7 @@
 
 #include "HotkeyManager.h"
 #include "AppSettings.h"   // Читаем главный хоткей из настроек
+#include "AdminHelper.h"   // В окнах администратора Win+клавишу ловит помощник
 #include <QDebug>          // qDebug() для диагностических сообщений
 
 // ─── Статические члены класса ────────────────────────────────────────────────
@@ -257,6 +258,7 @@ void HotkeyManager::installLLHook(UINT vk)
     // nullptr = не инжектируемый (только для нашего процесса по MSDN для LL-хуков)
     // 0 = глобальный (не привязан к конкретному потоку)
     m_llHook = SetWindowsHookEx(WH_KEYBOARD_LL, LLKeyboardProc, nullptr, 0);
+    AdminHelper::setWinHotkey(vk);
     if (!m_llHook)
         qDebug() << "SetWindowsHookEx не удался, код:" << GetLastError();
 }
@@ -268,6 +270,7 @@ void HotkeyManager::removeLLHook()
         UnhookWindowsHookEx(m_llHook);  // Снимаем хук — он больше не будет вызываться
         m_llHook = nullptr;
         m_llVk   = 0;
+        AdminHelper::setWinHotkey(0);
         if (s_instance == this)
             s_instance = nullptr;
     }
@@ -300,8 +303,10 @@ LRESULT CALLBACK HotkeyManager::LLKeyboardProc(int code, WPARAM wParam, LPARAM l
         }
 
         // Проверяем: нажата ли наша целевая клавиша вместе с Win?
+        // (Активно окно администратора — её ловит помощник, AdminHelper.h)
         if (!injected && s_instance && s_instance->m_llVk != 0
-            && vk == s_instance->m_llVk && s_winDown)
+            && vk == s_instance->m_llVk && s_winDown
+            && !(AdminHelper::connected() && AdminHelper::isElevatedWindow(GetForegroundWindow())))
         {
             if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
 

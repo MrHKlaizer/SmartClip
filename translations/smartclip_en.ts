@@ -4,6 +4,54 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Добавить плагины</source>
+        <translation>Add plugins</translation>
+    </message>
+    <message>
+        <source>Плагины</source>
+        <translation>Plugins</translation>
+    </message>
+    <message>
+        <source>Очистить всё</source>
+        <translation>Clear all</translation>
+    </message>
+    <message>
+        <source>Новые</source>
+        <translation>Newest</translation>
+    </message>
+    <message>
+        <source>Старые</source>
+        <translation>Oldest</translation>
+    </message>
+    <message>
+        <source>А→Я</source>
+        <translation>A→Z</translation>
+    </message>
+    <message>
+        <source>Я→А</source>
+        <translation>Z→A</translation>
+    </message>
+    <message>
+        <source>Переход на Master Clipboard</source>
+        <translation>Switching to Master Clipboard</translation>
+    </message>
+    <message>
+        <source>Master Clipboard %1</source>
+        <translation>Master Clipboard %1</translation>
+    </message>
+    <message>
+        <source>Новая программа — замена SmartClip</source>
+        <translation>New app — replaces SmartClip</translation>
+    </message>
+    <message>
+        <source>SmartClip теперь называется Master Clipboard — это следующая версия той же программы. История, закрепы и настройки перенесутся, а SmartClip удалится сам.</source>
+        <translation>SmartClip is now called Master Clipboard — it is the next version of the same app. Your history, pins and settings will be moved over, and SmartClip will remove itself.</translation>
+    </message>
+    <message>
+        <source>Перейти на Master Clipboard</source>
+        <translation>Switch to Master Clipboard</translation>
+    </message>
+    <message>
         <source>По дате</source>
         <translation>By date</translation>
     </message>
@@ -885,6 +933,58 @@ Turn on: Settings → Accessibility → Visual effects → Animation effects.</t
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Переключатель раскладки, который учится на твоих ошибках: замечает текст не в той раскладке, опечатки и лишние пробелы, спрашивает, что ты имел в виду, — и дальше исправляет сам.</source>
+        <translation>A keyboard layout switcher that learns from your mistakes: it notices text typed in the wrong layout, typos and misplaced spaces, asks what you meant — and then fixes it by itself.</translation>
+    </message>
+    <message>
+        <source>Мини Клип</source>
+        <translation>Mini Clip</translation>
+    </message>
+    <message>
+        <source>Маленькое плавающее окошко только с текстами, как буфер Windows: открывается у курсора, пока пишешь сообщение, — выбрал и вставил, не отрываясь от набора.</source>
+        <translation>A small floating window with texts only, like the Windows clipboard: it opens at the cursor while you write a message — pick one and paste without leaving what you are typing.</translation>
+    </message>
+    <message>
+        <source>Менеджер паролей</source>
+        <translation>Password Manager</translation>
+    </message>
+    <message>
+        <source>Хранит пароли в зашифрованном виде и вставляет их в один клик.</source>
+        <translation>Keeps your passwords encrypted and pastes them in one click.</translation>
+    </message>
+    <message>
+        <source>Скоро</source>
+        <translation>Coming soon</translation>
+    </message>
+    <message>
+        <source>Список плагинов</source>
+        <translation>Plugin list</translation>
+    </message>
+    <message>
+        <source>Плагины</source>
+        <translation>Plugins</translation>
+    </message>
+    <message>
+        <source>Плагины добавляют SmartClip новые возможности. Ставятся отдельно — сам SmartClip остаётся лёгким, а лишнего у тебя не будет.</source>
+        <translation>Plugins add new features to SmartClip. They are installed separately — SmartClip itself stays light, and you get nothing you don't need.</translation>
+    </message>
+    <message>
+        <source>Поисковик фото</source>
+        <translation>Photo Finder</translation>
+    </message>
+    <message>
+        <source>Находит фото и мемы по тексту запроса — даже если помнишь только примерно, о чём мем.</source>
+        <translation>Finds photos and memes by a text query — even if you only roughly remember what the meme is about.</translation>
+    </message>
+    <message>
+        <source>Гиффер</source>
+        <translation>Giffer</translation>
+    </message>
+    <message>
+        <source>Поиск и вставка гифок прямо из SmartClip.</source>
+        <translation>Search and paste GIFs right from SmartClip.</translation>
+    </message>
+    <message>
         <source>Не закрывать SmartClip самому</source>
         <translation>Don't close SmartClip by itself</translation>
     </message>
@@ -1339,8 +1439,8 @@ When the limit is exceeded, the oldest entries of that kind are removed.</transl
         <translation>Work in administrator windows</translation>
     </message>
     <message>
-        <source>SmartClip будет запускаться с правами администратора, чтобы горячая клавиша и вставка работали в программах, открытых от имени администратора (например, в терминале). Windows один раз спросит разрешение.</source>
-        <translation>SmartClip will start with administrator rights so the hotkey and pasting work in programs run as administrator (e.g. a terminal). Windows will ask for permission once.</translation>
+        <source>Горячая клавиша и вставка будут работать и в программах, открытых от имени администратора (например, в терминале). Для этого запустится маленький помощник с правами администратора — сам SmartClip остаётся обычной программой. Windows один раз спросит разрешение.</source>
+        <translation>Hotkey and pasting will also work in programs opened as administrator (for example, a terminal). A small helper with administrator rights starts for this — SmartClip itself stays a regular app. Windows will ask for permission once.</translation>
     </message>
     <message>
         <source>Нужна учётная запись администратора Windows.</source>

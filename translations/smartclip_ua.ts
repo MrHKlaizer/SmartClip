@@ -4,6 +4,54 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Добавить плагины</source>
+        <translation>Додати плагіни</translation>
+    </message>
+    <message>
+        <source>Плагины</source>
+        <translation>Плагіни</translation>
+    </message>
+    <message>
+        <source>Очистить всё</source>
+        <translation>Очистити все</translation>
+    </message>
+    <message>
+        <source>Новые</source>
+        <translation>Нові</translation>
+    </message>
+    <message>
+        <source>Старые</source>
+        <translation>Старі</translation>
+    </message>
+    <message>
+        <source>А→Я</source>
+        <translation>А→Я</translation>
+    </message>
+    <message>
+        <source>Я→А</source>
+        <translation>Я→А</translation>
+    </message>
+    <message>
+        <source>Переход на Master Clipboard</source>
+        <translation>Перехід на Master Clipboard</translation>
+    </message>
+    <message>
+        <source>Master Clipboard %1</source>
+        <translation>Master Clipboard %1</translation>
+    </message>
+    <message>
+        <source>Новая программа — замена SmartClip</source>
+        <translation>Нова програма — заміна SmartClip</translation>
+    </message>
+    <message>
+        <source>SmartClip теперь называется Master Clipboard — это следующая версия той же программы. История, закрепы и настройки перенесутся, а SmartClip удалится сам.</source>
+        <translation>SmartClip тепер називається Master Clipboard — це наступна версія тієї ж програми. Історія, закріпи та налаштування перенесуться, а SmartClip видалиться сам.</translation>
+    </message>
+    <message>
+        <source>Перейти на Master Clipboard</source>
+        <translation>Перейти на Master Clipboard</translation>
+    </message>
+    <message>
         <source>По дате</source>
         <translation>За датою</translation>
     </message>
@@ -885,6 +933,58 @@
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Переключатель раскладки, который учится на твоих ошибках: замечает текст не в той раскладке, опечатки и лишние пробелы, спрашивает, что ты имел в виду, — и дальше исправляет сам.</source>
+        <translation>Перемикач розкладки, який вчиться на твоїх помилках: помічає текст не в тій розкладці, одруківки й зайві пробіли, питає, що ти мав на увазі, — і далі виправляє сам.</translation>
+    </message>
+    <message>
+        <source>Мини Клип</source>
+        <translation>Міні Кліп</translation>
+    </message>
+    <message>
+        <source>Маленькое плавающее окошко только с текстами, как буфер Windows: открывается у курсора, пока пишешь сообщение, — выбрал и вставил, не отрываясь от набора.</source>
+        <translation>Маленьке плаваюче віконце лише з текстами, як буфер Windows: відкривається біля курсора, поки пишеш повідомлення, — вибрав і вставив, не відриваючись від набору.</translation>
+    </message>
+    <message>
+        <source>Менеджер паролей</source>
+        <translation>Менеджер паролів</translation>
+    </message>
+    <message>
+        <source>Хранит пароли в зашифрованном виде и вставляет их в один клик.</source>
+        <translation>Зберігає паролі в зашифрованому вигляді та вставляє їх в один клік.</translation>
+    </message>
+    <message>
+        <source>Скоро</source>
+        <translation>Скоро</translation>
+    </message>
+    <message>
+        <source>Список плагинов</source>
+        <translation>Список плагінів</translation>
+    </message>
+    <message>
+        <source>Плагины</source>
+        <translation>Плагіни</translation>
+    </message>
+    <message>
+        <source>Плагины добавляют SmartClip новые возможности. Ставятся отдельно — сам SmartClip остаётся лёгким, а лишнего у тебя не будет.</source>
+        <translation>Плагіни додають SmartClip нові можливості. Ставляться окремо — сам SmartClip лишається легким, а зайвого в тебе не буде.</translation>
+    </message>
+    <message>
+        <source>Поисковик фото</source>
+        <translation>Пошуковик фото</translation>
+    </message>
+    <message>
+        <source>Находит фото и мемы по тексту запроса — даже если помнишь только примерно, о чём мем.</source>
+        <translation>Знаходить фото й меми за текстом запиту — навіть якщо пам’ятаєш лише приблизно, про що мем.</translation>
+    </message>
+    <message>
+        <source>Гиффер</source>
+        <translation>Гіфер</translation>
+    </message>
+    <message>
+        <source>Поиск и вставка гифок прямо из SmartClip.</source>
+        <translation>Пошук і вставка гіфок прямо зі SmartClip.</translation>
+    </message>
+    <message>
         <source>Не закрывать SmartClip самому</source>
         <translation>Не закривати SmartClip самому</translation>
     </message>
@@ -1339,8 +1439,8 @@
         <translation>Працювати у вікнах адміністратора</translation>
     </message>
     <message>
-        <source>SmartClip будет запускаться с правами администратора, чтобы горячая клавиша и вставка работали в программах, открытых от имени администратора (например, в терминале). Windows один раз спросит разрешение.</source>
-        <translation>SmartClip запускатиметься з правами адміністратора, щоб гаряча клавіша та вставка працювали в програмах, відкритих від імені адміністратора (наприклад, у терміналі). Windows один раз спитає дозвіл.</translation>
+        <source>Горячая клавиша и вставка будут работать и в программах, открытых от имени администратора (например, в терминале). Для этого запустится маленький помощник с правами администратора — сам SmartClip остаётся обычной программой. Windows один раз спросит разрешение.</source>
+        <translation>Гаряча клавіша і вставка працюватимуть і в програмах, відкритих від імені адміністратора (наприклад, у терміналі). Для цього запуститься маленький помічник із правами адміністратора — сам SmartClip лишається звичайною програмою. Windows один раз запитає дозвіл.</translation>
     </message>
     <message>
         <source>Нужна учётная запись администратора Windows.</source>

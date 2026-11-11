@@ -248,6 +248,14 @@ void UpdateChecker::handleRelease(const QJsonObject &obj)
     }
 }
 
+// ─── Преемник: установщик Master Clipboard ───────────────────────────────────
+bool UpdateChecker::isSuccessor(const QString &downloadUrl)
+{
+    const QString file = QUrl(downloadUrl).fileName();
+    static const QRegularExpression re(QStringLiteral("master[ _.-]?clipboard"), QRegularExpression::CaseInsensitiveOption);
+    return re.match(file).hasMatch();
+}
+
 // ─── Большое или мелкое обновление ───────────────────────────────────────────
 bool UpdateChecker::isMajorUpdate(const QString &newVersion)
 {

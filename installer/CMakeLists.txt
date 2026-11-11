@@ -23,6 +23,8 @@ target_link_libraries(Installer PRIVATE
     shlwapi       # SHDeleteKeyW
     advapi32      # RegXxx функции
     cabinet       # Распаковка встроенных файлов (Windows Compression API, LZMS)
+    ole32         # Ярлык в меню «Пуск» (IShellLink)
+    uuid
 )
 
 # ── Упаковщик (запускается только при сборке релиза) ────────────────────────

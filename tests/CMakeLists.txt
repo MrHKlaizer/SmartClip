@@ -22,7 +22,7 @@ add_executable(smartclip_tests
     ${S}/ui/SettingsDialog.cpp ${S}/ui/SettingsDialog.h
     ${S}/ui/ImageViewer.cpp ${S}/ui/ImageViewer.h
     ${S}/ui/ClickableCard.h ${S}/ui/SmartButton.h ${S}/ui/HotkeyEdit.h ${S}/ui/SmoothScroll.h ${S}/ui/Anim.h
-    ${S}/core/Database.cpp ${S}/core/Backup.cpp ${S}/core/AdminMode.cpp ${S}/core/VideoWatcher.cpp ${S}/core/VideoWatcher.h
+    ${S}/core/Database.cpp ${S}/core/Backup.cpp ${S}/core/AdminMode.cpp ${S}/core/AdminHelper.cpp ${S}/core/VideoWatcher.cpp ${S}/core/VideoWatcher.h
     ${S}/core/UpdateChecker.cpp ${S}/core/UpdateChecker.h
     ${S}/core/BugReporter.cpp ${S}/core/BugReporter.h)
 target_include_directories(smartclip_tests PRIVATE ${S} ${CMAKE_CURRENT_SOURCE_DIR})
